@@ -2,7 +2,7 @@
 
 # Roxy
 
-Loads Voxy 0.2.16-beta on NeoForge 1.21.1
+**Loads Voxy 0.2.16-beta on NeoForge 1.21.1**
 
 </div>
 
@@ -40,10 +40,10 @@ Roxy is compatible with the following:
 
 Roxy is also partially compatible with Colorwheel currently, granting the improved performance from Colorwheel, however the moving Create entity light sources do not work.
 
-Please report any other major incompatibilities, along with logs, on the Github.
+Please report any other major incompatibilities, along with logs, on the [Github](https://github.com/RasaNovum/Roxy/issues).
 
 ## License
 
 MIT. This does not relicense Voxy; Voxy remains All Rights Reserved and is not redistributed.
 
-This project was adapted from Foxy, a project that does a similar thing for NeoForge 26.1.2
+This project was adapted from [Foxy](https://modrinth.com/mod/foxy-mod), a project that does a similar thing for NeoForge 26.1.2
