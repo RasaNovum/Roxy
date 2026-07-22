@@ -1,7 +1,6 @@
 package net.rasanovum.roxy.loader;
 
-import net.neoforged.fml.loading.FMLLoader;
-import net.neoforged.fml.loading.FMLPaths;
+import net.neoforged.fml.loading.FMLEnvironment;
 
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -19,10 +18,9 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 
-
 public final class RoxyMappings {
-    private static final String MINECRAFT_VERSION = "1.21.1";
-    private static final String INTERMEDIARY_RESOURCE = "roxy/mappings/intermediary-1.21.1.tiny";
+    private static final String MINECRAFT_VERSION = "1.21.11";
+    private static final String INTERMEDIARY_RESOURCE = "roxy/mappings/intermediary-1.21.11.tiny";
 
     private final Map<String, String> classes;
     private final Map<MemberKey, String> fields;
@@ -47,17 +45,11 @@ public final class RoxyMappings {
     }
 
     public static RoxyMappings load() throws IOException {
-        Path neoFormMappings = findNeoFormMapping();
-        if (neoFormMappings == null && isProduction()) {
-            throw new IOException(
-                    "Roxy: could not locate the NeoForge 1.21.1 runtime mappings. "
-                            + "Set -Droxy.neoformMappings to the matching NeoForm mappings.txt file."
-            );
-        }
+        boolean production = isProduction();
         Path intermediaryPath = findIntermediaryMapping();
         if (intermediaryPath != null) {
             try (InputStream input = Files.newInputStream(intermediaryPath)) {
-                return parseTiny(input, neoFormMappings);
+                return parseTiny(input, production ? null : findNeoFormMapping());
             }
         }
 
@@ -70,7 +62,7 @@ public final class RoxyMappings {
             throw new IOException("Roxy: missing Fabric intermediary mapping " + INTERMEDIARY_RESOURCE);
         }
         try (InputStream mappingResource = resource) {
-            return parseTiny(mappingResource, neoFormMappings);
+            return parseTiny(mappingResource, production ? null : findNeoFormMapping());
         }
     }
 
@@ -79,7 +71,7 @@ public final class RoxyMappings {
         if (override.equalsIgnoreCase("official")) return true;
         if (override.equalsIgnoreCase("mojmap")) return false;
         try {
-            return FMLLoader.isProduction();
+            return FMLEnvironment.isProduction();
         } catch (Throwable ignored) {
             return false;
         }
@@ -229,56 +221,8 @@ public final class RoxyMappings {
             if (Files.isRegularFile(path)) return path;
         }
 
-        Path path = Paths.get(System.getProperty("user.home", ""), ".gradle/caches/neoformruntime/artifacts/minecraft_1.21.1_client_mappings.txt");
-        if (Files.isRegularFile(path)) return path;
-
-        // Check bounded launcher library ancestors for NeoForm mappings.
-        Set<Path> roots = new HashSet<>();
-        try {
-            Path gameDir = FMLPaths.GAMEDIR.get();
-            if (gameDir != null) roots.add(gameDir);
-        } catch (Throwable ignored) {
-            // Continue with other roots if FMLPaths is unavailable.
-        }
-        roots.add(Paths.get(System.getProperty("user.dir", "")));
-
-        for (Path root : roots) {
-            Path current = root.toAbsolutePath().normalize();
-            for (int depth = 0; depth < 6 && current != null; depth++, current = current.getParent()) {
-                Path found = findNeoFormMappingUnder(current.resolve("meta/libraries/net/neoforged/neoform"));
-                if (found == null) {
-                    found = findNeoFormMappingUnder(current.resolve("libraries/net/neoforged/neoform"));
-                }
-                if (found != null) return found;
-            }
-        }
-        return null;
-    }
-
-    private static Path findNeoFormMappingUnder(Path root) {
-        if (!Files.isDirectory(root)) return null;
-        String neoFormVersion = System.getProperty("fml.neoFormVersion", "").strip();
-        if (!neoFormVersion.isEmpty()) {
-            Path versionDirectory = root.resolve(neoFormVersion);
-            try (Stream<Path> files = Files.walk(versionDirectory, 2)) {
-                Path found = files
-                        .filter(Files::isRegularFile)
-                        .filter(path -> path.getFileName().toString().endsWith("-mappings.txt"))
-                        .findFirst()
-                        .orElse(null);
-                if (found != null) return found;
-            } catch (IOException ignored) {
-            }
-        }
-        try (Stream<Path> files = Files.walk(root, 3)) {
-            return files
-                    .filter(Files::isRegularFile)
-                    .filter(path -> path.getFileName().toString().endsWith("-mappings.txt"))
-                    .findFirst()
-                    .orElse(null);
-        } catch (IOException ignored) {
-            return null;
-        }
+        Path path = Paths.get(System.getProperty("user.home", ""), ".gradle/caches/neoformruntime/artifacts/minecraft_1.21.11_client_mappings.txt");
+        return Files.isRegularFile(path) ? path : null;
     }
 
     public String mapClass(String intermediaryName) {

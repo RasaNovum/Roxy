@@ -865,8 +865,6 @@ public final class RoxyBytecodeRemapper {
 
                 method.visitLabel(visible);
 
-                // BakedModel model = Minecraft.getInstance().getBlockRenderer()
-                //        .getBlockModel(state);
                 method.visitMethodInsn(
                         Opcodes.INVOKESTATIC,
                         MINECRAFT,
@@ -1553,8 +1551,7 @@ public final class RoxyBytecodeRemapper {
                 return new MethodVisitor(Opcodes.ASM9, original) {
                     @Override
                     public AnnotationVisitor visitAnnotation(String annotation, boolean visible) {
-                        // The renamed implementation must not remain a Mixin
-                        // handler; the bridge below receives the annotation.
+                        // Strip the original Mixin annotation before adding the bridge annotation.
                         if (annotation.equals(INJECT)) return null;
                         return super.visitAnnotation(annotation, visible);
                     }

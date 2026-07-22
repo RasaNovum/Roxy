@@ -18,10 +18,7 @@ public final class RoxyFogCompat {
     }
 
     public static void apply(Object fogMode, boolean noFluid) {
-        // Keep Minecraft's nested FogMode type out of this helper's method
-        // descriptor. The helper is loaded from Roxy's separate module layer,
-        // where that nested game class is not visible to the application
-        // classloader even though FogRenderer itself has already been mixed.
+        // Avoid exposing Minecraft's nested FogMode type through this helper's descriptor.
         if (!"FOG_TERRAIN".equals(String.valueOf(fogMode)) || !noFluid) {
             return;
         }
@@ -39,8 +36,7 @@ public final class RoxyFogCompat {
             }
             setNoFog();
         } catch (ReflectiveOperationException | RuntimeException ignored) {
-            // Voxy is optional at the Roxy mixin boundary. A failed lookup
-            // should leave vanilla fog intact instead of breaking the client.
+            // Keep vanilla fog when optional Voxy lookup fails.
         }
     }
 

@@ -1,0 +1,4 @@
+accessWidener v1 intermediary
+
+# Voxy's optional debug HUD entrypoint uses this NeoForge-only access gap.
+accessible method net/minecraft/class_11631 method_72763 (Lnet/minecraft/class_2960;Lnet/minecraft/class_11632;)Lnet/minecraft/class_2960;

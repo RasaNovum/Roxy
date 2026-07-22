@@ -34,12 +34,7 @@ public abstract class RoxyGameRendererMixin {
         return getProjectionMatrix((double) fov);
     }
 
-    /**
-     * Minecraft captures a world icon after the first sections render. With Voxy's
-     * separate OpenGL pipeline active, the NVIDIA driver can fault in the native
-     * glGetTexImage call used by that cosmetic capture. Skipping the icon does not
-     * affect the world or either renderer, and keeps the bridge isolated from Voxy.
-     */
+    // Skip the cosmetic world icon capture because it can fault with Voxy's separate OpenGL pipeline.
     @Inject(method = "takeAutoScreenshot", at = @At("HEAD"), cancellable = true)
     private void roxy$skipAutoScreenshot(Path path, CallbackInfo ci) {
         ci.cancel();

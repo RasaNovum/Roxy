@@ -9,7 +9,7 @@ plugins {
     id("dev.prism")
 }
 
-group = "com.leclowndu93150"
+group = "net.rasanovum"
 version = "1.0.0"
 
 prism {
@@ -18,30 +18,12 @@ prism {
         name = "Roxy"
         description = "Loads the Voxy LoD rendering mod on NeoForge by bridging its Fabric entrypoints and APIs."
         license = "MIT"
-        author("leclowndu93150")
+        author("RasaNovum")
     }
 
     modrinthMaven()
     maven("NeoForged", "https://maven.neoforged.net/releases")
     maven("Sinytra", "https://maven.su5ed.dev/releases")
-
-    version("26.1.2") {
-        neoforge {
-            loaderVersion = "26.1.2.48-beta"
-
-            dependencies {
-                compileOnly("maven.modrinth:sodium:mc26.1.2-0.8.12-neoforge")
-                runtimeOnly("maven.modrinth:sodium:mc26.1.2-0.8.12-neoforge")
-                compileOnly("maven.modrinth:voxy:0.2.16-beta")
-                implementation("maven.modrinth:voxy:0.2.16-beta")
-                compileOnly("cpw.mods:modlauncher:11.0.5")
-                compileOnly("cpw.mods:securejarhandler:3.0.8")
-                compileOnly("net.neoforged.fancymodloader:loader:11.0.13")
-
-                compileOnly("maven.modrinth:chunky:hEXc6nbN")
-            }
-        }
-    }
 
     version("1.21.11") {
         neoforge {
@@ -76,16 +58,16 @@ project(":1.21.11") {
         maven { url = uri("https://maven.fabricmc.net/") }
     }
 
-    val foxyIntermediary by configurations.creating
+    val roxyIntermediary by configurations.creating
     dependencies {
-        add(foxyIntermediary.name, "net.fabricmc:intermediary:1.21.11")
+        add(roxyIntermediary.name, "net.fabricmc:intermediary:1.21.11")
     }
 
     afterEvaluate {
         tasks.named<ProcessResources>("processResources") {
-            from({ foxyIntermediary.files.map { zipTree(it) } }) {
+            from({ roxyIntermediary.files.map { zipTree(it) } }) {
                 include("mappings/mappings.tiny")
-                eachFile { path = "foxy/mappings/intermediary-1.21.11.tiny" }
+                eachFile { path = "roxy/mappings/intermediary-1.21.11.tiny" }
             }
         }
         tasks.named<JavaExec>("runClient") {
@@ -147,10 +129,7 @@ project(":1.21.1") {
         val packagedMainClasses = tasks.register<Sync>("copyPackagedRoxyClasses") {
             dependsOn(tasks.named("classes"))
             from(mainOutput) {
-                // The packaged jar provides these only through its conditional
-                // fallback library.  Keeping them out of MOD_CLASSES also
-                // prevents a dev run with Forgified Fabric API from exposing a
-                // second supplier for net.fabricmc.* packages.
+                // Keep conditional Fabric stubs out of MOD_CLASSES to avoid a second net.fabricmc.* supplier.
                 exclude("net/fabricmc/**")
             }
             into(packagedMainClassesDir)
@@ -178,9 +157,7 @@ project(":1.21.1") {
                                 .toList()
                         }
                     }
-                    // Minecraft already supplies lz4-java on the shared
-                    // runtime classpath; Roxy deliberately does not extract a
-                    // second copy of that automatic module.
+                    // Do not extract lz4-java because Minecraft already supplies it on the shared runtime classpath.
                     .filterNot { it.startsWith("lz4-java-") && it.endsWith(".jar") }
                     .toSet()
                 val mainClassDirectories = setOf(packagedMainClassesDir.get().asFile)
@@ -206,8 +183,7 @@ project(":1.21.1") {
                 classpath = files(packagedClasspath)
                 workingDir = layout.projectDirectory.dir("runs/client").asFile
                 environment = devRun.environment
-                // Do not let the desktop/Gradle process inject another copy of
-                // the development output into this packaged test launch.
+                // Keep the desktop/Gradle process from injecting another development-output copy.
                 environment.remove("CLASSPATH")
                 val mainClasses = mainClassDirectories.joinToString(File.pathSeparator) { "roxy%%${it.absolutePath}" }
                 val mainResources = "roxy%%${mainResourceDirectory.absolutePath}"

@@ -37,13 +37,11 @@ Roxy is compatible with the following:
 
 - Iris, running shaders (BSL, Complementary and Photon have been tested)
 - Create
-
-Roxy is also partially compatible with Colorwheel currently, granting the improved performance from Colorwheel, however the moving Create entity light sources do not work.
+- Colorwheel
+- Sable
 
 Please report any other major incompatibilities, along with logs, on the [Github](https://github.com/RasaNovum/Roxy/issues).
 
 ## License
 
 MIT. This does not relicense Voxy; Voxy remains All Rights Reserved and is not redistributed.
-
-This project was adapted from [Foxy](https://modrinth.com/mod/foxy-mod), a project that does a similar thing for NeoForge 26.1.2
