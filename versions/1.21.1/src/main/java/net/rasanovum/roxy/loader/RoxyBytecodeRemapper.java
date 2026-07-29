@@ -1722,8 +1722,7 @@ public final class RoxyBytecodeRemapper {
                     String signature,
                     String[] exceptions
             ) {
-                if (!name.equals(VOXY_RENDER_SYSTEM_CALLBACK)
-                        || !descriptor.contains("Lnet/minecraft/class_12289;")) {
+                if (!name.equals(VOXY_RENDER_SYSTEM_CALLBACK) || callbackFound) {
                     return super.visitMethod(access, name, descriptor, signature, exceptions);
                 }
                 callbackFound = true;

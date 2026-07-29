@@ -1,0 +1,14 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "net.rasanovum.roxy.mixin",
+  "compatibilityLevel": "JAVA_21",
+  "mixins": [
+    "RoxyChunkyNeoForgeWorldMixin",
+    "RoxyChunksmithVoxyRadiusMixin",
+    "RoxyChunksmithVoxyTargetMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

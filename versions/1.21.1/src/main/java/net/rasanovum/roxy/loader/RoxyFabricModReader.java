@@ -31,6 +31,7 @@ public final class RoxyFabricModReader implements IModFileReader {
     private static final String ACCESS_TRANSFORMER = "META-INF/accesstransformer.cfg";
     private static final String RELOCATED_JARS = "META-INF/roxy-jars/";
     private static final String SUPPLEMENTAL_SHADER_MIXIN = "roxy-voxy-shader.json";
+    private static final String SUPPLEMENTAL_WORLDGEN_MIXIN = "roxy-voxy-worldgen.json";
     private static final Set<String> UNSUPPORTED_1_21_1_CLIENT_MIXINS = Set.of(
             "minecraft.MixinBlockableEventLoop",
             "minecraft.MixinGPUSelect",
@@ -71,6 +72,7 @@ public final class RoxyFabricModReader implements IModFileReader {
         RoxyMappings mappings = RoxyMappings.load();
         java.util.Map<String, byte[]> remappedClasses = remapClasses(original, mappings, true);
         byte[] supplementalShaderMixin = readSupplementalShaderMixin();
+        byte[] supplementalWorldgenMixin = readResource(SUPPLEMENTAL_WORLDGEN_MIXIN);
 
         try (ZipFile input = new ZipFile(original.toFile());
              ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(patched))) {
@@ -111,9 +113,18 @@ public final class RoxyFabricModReader implements IModFileReader {
                 output.write(supplementalShaderMixin);
                 output.closeEntry();
             }
+            if (supplementalWorldgenMixin != null) {
+                output.putNextEntry(new ZipEntry(SUPPLEMENTAL_WORLDGEN_MIXIN));
+                output.write(supplementalWorldgenMixin);
+                output.closeEntry();
+            }
 
             output.putNextEntry(new ZipEntry(MODS_TOML));
-            output.write(buildModsToml(fabricMetadata, supplementalShaderMixin != null).getBytes(StandardCharsets.UTF_8));
+            output.write(buildModsToml(
+                    fabricMetadata,
+                    supplementalShaderMixin != null,
+                    supplementalWorldgenMixin != null
+            ).getBytes(StandardCharsets.UTF_8));
             output.closeEntry();
 
             String accessTransformer = buildAccessTransformer(input, fabricMetadata, mappings);
@@ -164,7 +175,11 @@ public final class RoxyFabricModReader implements IModFileReader {
     }
 
     private static byte[] readSupplementalShaderMixin() throws IOException {
-        try (InputStream input = RoxyFabricModReader.class.getClassLoader().getResourceAsStream(SUPPLEMENTAL_SHADER_MIXIN)) {
+        return readResource(SUPPLEMENTAL_SHADER_MIXIN);
+    }
+
+    private static byte[] readResource(String name) throws IOException {
+        try (InputStream input = RoxyFabricModReader.class.getClassLoader().getResourceAsStream(name)) {
             return input == null ? null : input.readAllBytes();
         }
     }
@@ -196,7 +211,11 @@ public final class RoxyFabricModReader implements IModFileReader {
         return result;
     }
 
-    private static String buildModsToml(JsonObject fabricMetadata, boolean includeSupplementalShaderMixin) {
+    private static String buildModsToml(
+            JsonObject fabricMetadata,
+            boolean includeSupplementalShaderMixin,
+            boolean includeSupplementalWorldgenMixin
+    ) {
         String modId = string(fabricMetadata, "id", "fabricmod");
         String version = string(fabricMetadata, "version", "0.0.0");
         String name = string(fabricMetadata, "name", modId);
@@ -238,6 +257,9 @@ public final class RoxyFabricModReader implements IModFileReader {
         }
         if (includeSupplementalShaderMixin) {
             toml.append("[[mixins]]\nconfig = \"").append(SUPPLEMENTAL_SHADER_MIXIN).append("\"\n");
+        }
+        if (includeSupplementalWorldgenMixin) {
+            toml.append("[[mixins]]\nconfig = \"").append(SUPPLEMENTAL_WORLDGEN_MIXIN).append("\"\n");
         }
         return toml.toString();
     }
