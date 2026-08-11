@@ -21,7 +21,9 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.Locale;
 import java.util.List;
-import java.util.zip.ZipFile;
+import java.util.stream.Stream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public final class RoxyDependencyLocator implements IDependencyLocator {
     private static final String RELOCATED_JARS = "META-INF/roxy-jars/";
@@ -78,15 +80,36 @@ public final class RoxyDependencyLocator implements IDependencyLocator {
 
     private static boolean containsForgifiedFabricLoader(List<IModFile> loadedMods) {
         for (IModFile mod : loadedMods) {
-            try (ZipFile zip = new ZipFile(mod.getFilePath().toFile())) {
-                boolean nestedLoader = zip.stream().anyMatch(entry ->
-                        entry.getName().startsWith("META-INF/jars/forgified-fabric-loader-")
-                                && entry.getName().endsWith("-full.jar"));
-                if (nestedLoader) return true;
+            Path path = mod.getFilePath();
+            try {
+                if (Files.isDirectory(path)) {
+                    try (Stream<Path> files = Files.walk(path.resolve("META-INF/jars"), 1)) {
+                        if (files.anyMatch(file -> isForgifiedFabricLoaderEntry(
+                                path.relativize(file).toString().replace('\\', '/')
+                        ))) {
+                            return true;
+                        }
+                    }
+                    continue;
+                }
+
+                try (ZipInputStream zip = new ZipInputStream(Files.newInputStream(path))) {
+                    ZipEntry entry;
+                    while ((entry = zip.getNextEntry()) != null) {
+                        if (isForgifiedFabricLoaderEntry(entry.getName())) {
+                            return true;
+                        }
+                    }
+                }
             } catch (IOException ignored) {
             }
         }
         return false;
+    }
+
+    private static boolean isForgifiedFabricLoaderEntry(String name) {
+        return name.startsWith("META-INF/jars/forgified-fabric-loader-")
+                && name.endsWith("-full.jar");
     }
 
     private static JsonArray readJarsArray(JarContents contents) {
