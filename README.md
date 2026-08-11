@@ -7,22 +7,6 @@
 
 **Voxy** is a Fabric exclusive LoD rendering mod. **Roxy** provides a translation layer between Voxy and NeoForge, allowing an original Voxy jar to function not only on NeoForge, but also on a version that Voxy did not release for.
 
-## How it works
-
-- Reads `fabric.mod.json` from the Voxy jar and generates a synthetic `neoforge.mods.toml`
-  (name, description, authors, icon, mixin configs, version) so FML loads it.
-- Extracts Voxy's bundled `META-INF/jars` (RocksDB, LWJGL zstd/lmdb, lz4, xz, jedis) as
-  game libraries.
-- Applies Voxy's `voxy.accesswidener` live as a class processor, plus a small supplement
-  for NeoForge-only access gaps.
-- Ships minimal `net.fabricmc.*` stubs so Voxy's bytecode links; `FabricLoader` delegates
-  to `ModList` / `FMLEnvironment`.
-- Reimplements the `/voxy` command against NeoForge's command system.
-- Adds a Chunky auto-ingest mixin targeting NeoForge's `NeoForgeWorld`.
-
-Nothing about Voxy is hardcoded. Metadata, mixins, access wideners, and bundled jars are
-all read from whatever Voxy jar is present, so Voxy updates do not require Roxy changes.
-
 ## Requirements
 
 - Minecraft 1.21.1/1.21.11 (NeoForge)
