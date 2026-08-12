@@ -98,17 +98,34 @@ public final class VoxyShaderResourceMixin {
                         """
                             vec4 faceSize = getFaceSize(faceData);
                             {
+                                vec2 faceUV = faceSize.xz;
                                 // Keep the seam correction constant in world-block units at every LOD.
                                 float scaledEpsilon = 0.00005 / lodScale;
                                 faceSize.xz -= vec2(scaledEpsilon);
                                 faceSize.yw += vec2(scaledEpsilon);
-                            }
+
                             #ifdef USE_SINGLE_TRI
+                        """
+                );
+                patched = patched.replace(
+                        "quad.uvCorner = faceSize.xz;",
+                        """
+                            quad.uvCorner = faceUV;
+                        }
                         """
                 );
             }
 
             if (path.endsWith("assets/voxy/shaders/lod/gl46/quads.frag")) {
+                patched = patched.replace(
+                        "vec2 texPos = uv2 + getBaseUV();",
+                        """
+                        vec2 baseUV = getBaseUV();
+                        vec2 atlasTexel = 1.0 / vec2(textureSize(blockModelAtlas, 0));
+                        vec2 faceCellSize = 1.0 / (vec2(3.0, 2.0) * 256.0);
+                        vec2 texPos = clamp(uv2 + baseUV, baseUV + atlasTexel * 0.5, baseUV + faceCellSize - atlasTexel * 0.5);
+                        """
+                );
                 patched = patched.replace(
                         """
                                 vec2 dy = dFdy(uvSmol);//vec2(lDy, dDy);

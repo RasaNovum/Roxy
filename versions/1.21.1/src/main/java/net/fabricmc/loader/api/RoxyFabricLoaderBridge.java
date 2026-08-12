@@ -7,6 +7,7 @@ import net.neoforged.fml.ModList;
 import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforgespi.language.IModInfo;
+import net.rasanovum.roxy.loader.RoxyFabricLoaderImpl;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -48,7 +49,7 @@ final class RoxyFabricLoaderBridge implements FabricLoader {
 
     @Override
     public <T> List<T> getEntrypoints(String key, Class<T> type) {
-        return List.of();
+        return RoxyFabricLoaderImpl.INSTANCE.getEntrypoints(key, type);
     }
 
     @Override

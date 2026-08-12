@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "net.rasanovum"
-version = "0.1.4"
+version = "0.1.5"
 
 prism {
     metadata {
@@ -94,6 +94,11 @@ project(":1.21.1") {
                 include("mappings/mappings.tiny")
                 eachFile { path = "roxy/mappings/intermediary-1.21.1.tiny" }
             }
+            dependsOn(tasks.named("compileJava"))
+            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyVoxyNeoForge.class")) {
+                into("roxy/embedded")
+                rename { "RoxyVoxyNeoForge.bin" }
+            }
         }
         tasks.named<JavaExec>("runClient") {
             doFirst {
@@ -118,6 +123,7 @@ project(":1.21.1") {
         tasks.named<Jar>("jar") {
             dependsOn(fabricStubsJar)
             exclude("net/fabricmc/**")
+            exclude("net/rasanovum/roxyhost/**")
             from(fabricStubsJar.map { it.archiveFile }) {
                 into("META-INF/jars")
             }
@@ -131,6 +137,7 @@ project(":1.21.1") {
             from(mainOutput) {
                 // Keep conditional Fabric stubs out of MOD_CLASSES to avoid a second net.fabricmc.* supplier.
                 exclude("net/fabricmc/**")
+                exclude("net/rasanovum/roxyhost/**")
             }
             into(packagedMainClassesDir)
         }

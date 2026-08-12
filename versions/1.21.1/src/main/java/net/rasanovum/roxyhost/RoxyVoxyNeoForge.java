@@ -1,17 +1,16 @@
-package net.rasanovum.roxy;
+package net.rasanovum.roxyhost;
 
-import net.rasanovum.roxy.loader.RoxyFabricRuntime;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
 import net.neoforged.neoforge.common.NeoForge;
+import net.rasanovum.roxy.loader.RoxyFabricRuntime;
 
-import com.mojang.brigadier.builder.LiteralArgumentBuilder;
-
-@Mod("roxy")
-public final class RoxyNeoForge {
-    public RoxyNeoForge(IEventBus modBus) {
+@Mod("voxy")
+public final class RoxyVoxyNeoForge {
+    public RoxyVoxyNeoForge(IEventBus modBus) {
         modBus.addListener(this::onClientSetup);
         NeoForge.EVENT_BUS.addListener(this::onRegisterClientCommands);
     }
@@ -20,6 +19,7 @@ public final class RoxyNeoForge {
         RoxyFabricRuntime.initializeFabricEntrypoints();
     }
 
+    @SuppressWarnings({"rawtypes", "unchecked"})
     private void onRegisterClientCommands(RegisterClientCommandsEvent event) {
         if (event.getDispatcher().getRoot().getChild("voxy") != null) return;
         try {

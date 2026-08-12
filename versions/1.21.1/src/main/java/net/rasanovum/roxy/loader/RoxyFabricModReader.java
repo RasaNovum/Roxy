@@ -32,6 +32,8 @@ public final class RoxyFabricModReader implements IModFileReader {
     private static final String RELOCATED_JARS = "META-INF/roxy-jars/";
     private static final String SUPPLEMENTAL_SHADER_MIXIN = "roxy-voxy-shader.json";
     private static final String SUPPLEMENTAL_WORLDGEN_MIXIN = "roxy-voxy-worldgen.json";
+    private static final String VOXY_NEOFORGE_HOST = "net/rasanovum/roxyhost/RoxyVoxyNeoForge.class";
+    private static final String VOXY_NEOFORGE_HOST_RESOURCE = "roxy/embedded/RoxyVoxyNeoForge.bin";
     private static final Set<String> UNSUPPORTED_1_21_1_CLIENT_MIXINS = Set.of(
             "minecraft.MixinBlockableEventLoop",
             "minecraft.MixinGPUSelect",
@@ -107,6 +109,14 @@ public final class RoxyFabricModReader implements IModFileReader {
                 output.write(remappedClass.getValue());
                 output.closeEntry();
             }
+
+            byte[] lifecycleHost = readResource(VOXY_NEOFORGE_HOST_RESOURCE);
+            if (lifecycleHost == null) {
+                throw new IOException("Roxy: missing Voxy NeoForge lifecycle host");
+            }
+            output.putNextEntry(new ZipEntry(VOXY_NEOFORGE_HOST));
+            output.write(lifecycleHost);
+            output.closeEntry();
 
             if (supplementalShaderMixin != null) {
                 output.putNextEntry(new ZipEntry(SUPPLEMENTAL_SHADER_MIXIN));
@@ -224,6 +234,7 @@ public final class RoxyFabricModReader implements IModFileReader {
         String authors = joinAuthors(fabricMetadata);
         String commit = readCommit(fabricMetadata);
         String sodiumRange = sodiumRange(fabricMetadata);
+        String sodiumConfigEntrypoint = firstEntrypoint(fabricMetadata, "sodium:config_api_user");
 
         StringBuilder toml = new StringBuilder();
         toml.append("modLoader = \"javafml\"\n");
@@ -244,6 +255,11 @@ public final class RoxyFabricModReader implements IModFileReader {
         }
         toml.append("[modproperties.").append(modId).append("]\n");
         toml.append("commit = \"").append(esc(commit)).append("\"\n");
+        if (sodiumConfigEntrypoint != null) {
+            toml.append("\"sodium:config_api_user\" = \"")
+                    .append(esc(sodiumConfigEntrypoint))
+                    .append("\"\n");
+        }
         toml.append("[[dependencies.").append(modId).append("]]\n");
         toml.append("modId = \"neoforge\"\ntype = \"required\"\nversionRange = \"[4,)\"\nordering = \"NONE\"\nside = \"BOTH\"\n");
         if (sodiumRange != null) {
@@ -475,6 +491,21 @@ public final class RoxyFabricModReader implements IModFileReader {
             }
         }
         return result;
+    }
+
+    private static String firstEntrypoint(JsonObject fabricMetadata, String key) {
+        JsonObject entrypoints = object(fabricMetadata, "entrypoints");
+        if (entrypoints == null) return null;
+        JsonElement entries = entrypoints.get(key);
+        if (entries == null || !entries.isJsonArray()) return null;
+        for (JsonElement entry : entries.getAsJsonArray()) {
+            if (entry.isJsonPrimitive()) return entry.getAsString();
+            if (entry.isJsonObject()) {
+                String value = string(entry.getAsJsonObject(), "value", null);
+                if (value != null) return value;
+            }
+        }
+        return null;
     }
 
     private static String readCommit(JsonObject fabricMetadata) {

@@ -126,6 +126,7 @@ public final class RoxyBytecodeRemapper {
     private static final String GL_STATE_MANAGER_NEW = "com/mojang/blaze3d/opengl/GlStateManager";
     private static final String GL_STATE_MANAGER_1_21_1 = "com/mojang/blaze3d/platform/GlStateManager";
     private static final String VOXY_RENDER_SYSTEM = "me/cortex/voxy/client/core/VoxyRenderSystem";
+    private static final String VOXY_CLIENT_INSTANCE = "me/cortex/voxy/client/VoxyClientInstance";
     private static final String VOXY_VIEWPORT = "me/cortex/voxy/client/core/rendering/Viewport";
     private static final String VOXY_RENDER_PROPERTIES = "me/cortex/voxy/client/core/RenderProperties";
     private static final String VOXY_DEFAULT_CHUNK_RENDERER = "me/cortex/voxy/client/mixin/sodium/MixinDefaultChunkRenderer";
@@ -171,8 +172,41 @@ public final class RoxyBytecodeRemapper {
         output = patchVoxyIrisSamplers(output);
         output = patchVoxyIrisSamplerHolder(output);
         output = patchVoxyGsonCompatibility(output);
+        output = patchVoxyClientWorldPath(output);
         output = patchMinecraftVersionBridges(output);
         return patchFabricMetadata ? patchFabricMetadataAccess(output) : output;
+    }
+
+    private static byte[] patchVoxyClientWorldPath(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals(VOXY_CLIENT_INSTANCE)) return input;
+
+        ClassWriter writer = new ClassWriter(reader, 0);
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(
+                    int access,
+                    String name,
+                    String descriptor,
+                    String signature,
+                    String[] exceptions
+            ) {
+                MethodVisitor delegate = super.visitMethod(access, name, descriptor, signature, exceptions);
+                return new MethodVisitor(Opcodes.ASM9, delegate) {
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String name, String descriptor, boolean isInterface) {
+                        if (opcode == Opcodes.INVOKEVIRTUAL
+                                && owner.equals("net/minecraft/client/server/IntegratedServer")
+                                && name.equals("a")
+                                && descriptor.equals("(Lnet/minecraft/world/level/storage/LevelResource;)Ljava/nio/file/Path;")) {
+                            name = "getWorldPath";
+                        }
+                        super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
+                    }
+                };
+            }
+        }, 0);
+        return writer.toByteArray();
     }
 
     private static byte[] patchVoxyGsonCompatibility(byte[] input) {

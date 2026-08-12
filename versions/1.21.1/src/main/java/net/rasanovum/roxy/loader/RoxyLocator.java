@@ -66,6 +66,18 @@ public final class RoxyLocator implements IModFileCandidateLocator {
             }
         }
 
+        try {
+            if (RoxyLocator.class.getProtectionDomain().getCodeSource() != null) {
+                Path codeSource = Path.of(
+                        RoxyLocator.class.getProtectionDomain().getCodeSource().getLocation().toURI()
+                ).toAbsolutePath().normalize();
+                if (Files.exists(codeSource) && !paths.contains(codeSource)) {
+                    paths.add(codeSource);
+                }
+            }
+        } catch (URISyntaxException | RuntimeException ignored) {
+        }
+
         return paths;
     }
 

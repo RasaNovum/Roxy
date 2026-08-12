@@ -89,6 +89,7 @@ public final class RoxyMappings {
         MojmapMappings mojmap = neoFormMappings == null ? null : MojmapMappings.read(neoFormMappings);
         Map<String, String> classes = new HashMap<>();
         Map<String, String> officialToIntermediary = new HashMap<>();
+        Map<String, String> targetToIntermediary = new HashMap<>();
         Map<MemberKey, String> fields = new HashMap<>();
         Map<MemberKey, String> methods = new HashMap<>();
         List<TinyMember> members = new ArrayList<>();
@@ -108,6 +109,7 @@ public final class RoxyMappings {
                             : mojmap.officialToMojmap.getOrDefault(officialOwner, officialOwner);
                     classes.put(intermediaryOwner, targetOwner);
                     officialToIntermediary.put(officialOwner, intermediaryOwner);
+                    targetToIntermediary.put(targetOwner, intermediaryOwner);
                 } else if (parts.length >= 5 && parts[0].isEmpty() && (parts[1].equals("f") || parts[1].equals("m"))) {
                     if (officialOwner != null && intermediaryOwner != null) {
                         members.add(new TinyMember(
@@ -123,8 +125,10 @@ public final class RoxyMappings {
                     String owner = parts[1];
                     String officialOwnerForMember = owner;
                     String intermediaryOwnerForMember = officialToIntermediary.get(owner);
+                    if (intermediaryOwnerForMember == null) {
+                        intermediaryOwnerForMember = targetToIntermediary.get(owner);
+                    }
                     if (intermediaryOwnerForMember == null && mojmap != null) {
-                        // Resolve merged-table owners before indexing inherited members.
                         officialOwnerForMember = mojmap.mojToOfficial.getOrDefault(
                                 owner.replace('/', '.'), owner
                         );
@@ -263,7 +267,7 @@ public final class RoxyMappings {
             try (Stream<Path> files = Files.walk(versionDirectory, 2)) {
                 Path found = files
                         .filter(Files::isRegularFile)
-                        .filter(path -> path.getFileName().toString().endsWith("-mappings.txt"))
+                        .filter(RoxyMappings::isMergedMapping)
                         .findFirst()
                         .orElse(null);
                 if (found != null) return found;
@@ -271,14 +275,23 @@ public final class RoxyMappings {
             }
         }
         try (Stream<Path> files = Files.walk(root, 3)) {
-            return files
+            List<Path> mappings = files
                     .filter(Files::isRegularFile)
+                    .filter(path -> path.getFileName().toString().endsWith(".txt"))
+                    .toList();
+            Path merged = mappings.stream().filter(RoxyMappings::isMergedMapping).findFirst().orElse(null);
+            if (merged != null) return merged;
+            return mappings.stream()
                     .filter(path -> path.getFileName().toString().endsWith("-mappings.txt"))
                     .findFirst()
                     .orElse(null);
         } catch (IOException ignored) {
             return null;
         }
+    }
+
+    private static boolean isMergedMapping(Path path) {
+        return path.getFileName().toString().endsWith("-mappings-merged.txt");
     }
 
     public String mapClass(String intermediaryName) {
