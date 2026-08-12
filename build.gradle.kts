@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "net.rasanovum"
-version = "0.1.5"
+version = "0.1.6"
 
 prism {
     metadata {
@@ -93,6 +93,10 @@ project(":1.21.1") {
             from({ roxyIntermediary.files.map { zipTree(it) } }) {
                 include("mappings/mappings.tiny")
                 eachFile { path = "roxy/mappings/intermediary-1.21.1.tiny" }
+            }
+            from(rootProject.gradle.gradleUserHomeDir.resolve("caches/neoformruntime/artifacts/minecraft_1.21.1_client_mappings.txt")) {
+                into("roxy/mappings")
+                rename { "client-1.21.1.txt" }
             }
             dependsOn(tasks.named("compileJava"))
             from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyVoxyNeoForge.class")) {

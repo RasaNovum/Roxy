@@ -36,6 +36,27 @@ public final class RoxyTextureCompat {
             }
 
             int[] pixels = new int[width * height];
+            readTexture(textureId, width, pixels);
+
+            Method setSamplerTexture = rasterizer.getClass().getMethod(
+                    "setSamplerTexture", int[].class, int.class, int.class
+            );
+            setSamplerTexture.invoke(rasterizer, pixels, width, height);
+        } catch (ReflectiveOperationException exception) {
+            throw new IllegalStateException("Unable to read Minecraft 1.21.1's block atlas", exception);
+        }
+    }
+
+    private static void readTexture(int textureId, int width, int[] pixels) {
+        int framebuffer = GL11.glGetInteger(36006);
+        int pixelPackBuffer = GL11.glGetInteger(35053);
+        int texture = GL11.glGetInteger(32873);
+        int rowLength = GL11.glGetInteger(3330);
+        int imageHeight = GL11.glGetInteger(32876);
+        int skipRows = GL11.glGetInteger(3331);
+        int skipPixels = GL11.glGetInteger(3332);
+        int alignment = GL11.glGetInteger(3333);
+        try {
             GL11.glFlush();
             GL11.glFinish();
             GL30C.glBindFramebuffer(36160, 0);
@@ -47,13 +68,15 @@ public final class RoxyTextureCompat {
             GL11.glPixelStorei(3333, 4);
             GL11.glBindTexture(3553, textureId);
             GL11.glGetTexImage(3553, 0, 6408, 5121, pixels);
-
-            Method setSamplerTexture = rasterizer.getClass().getMethod(
-                    "setSamplerTexture", int[].class, int.class, int.class
-            );
-            setSamplerTexture.invoke(rasterizer, pixels, width, height);
-        } catch (ReflectiveOperationException exception) {
-            throw new IllegalStateException("Unable to read Minecraft 1.21.1's block atlas", exception);
+        } finally {
+            GL11.glPixelStorei(3330, rowLength);
+            GL11.glPixelStorei(32876, imageHeight);
+            GL11.glPixelStorei(3331, skipRows);
+            GL11.glPixelStorei(3332, skipPixels);
+            GL11.glPixelStorei(3333, alignment);
+            GL11.glBindTexture(3553, texture);
+            GL15C.glBindBuffer(35051, pixelPackBuffer);
+            GL30C.glBindFramebuffer(36160, framebuffer);
         }
     }
 
