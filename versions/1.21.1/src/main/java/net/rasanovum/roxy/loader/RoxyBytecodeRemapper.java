@@ -456,7 +456,7 @@ public final class RoxyBytecodeRemapper {
                                     Opcodes.INVOKESTATIC,
                                     BLOCK_STATE_COMPAT,
                                     "getLightBlock",
-                                    "(L" + BLOCK_STATE + ";)I",
+                                    "(Ljava/lang/Object;)I",
                                     false
                             );
                         } else if (opcode == Opcodes.INVOKEVIRTUAL
