@@ -1,8 +1,5 @@
 package net.rasanovum.roxy.loader;
 
-import net.neoforged.fml.loading.FMLLoader;
-import net.neoforged.fml.loading.FMLPaths;
-
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -23,6 +20,7 @@ import java.util.stream.Stream;
 public final class RoxyMappings {
     private static final String MINECRAFT_VERSION = "1.21.1";
     private static final String INTERMEDIARY_RESOURCE = "roxy/mappings/intermediary-1.21.1.tiny";
+    private static final String MOJMAP_RESOURCE = "roxy/mappings/client-1.21.1.txt";
 
     private final Map<String, String> classes;
     private final Map<MemberKey, String> fields;
@@ -47,17 +45,14 @@ public final class RoxyMappings {
     }
 
     public static RoxyMappings load() throws IOException {
-        Path neoFormMappings = findNeoFormMapping();
-        if (neoFormMappings == null && isProduction()) {
-            throw new IOException(
-                    "Roxy: could not locate the NeoForge 1.21.1 runtime mappings. "
-                            + "Set -Droxy.neoformMappings to the matching NeoForm mappings.txt file."
-            );
-        }
+        Path neoFormMappings = explicitNeoFormMapping();
+        MojmapMappings mojmap = neoFormMappings == null
+                ? readBundledMojmap()
+                : MojmapMappings.read(neoFormMappings);
         Path intermediaryPath = findIntermediaryMapping();
         if (intermediaryPath != null) {
             try (InputStream input = Files.newInputStream(intermediaryPath)) {
-                return parseTiny(input, neoFormMappings);
+                return parseTiny(input, mojmap);
             }
         }
 
@@ -70,25 +65,22 @@ public final class RoxyMappings {
             throw new IOException("Roxy: missing Fabric intermediary mapping " + INTERMEDIARY_RESOURCE);
         }
         try (InputStream mappingResource = resource) {
-            return parseTiny(mappingResource, neoFormMappings);
+            return parseTiny(mappingResource, mojmap);
         }
     }
 
-    private static boolean isProduction() {
-        String override = System.getProperty("roxy.runtimeNamespace", "");
-        if (override.equalsIgnoreCase("official")) return true;
-        if (override.equalsIgnoreCase("mojmap")) return false;
-        try {
-            return FMLLoader.isProduction();
-        } catch (Throwable ignored) {
-            return false;
+    private static MojmapMappings readBundledMojmap() throws IOException {
+        InputStream input = RoxyMappings.class.getResourceAsStream("/" + MOJMAP_RESOURCE);
+        if (input == null) throw new IOException("Roxy: missing bundled NeoForge 1.21.1 runtime mappings");
+        try (InputStream resource = input) {
+            return MojmapMappings.read(resource);
         }
     }
 
-    private static RoxyMappings parseTiny(InputStream input, Path neoFormMappings) throws IOException {
-        MojmapMappings mojmap = neoFormMappings == null ? null : MojmapMappings.read(neoFormMappings);
+    private static RoxyMappings parseTiny(InputStream input, MojmapMappings mojmap) throws IOException {
         Map<String, String> classes = new HashMap<>();
         Map<String, String> officialToIntermediary = new HashMap<>();
+        Map<String, String> targetToIntermediary = new HashMap<>();
         Map<MemberKey, String> fields = new HashMap<>();
         Map<MemberKey, String> methods = new HashMap<>();
         List<TinyMember> members = new ArrayList<>();
@@ -108,6 +100,7 @@ public final class RoxyMappings {
                             : mojmap.officialToMojmap.getOrDefault(officialOwner, officialOwner);
                     classes.put(intermediaryOwner, targetOwner);
                     officialToIntermediary.put(officialOwner, intermediaryOwner);
+                    targetToIntermediary.put(targetOwner, intermediaryOwner);
                 } else if (parts.length >= 5 && parts[0].isEmpty() && (parts[1].equals("f") || parts[1].equals("m"))) {
                     if (officialOwner != null && intermediaryOwner != null) {
                         members.add(new TinyMember(
@@ -123,8 +116,10 @@ public final class RoxyMappings {
                     String owner = parts[1];
                     String officialOwnerForMember = owner;
                     String intermediaryOwnerForMember = officialToIntermediary.get(owner);
+                    if (intermediaryOwnerForMember == null) {
+                        intermediaryOwnerForMember = targetToIntermediary.get(owner);
+                    }
                     if (intermediaryOwnerForMember == null && mojmap != null) {
-                        // Resolve merged-table owners before indexing inherited members.
                         officialOwnerForMember = mojmap.mojToOfficial.getOrDefault(
                                 owner.replace('/', '.'), owner
                         );
@@ -162,7 +157,12 @@ public final class RoxyMappings {
                 methods.put(key, targetName);
             }
         }
-        return new RoxyMappings(classes, fields, methods);
+        RoxyMappings mappings = new RoxyMappings(classes, fields, methods);
+        String component = mappings.mapClass("net/minecraft/class_2561");
+        if (!component.equals("net/minecraft/network/chat/Component")) {
+            throw new IOException("Roxy: invalid 1.21.1 runtime mappings: Component mapped to " + component);
+        }
+        return mappings;
     }
 
     private static Map<OwnerName, Set<String>> indexNames(Map<MemberKey, String> members) {
@@ -222,63 +222,13 @@ public final class RoxyMappings {
         }
     }
 
-    private static Path findNeoFormMapping() {
+    private static Path explicitNeoFormMapping() {
         String explicit = System.getProperty("roxy.neoformMappings");
         if (explicit != null && !explicit.isBlank()) {
             Path path = Paths.get(explicit);
             if (Files.isRegularFile(path)) return path;
         }
-
-        Path path = Paths.get(System.getProperty("user.home", ""), ".gradle/caches/neoformruntime/artifacts/minecraft_1.21.1_client_mappings.txt");
-        if (Files.isRegularFile(path)) return path;
-
-        // Check bounded launcher library ancestors for NeoForm mappings.
-        Set<Path> roots = new HashSet<>();
-        try {
-            Path gameDir = FMLPaths.GAMEDIR.get();
-            if (gameDir != null) roots.add(gameDir);
-        } catch (Throwable ignored) {
-            // Continue with other roots if FMLPaths is unavailable.
-        }
-        roots.add(Paths.get(System.getProperty("user.dir", "")));
-
-        for (Path root : roots) {
-            Path current = root.toAbsolutePath().normalize();
-            for (int depth = 0; depth < 6 && current != null; depth++, current = current.getParent()) {
-                Path found = findNeoFormMappingUnder(current.resolve("meta/libraries/net/neoforged/neoform"));
-                if (found == null) {
-                    found = findNeoFormMappingUnder(current.resolve("libraries/net/neoforged/neoform"));
-                }
-                if (found != null) return found;
-            }
-        }
         return null;
-    }
-
-    private static Path findNeoFormMappingUnder(Path root) {
-        if (!Files.isDirectory(root)) return null;
-        String neoFormVersion = System.getProperty("fml.neoFormVersion", "").strip();
-        if (!neoFormVersion.isEmpty()) {
-            Path versionDirectory = root.resolve(neoFormVersion);
-            try (Stream<Path> files = Files.walk(versionDirectory, 2)) {
-                Path found = files
-                        .filter(Files::isRegularFile)
-                        .filter(path -> path.getFileName().toString().endsWith("-mappings.txt"))
-                        .findFirst()
-                        .orElse(null);
-                if (found != null) return found;
-            } catch (IOException ignored) {
-            }
-        }
-        try (Stream<Path> files = Files.walk(root, 3)) {
-            return files
-                    .filter(Files::isRegularFile)
-                    .filter(path -> path.getFileName().toString().endsWith("-mappings.txt"))
-                    .findFirst()
-                    .orElse(null);
-        } catch (IOException ignored) {
-            return null;
-        }
     }
 
     public String mapClass(String intermediaryName) {
@@ -438,8 +388,17 @@ public final class RoxyMappings {
         private final Map<String, String> mojToOfficial = new HashMap<>();
 
         private static MojmapMappings read(Path path) throws IOException {
+            try (InputStream input = Files.newInputStream(path)) {
+                return read(input);
+            }
+        }
+
+        private static MojmapMappings read(InputStream input) throws IOException {
             MojmapMappings result = new MojmapMappings();
-            List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
+            List<String> lines;
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+                lines = reader.lines().toList();
+            }
 
             // Collect class names first so second-pass descriptor conversion is reliable.
             for (String line : lines) {

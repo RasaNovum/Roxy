@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "net.rasanovum"
-version = "0.1.4"
+version = "0.1.7-d-2"
 
 prism {
     metadata {
@@ -94,6 +94,15 @@ project(":1.21.1") {
                 include("mappings/mappings.tiny")
                 eachFile { path = "roxy/mappings/intermediary-1.21.1.tiny" }
             }
+            from(rootProject.gradle.gradleUserHomeDir.resolve("caches/neoformruntime/artifacts/minecraft_1.21.1_client_mappings.txt")) {
+                into("roxy/mappings")
+                rename { "client-1.21.1.txt" }
+            }
+            dependsOn(tasks.named("compileJava"))
+            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyVoxyNeoForge.class")) {
+                into("roxy/embedded")
+                rename { "RoxyVoxyNeoForge.bin" }
+            }
         }
         tasks.named<JavaExec>("runClient") {
             doFirst {
@@ -118,6 +127,7 @@ project(":1.21.1") {
         tasks.named<Jar>("jar") {
             dependsOn(fabricStubsJar)
             exclude("net/fabricmc/**")
+            exclude("net/rasanovum/roxyhost/**")
             from(fabricStubsJar.map { it.archiveFile }) {
                 into("META-INF/jars")
             }
@@ -131,13 +141,15 @@ project(":1.21.1") {
             from(mainOutput) {
                 // Keep conditional Fabric stubs out of MOD_CLASSES to avoid a second net.fabricmc.* supplier.
                 exclude("net/fabricmc/**")
+                exclude("net/rasanovum/roxyhost/**")
             }
             into(packagedMainClassesDir)
         }
         val packagedRoxy = tasks.register<Copy>("copyPackagedRoxyToRunMods") {
-            dependsOn(prepareClientRun, tasks.named<Jar>("jar"), packagedMainClasses)
+            dependsOn(prepareClientRun, tasks.named<Jar>("jar"), fabricStubsJar, packagedMainClasses)
             from(tasks.named<Jar>("jar"))
-            into(layout.projectDirectory.dir("runs/client/packaged-mods"))
+            from(fabricStubsJar)
+            into(layout.projectDirectory.dir("runs/client/mods"))
         }
 
         tasks.register<JavaExec>("runClientPackaged") {
@@ -185,9 +197,7 @@ project(":1.21.1") {
                 environment = devRun.environment
                 // Keep the desktop/Gradle process from injecting another development-output copy.
                 environment.remove("CLASSPATH")
-                val mainClasses = mainClassDirectories.joinToString(File.pathSeparator) { "roxy%%${it.absolutePath}" }
-                val mainResources = "roxy%%${mainResourceDirectory.absolutePath}"
-                environment("MOD_CLASSES", "$mainClasses${File.pathSeparator}$mainResources")
+                environment.remove("MOD_CLASSES")
                 jvmArgs = devRun.jvmArgs
                     .filterNot { it.startsWith("-DlegacyClassPath.file=") }
                     .plus("-DlegacyClassPath.file=${packagedLegacyClasspath.get().asFile.absolutePath}")

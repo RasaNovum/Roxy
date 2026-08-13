@@ -34,6 +34,8 @@ public final class RoxyDependencyLocator implements IDependencyLocator {
         boolean forgifiedFabricLoader = containsForgifiedFabricLoader(loadedMods);
 
         for (IModFile mod : loadedMods) {
+            Path modPath = mod.getFilePath();
+            if (modPath == null || !Files.exists(modPath)) continue;
             try (JarContents contents = JarContents.of(mod.getFilePath())) {
                 if (!forgifiedFabricLoader) {
                     addFallbackFabricStubs(contents, pipeline);
@@ -59,7 +61,7 @@ public final class RoxyDependencyLocator implements IDependencyLocator {
                     } catch (IOException ignored) {
                     }
                 }
-            } catch (IOException ignored) {
+            } catch (IOException | RuntimeException ignored) {
             }
         }
     }

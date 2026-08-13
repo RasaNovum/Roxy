@@ -116,7 +116,6 @@ public final class RoxyFabricLoaderImpl implements FabricLoader {
     @Override
     @SuppressWarnings("unchecked")
     public <T> List<T> getEntrypoints(String key, Class<T> type) {
-        if (!key.equals("main") && !key.equals("client")) return List.of();
         List<Object> instances = entrypointCache.computeIfAbsent(key, RoxyFabricLoaderImpl::instantiateEntrypoints);
         List<T> result = new ArrayList<>();
         for (Object instance : instances) {

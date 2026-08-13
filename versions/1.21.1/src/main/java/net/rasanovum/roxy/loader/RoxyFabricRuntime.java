@@ -27,11 +27,31 @@ public final class RoxyFabricRuntime {
         if (initialized) return;
         initialized = true;
 
+        if (isVoxyManagedByFabricLoader()) return;
+
         if (hasForgifiedFabricLoader()) {
-            initializeForgifiedLoader();
-            invokeVoxyEntrypoints();
-        } else {
-            invokeFallbackLoader();
+            try {
+                initializeForgifiedLoader();
+            } catch (RuntimeException exception) {
+                if (!(exception.getCause() instanceof ClassNotFoundException)) throw exception;
+            }
+            if (isVoxyManagedByFabricLoader()) return;
+        }
+        invokeFallbackLoader();
+    }
+
+    private static boolean isVoxyManagedByFabricLoader() {
+        try {
+            Class<?> api = Class.forName(
+                    "net.fabricmc.loader.api.FabricLoader",
+                    false,
+                    RoxyFabricRuntime.class.getClassLoader()
+            );
+            Object loader = api.getMethod("getInstance").invoke(null);
+            if (loader == null || loader.getClass().getName().contains("RoxyFabricLoader")) return false;
+            return Boolean.TRUE.equals(api.getMethod("isModLoaded", String.class).invoke(loader, "voxy"));
+        } catch (ReflectiveOperationException | LinkageError ignored) {
+            return false;
         }
     }
 
