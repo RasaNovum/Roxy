@@ -10,7 +10,7 @@ plugins {
 }
 
 group = "net.rasanovum"
-version = "0.1.6"
+version = "0.1.6-d-1"
 
 prism {
     metadata {
@@ -146,9 +146,10 @@ project(":1.21.1") {
             into(packagedMainClassesDir)
         }
         val packagedRoxy = tasks.register<Copy>("copyPackagedRoxyToRunMods") {
-            dependsOn(prepareClientRun, tasks.named<Jar>("jar"), packagedMainClasses)
+            dependsOn(prepareClientRun, tasks.named<Jar>("jar"), fabricStubsJar, packagedMainClasses)
             from(tasks.named<Jar>("jar"))
-            into(layout.projectDirectory.dir("runs/client/packaged-mods"))
+            from(fabricStubsJar)
+            into(layout.projectDirectory.dir("runs/client/mods"))
         }
 
         tasks.register<JavaExec>("runClientPackaged") {
@@ -196,9 +197,7 @@ project(":1.21.1") {
                 environment = devRun.environment
                 // Keep the desktop/Gradle process from injecting another development-output copy.
                 environment.remove("CLASSPATH")
-                val mainClasses = mainClassDirectories.joinToString(File.pathSeparator) { "roxy%%${it.absolutePath}" }
-                val mainResources = "roxy%%${mainResourceDirectory.absolutePath}"
-                environment("MOD_CLASSES", "$mainClasses${File.pathSeparator}$mainResources")
+                environment.remove("MOD_CLASSES")
                 jvmArgs = devRun.jvmArgs
                     .filterNot { it.startsWith("-DlegacyClassPath.file=") }
                     .plus("-DlegacyClassPath.file=${packagedLegacyClasspath.get().asFile.absolutePath}")

@@ -1558,6 +1558,54 @@ public final class RoxyBytecodeRemapper {
                 );
                 method.visitVarInsn(Opcodes.ASTORE, 5);
                 method.visitLabel(render);
+                method.visitMethodInsn(
+                        Opcodes.INVOKESTATIC,
+                        "net/rasanovum/roxy/compat/RoxyFramebufferCompat",
+                        "prepareVoxySource",
+                        "()J",
+                        false
+                );
+                method.visitVarInsn(Opcodes.LSTORE, 6);
+                Label sourceReady = new Label();
+                method.visitVarInsn(Opcodes.LLOAD, 6);
+                method.visitInsn(Opcodes.L2I);
+                method.visitJumpInsn(Opcodes.IFNE, sourceReady);
+                method.visitMethodInsn(
+                        Opcodes.INVOKESTATIC,
+                        MINECRAFT,
+                        "getInstance",
+                        "()L" + MINECRAFT + ";",
+                        false
+                );
+                method.visitMethodInsn(
+                        Opcodes.INVOKEVIRTUAL,
+                        MINECRAFT,
+                        "getMainRenderTarget",
+                        "()Lcom/mojang/blaze3d/pipeline/RenderTarget;",
+                        false
+                );
+                method.visitInsn(Opcodes.ICONST_0);
+                method.visitMethodInsn(
+                        Opcodes.INVOKEVIRTUAL,
+                        "com/mojang/blaze3d/pipeline/RenderTarget",
+                        "bindWrite",
+                        "(Z)V",
+                        false
+                );
+                method.visitLabel(sourceReady);
+                method.visitMethodInsn(
+                        Opcodes.INVOKESTATIC,
+                        "net/rasanovum/roxy/compat/RoxyFramebufferCompat",
+                        "useMainColorAttachment",
+                        "()V",
+                        false
+                );
+                Label renderStart = new Label();
+                Label renderEnd = new Label();
+                Label renderFailed = new Label();
+                Label renderDone = new Label();
+                method.visitTryCatchBlock(renderStart, renderEnd, renderFailed, null);
+                method.visitLabel(renderStart);
                 method.visitVarInsn(Opcodes.ALOAD, 4);
                 method.visitVarInsn(Opcodes.ALOAD, 5);
                 method.visitMethodInsn(
@@ -1567,9 +1615,32 @@ public final class RoxyBytecodeRemapper {
                         "(L" + VOXY_VIEWPORT + ";)V",
                         false
                 );
+                method.visitLabel(renderEnd);
+                method.visitVarInsn(Opcodes.LLOAD, 6);
+                method.visitMethodInsn(
+                        Opcodes.INVOKESTATIC,
+                        "net/rasanovum/roxy/compat/RoxyFramebufferCompat",
+                        "restoreFramebuffer",
+                        "(J)V",
+                        false
+                );
+                method.visitJumpInsn(Opcodes.GOTO, renderDone);
+                method.visitLabel(renderFailed);
+                method.visitVarInsn(Opcodes.ASTORE, 8);
+                method.visitVarInsn(Opcodes.LLOAD, 6);
+                method.visitMethodInsn(
+                        Opcodes.INVOKESTATIC,
+                        "net/rasanovum/roxy/compat/RoxyFramebufferCompat",
+                        "restoreFramebuffer",
+                        "(J)V",
+                        false
+                );
+                method.visitVarInsn(Opcodes.ALOAD, 8);
+                method.visitInsn(Opcodes.ATHROW);
+                method.visitLabel(renderDone);
                 method.visitLabel(done);
                 method.visitInsn(Opcodes.RETURN);
-                method.visitMaxs(10, 6);
+                method.visitMaxs(10, 9);
                 method.visitEnd();
             }
 
