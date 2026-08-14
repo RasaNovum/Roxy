@@ -2,6 +2,8 @@ import org.gradle.language.jvm.tasks.ProcessResources
 import org.gradle.api.tasks.Copy
 import org.gradle.api.tasks.JavaExec
 import org.gradle.api.tasks.Sync
+import org.gradle.jvm.toolchain.JavaLanguageVersion
+import org.gradle.jvm.toolchain.JavaToolchainService
 import org.gradle.jvm.tasks.Jar
 import org.gradle.api.tasks.SourceSetContainer
 
@@ -10,7 +12,7 @@ plugins {
 }
 
 group = "net.rasanovum"
-version = "0.1.7-d-2"
+version = "0.1.7-d-OCL-1"
 
 prism {
     metadata {
@@ -106,7 +108,7 @@ project(":1.21.1") {
         }
         tasks.named<JavaExec>("runClient") {
             doFirst {
-                args("--quickPlaySingleplayer", "RoxyProofWorld-1.21.1")
+                args("--quickPlaySingleplayer", "RoxyOCLProofWorld-1.21.1")
             }
         }
 
@@ -148,14 +150,21 @@ project(":1.21.1") {
         val packagedRoxy = tasks.register<Copy>("copyPackagedRoxyToRunMods") {
             dependsOn(prepareClientRun, tasks.named<Jar>("jar"), fabricStubsJar, packagedMainClasses)
             from(tasks.named<Jar>("jar"))
-            from(fabricStubsJar)
             into(layout.projectDirectory.dir("runs/client/mods"))
+            doFirst {
+                layout.projectDirectory.file("runs/client/mods/roxy-fabric-stubs.jar").asFile.delete()
+            }
         }
 
         tasks.register<JavaExec>("runClientPackaged") {
             group = "mod development"
             description = "Runs the 1.21.1 client with Roxy loaded as a packaged mod."
             dependsOn(packagedRoxy)
+            if (System.getenv("ROXY_OCL_JAVA_HOME") != null) {
+                javaLauncher.set(project.extensions.getByType<JavaToolchainService>().launcherFor {
+                    languageVersion.set(JavaLanguageVersion.of(25))
+                })
+            }
             doFirst {
                 val devRun = runClient.get()
                 val bundledLibraryNames = fileTree(layout.projectDirectory.dir("runs/client/mods"))
@@ -204,7 +213,7 @@ project(":1.21.1") {
                 args = devRun.args.toMutableList().apply {
                     if (!contains("--quickPlaySingleplayer")) {
                         add("--quickPlaySingleplayer")
-                        add("RoxyProofWorld-1.21.1")
+                        add("RoxyOCLProofWorld-1.21.1")
                     }
                 }
             }

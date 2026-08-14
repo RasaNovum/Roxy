@@ -32,6 +32,7 @@ public final class RoxyDependencyLocator implements IDependencyLocator {
     @Override
     public void scanMods(List<IModFile> loadedMods, IDiscoveryPipeline pipeline) {
         boolean forgifiedFabricLoader = containsForgifiedFabricLoader(loadedMods);
+        boolean c2meOpenCl = containsC2meOpenCl(loadedMods);
 
         for (IModFile mod : loadedMods) {
             Path modPath = mod.getFilePath();
@@ -48,7 +49,7 @@ public final class RoxyDependencyLocator implements IDependencyLocator {
                     JsonElement file = entry.getAsJsonObject().get("file");
                     if (file == null || !file.isJsonPrimitive()) continue;
                     String fileName = file.getAsString();
-                    if (!isCurrentPlatformJar(fileName) || isMinecraftProvidedLibrary(fileName)) continue;
+                    if (!isCurrentPlatformJar(fileName) || isProvidedLibrary(fileName, c2meOpenCl)) continue;
                     try {
                         Path extracted = extract(contents, relocatedPath(fileName));
                         if (extracted == null) continue;
@@ -83,8 +84,14 @@ public final class RoxyDependencyLocator implements IDependencyLocator {
     private static boolean containsForgifiedFabricLoader(List<IModFile> loadedMods) {
         for (IModFile mod : loadedMods) {
             Path path = mod.getFilePath();
+            if (path == null) continue;
+            String fileName = path.getFileName().toString().toLowerCase(Locale.ROOT);
+            if (fileName.startsWith("forgified-fabric-loader-") || fileName.startsWith("forgified-fabric-api-")) {
+                return true;
+            }
             try {
                 if (Files.isDirectory(path)) {
+                    if (Files.exists(path.resolve("net/fabricmc/loader/api/FabricLoader.class"))) return true;
                     try (Stream<Path> files = Files.walk(path.resolve("META-INF/jars"), 1)) {
                         if (files.anyMatch(file -> isForgifiedFabricLoaderEntry(
                                 path.relativize(file).toString().replace('\\', '/')
@@ -98,12 +105,38 @@ public final class RoxyDependencyLocator implements IDependencyLocator {
                 try (ZipInputStream zip = new ZipInputStream(Files.newInputStream(path))) {
                     ZipEntry entry;
                     while ((entry = zip.getNextEntry()) != null) {
-                        if (isForgifiedFabricLoaderEntry(entry.getName())) {
+                        if (isForgifiedFabricLoaderEntry(entry.getName())
+                                || entry.getName().equals("net/fabricmc/loader/api/FabricLoader.class")) {
                             return true;
                         }
                     }
                 }
             } catch (IOException ignored) {
+            }
+        }
+        return false;
+    }
+
+    private static boolean containsC2meOpenCl(List<IModFile> loadedMods) {
+        for (IModFile mod : loadedMods) {
+            Path path = mod.getFilePath();
+            if (path == null) continue;
+            String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
+            if (name.contains("c2me") && name.contains("accel-opencl")) return true;
+            try (JarContents contents = JarContents.of(path)) {
+                if (RoxyJarContents.containsFile(
+                        contents,
+                        "META-INF/services/net.neoforged.neoforgespi.locating.IModFileCandidateLocator"
+                )) {
+                    try (InputStream input = RoxyJarContents.openFile(
+                            contents,
+                            "META-INF/services/net.neoforged.neoforgespi.locating.IModFileCandidateLocator"
+                    )) {
+                        if (input != null && new String(input.readAllBytes(), StandardCharsets.UTF_8)
+                                .contains("c2me.opts.accel.opencl")) return true;
+                    }
+                }
+            } catch (IOException | RuntimeException ignored) {
             }
         }
         return false;
@@ -155,10 +188,11 @@ public final class RoxyDependencyLocator implements IDependencyLocator {
         return true;
     }
 
-    private static boolean isMinecraftProvidedLibrary(String path) {
+    private static boolean isProvidedLibrary(String path, boolean c2meOpenCl) {
         String normalized = path.replace('\\', '/').toLowerCase(Locale.ROOT);
         String fileName = normalized.substring(normalized.lastIndexOf('/') + 1);
-        return fileName.startsWith("lz4-java-") && fileName.endsWith(".jar");
+        if (fileName.startsWith("lz4-java-") && fileName.endsWith(".jar")) return true;
+        return c2meOpenCl && fileName.startsWith("lwjgl-zstd-") && fileName.endsWith(".jar");
     }
 
     @Override
