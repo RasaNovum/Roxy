@@ -25,6 +25,8 @@ Roxy 1.21.1 is compatible with the following:
 
 Roxy 1.21.11 is not as polished as 1.21.1, it works properly with Sodium, but Iris, Create, Colorwheel, etc. may have issues.
 
+AMD GPUs using Mesa on Linux may show terrain-shaped gaps in shader-rendered water because of Mesa's Hyper-Z depth compression. Add `AMD_DEBUG=nohyperz` to the launcher's instance environment variables and restart the game.
+
 Other versions of the compatible mods listed above have not been explicitly tested and may not work as intended. If you try something else out and it works, let us know in [Discord](https://discord.gg/WGh4mq6W5U)!
 
 Please report any major incompatibilities or bugs, along with logs, on the [Github](https://github.com/RasaNovum/Roxy/issues).

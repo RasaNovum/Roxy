@@ -5,6 +5,7 @@
   "compatibilityLevel": "JAVA_21",
     "client": [
         "VoxyShaderResourceMixin",
+        "RoxySoftwareRasterizerMixin",
         "RoxyFogRendererMixin",
         "RoxyGameRendererMixin",
         "RoxyIrisRenderTargetMixin",
