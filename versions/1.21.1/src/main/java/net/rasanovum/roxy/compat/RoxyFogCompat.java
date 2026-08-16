@@ -1,4 +1,4 @@
-package net.rasanovum.roxy.mixin;
+package net.rasanovum.roxy.compat;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
