@@ -4,6 +4,7 @@ import com.mojang.logging.LogUtils;
 import net.minecraft.client.Camera;
 import net.rasanovum.roxy.loader.RoxyFogParameters;
 import org.joml.Matrix4f;
+import org.lwjgl.opengl.GL11;
 import org.slf4j.Logger;
 
 import java.lang.reflect.Constructor;
@@ -21,6 +22,8 @@ public final class RoxyIrisViewportCompat {
     private static final String VOXY_RENDER_SYSTEM = "me.cortex.voxy.client.core.VoxyRenderSystem";
 
     private static volatile Accessors accessors;
+    private static volatile boolean capturedViewportReady;
+    private static volatile boolean captureSuccessLogged;
     private static volatile boolean accessorsFailureLogged;
     private static volatile boolean captureFailureLogged;
 
@@ -56,6 +59,15 @@ public final class RoxyIrisViewportCompat {
             Method getRenderSystem = levelRenderer.getClass().getMethod("voxy$getRenderSystem");
             Object renderer = getRenderSystem.invoke(levelRenderer);
             if (renderer != null) {
+                int[] dimensions = getMainTargetDimensions(levelRenderer.getClass().getClassLoader());
+                GL11.glViewport(0, 0, dimensions[0], dimensions[1]);
+                current.apply.invoke(captured, renderer);
+                current.capturedViewport.set(null, null);
+                capturedViewportReady = true;
+                if (!captureSuccessLogged) {
+                    captureSuccessLogged = true;
+                    LOGGER.info("Roxy Iris viewport bridge active at {}x{}", dimensions[0], dimensions[1]);
+                }
                 current.apply.invoke(captured, renderer);
             }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
@@ -65,6 +77,19 @@ public final class RoxyIrisViewportCompat {
                 LOGGER.warn("Roxy could not apply Voxy's Iris viewport bridge", exception);
             }
         }
+    }
+
+    private static int[] getMainTargetDimensions(ClassLoader loader) throws ReflectiveOperationException {
+        Class<?> minecraftClass = Class.forName("net.minecraft.client.Minecraft", false, loader);
+        Object minecraft = minecraftClass.getMethod("getInstance").invoke(null);
+        Object target = minecraftClass.getMethod("getMainRenderTarget").invoke(minecraft);
+        return new int[]{target.getClass().getField("width").getInt(target), target.getClass().getField("height").getInt(target)};
+    }
+
+    public static boolean consumeCapturedViewport() {
+        if (!capturedViewportReady) return false;
+        capturedViewportReady = false;
+        return true;
     }
 
     private static Accessors getAccessors() {

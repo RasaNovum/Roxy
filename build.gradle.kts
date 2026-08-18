@@ -12,7 +12,7 @@ plugins {
 }
 
 group = "net.rasanovum"
-version = "0.1.7-d-OCL-1"
+version = "0.1.9-d-1"
 
 prism {
     metadata {
@@ -152,6 +152,9 @@ project(":1.21.1") {
             from(tasks.named<Jar>("jar"))
             into(layout.projectDirectory.dir("runs/client/mods"))
             doFirst {
+                fileTree(layout.projectDirectory.dir("runs/client/mods")) {
+                    include("roxy-*.jar")
+                }.files.forEach { it.delete() }
                 layout.projectDirectory.file("runs/client/mods/roxy-fabric-stubs.jar").asFile.delete()
             }
         }

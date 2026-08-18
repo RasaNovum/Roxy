@@ -131,6 +131,7 @@ public final class RoxyBytecodeRemapper {
     private static final String VOXY_CONFIG_MENU = "me/cortex/voxy/client/config/VoxyConfigMenu";
     private static final String VOXY_VIEWPORT = "me/cortex/voxy/client/core/rendering/Viewport";
     private static final String VOXY_RENDER_PROPERTIES = "me/cortex/voxy/client/core/RenderProperties";
+    private static final String VOXY_IRIS_RENDER_PIPELINE = "me/cortex/voxy/client/core/IrisVoxyRenderPipeline";
     private static final String VOXY_DEFAULT_CHUNK_RENDERER = "me/cortex/voxy/client/mixin/sodium/MixinDefaultChunkRenderer";
     private static final String SODIUM_CHUNK_RENDER_MATRICES = "net/caffeinemc/mods/sodium/client/render/chunk/ChunkRenderMatrices";
     private static final String SODIUM_TERRAIN_RENDER_PASS = "net/caffeinemc/mods/sodium/client/render/chunk/terrain/TerrainRenderPass";
@@ -171,6 +172,7 @@ public final class RoxyBytecodeRemapper {
         output = patchVoxyVertexConsumer(output);
         output = patchVoxyLightMapHelper(output);
         output = patchVoxyIrisPipeline(output);
+        output = patchVoxyIrisDepthOutput(output);
         output = patchVoxyIrisSamplers(output);
         output = patchVoxyIrisSamplerHolder(output);
         output = patchVoxyGsonCompatibility(output);
@@ -179,6 +181,115 @@ public final class RoxyBytecodeRemapper {
         output = patchVoxyConfigMenu(output);
         output = patchMinecraftVersionBridges(output);
         return patchFabricMetadata ? patchFabricMetadataAccess(output) : output;
+    }
+
+    private static byte[] patchVoxyIrisDepthOutput(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals(VOXY_IRIS_RENDER_PIPELINE)) return input;
+
+        ClassWriter writer = new ClassWriter(reader, 0);
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                MethodVisitor delegate = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (!name.equals("finish") || !descriptor.equals("(L" + VOXY_VIEWPORT + ";III)V")) return delegate;
+
+                delegate.visitCode();
+                Label disableStencil = new Label();
+                Label dimensionsMatch = new Label();
+                Label renderDepth = new Label();
+                Label depthRendered = new Label();
+                Label done = new Label();
+
+                delegate.visitVarInsn(Opcodes.ALOAD, 0);
+                delegate.visitFieldInsn(Opcodes.GETFIELD, VOXY_IRIS_RENDER_PIPELINE, "data", "L" + VOXY_IRIS_PIPELINE_DATA + ";");
+                delegate.visitFieldInsn(Opcodes.GETFIELD, VOXY_IRIS_PIPELINE_DATA, "renderToVanillaDepth", "Z");
+                delegate.visitJumpInsn(Opcodes.IFEQ, disableStencil);
+
+                delegate.visitVarInsn(Opcodes.ILOAD, 3);
+                delegate.visitVarInsn(Opcodes.ALOAD, 1);
+                delegate.visitFieldInsn(Opcodes.GETFIELD, VOXY_VIEWPORT, "width", "I");
+                delegate.visitJumpInsn(Opcodes.IF_ICMPNE, dimensionsMatch);
+                delegate.visitVarInsn(Opcodes.ILOAD, 4);
+                delegate.visitVarInsn(Opcodes.ALOAD, 1);
+                delegate.visitFieldInsn(Opcodes.GETFIELD, VOXY_VIEWPORT, "height", "I");
+                delegate.visitJumpInsn(Opcodes.IF_ICMPEQ, renderDepth);
+
+                delegate.visitLabel(dimensionsMatch);
+                delegate.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+                delegate.visitVarInsn(Opcodes.ALOAD, 0);
+                delegate.visitFieldInsn(Opcodes.GETFIELD, VOXY_IRIS_RENDER_PIPELINE, "data", "L" + VOXY_IRIS_PIPELINE_DATA + ";");
+                delegate.visitFieldInsn(Opcodes.GETFIELD, VOXY_IRIS_PIPELINE_DATA, "useViewportDims", "Z");
+                delegate.visitJumpInsn(Opcodes.IFEQ, done);
+                delegate.visitInsn(Opcodes.ICONST_0);
+                delegate.visitInsn(Opcodes.ICONST_0);
+                delegate.visitVarInsn(Opcodes.ALOAD, 1);
+                delegate.visitFieldInsn(Opcodes.GETFIELD, VOXY_VIEWPORT, "width", "I");
+                delegate.visitVarInsn(Opcodes.ALOAD, 1);
+                delegate.visitFieldInsn(Opcodes.GETFIELD, VOXY_VIEWPORT, "height", "I");
+                delegate.visitMethodInsn(Opcodes.INVOKESTATIC, "org/lwjgl/opengl/GL45C", "glViewport", "(IIII)V", false);
+
+                delegate.visitLabel(renderDepth);
+                delegate.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+                delegate.visitInsn(Opcodes.ICONST_0);
+                delegate.visitInsn(Opcodes.ICONST_0);
+                delegate.visitInsn(Opcodes.ICONST_0);
+                delegate.visitInsn(Opcodes.ICONST_0);
+                delegate.visitMethodInsn(Opcodes.INVOKESTATIC, "org/lwjgl/opengl/GL45C", "glColorMask", "(ZZZZ)V", false);
+                delegate.visitVarInsn(Opcodes.ALOAD, 0);
+                delegate.visitFieldInsn(Opcodes.GETFIELD, VOXY_IRIS_RENDER_PIPELINE, "depthBlit", "Lme/cortex/voxy/client/core/rendering/post/FullscreenBlit;");
+                delegate.visitVarInsn(Opcodes.ALOAD, 0);
+                delegate.visitFieldInsn(Opcodes.GETFIELD, VOXY_IRIS_RENDER_PIPELINE, "fbTranslucent", "Lme/cortex/voxy/client/core/rendering/util/DepthFramebuffer;");
+                delegate.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "me/cortex/voxy/client/core/rendering/util/DepthFramebuffer", "getDepthTex", "()Lme/cortex/voxy/client/core/gl/GlTexture;", false);
+                delegate.visitFieldInsn(Opcodes.GETFIELD, "me/cortex/voxy/client/core/gl/GlTexture", "id", "I");
+                delegate.visitVarInsn(Opcodes.ILOAD, 2);
+                delegate.visitVarInsn(Opcodes.ALOAD, 1);
+                delegate.visitTypeInsn(Opcodes.NEW, "org/joml/Matrix4f");
+                delegate.visitInsn(Opcodes.DUP);
+                delegate.visitVarInsn(Opcodes.ALOAD, 1);
+                delegate.visitFieldInsn(Opcodes.GETFIELD, VOXY_VIEWPORT, "vanillaProjection", "Lorg/joml/Matrix4f;");
+                delegate.visitMethodInsn(Opcodes.INVOKESPECIAL, "org/joml/Matrix4f", "<init>", "(Lorg/joml/Matrix4fc;)V", false);
+                delegate.visitVarInsn(Opcodes.ALOAD, 1);
+                delegate.visitFieldInsn(Opcodes.GETFIELD, VOXY_VIEWPORT, "modelView", "Lorg/joml/Matrix4f;");
+                delegate.visitMethodInsn(Opcodes.INVOKEVIRTUAL, "org/joml/Matrix4f", "mul", "(Lorg/joml/Matrix4fc;)Lorg/joml/Matrix4f;", false);
+                delegate.visitMethodInsn(Opcodes.INVOKESTATIC, "me/cortex/voxy/client/core/AbstractRenderPipeline", "transformBlitDepth", "(Lme/cortex/voxy/client/core/rendering/post/FullscreenBlit;IIL" + VOXY_VIEWPORT + ";Lorg/joml/Matrix4f;)V", false);
+
+                delegate.visitVarInsn(Opcodes.ILOAD, 3);
+                delegate.visitVarInsn(Opcodes.ALOAD, 1);
+                delegate.visitFieldInsn(Opcodes.GETFIELD, VOXY_VIEWPORT, "width", "I");
+                delegate.visitJumpInsn(Opcodes.IF_ICMPNE, depthRendered);
+                delegate.visitVarInsn(Opcodes.ILOAD, 4);
+                delegate.visitVarInsn(Opcodes.ALOAD, 1);
+                delegate.visitFieldInsn(Opcodes.GETFIELD, VOXY_VIEWPORT, "height", "I");
+                delegate.visitJumpInsn(Opcodes.IF_ICMPEQ, done);
+                delegate.visitLabel(depthRendered);
+                delegate.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+                delegate.visitInsn(Opcodes.ICONST_0);
+                delegate.visitInsn(Opcodes.ICONST_0);
+                delegate.visitVarInsn(Opcodes.ILOAD, 3);
+                delegate.visitVarInsn(Opcodes.ILOAD, 4);
+                delegate.visitMethodInsn(Opcodes.INVOKESTATIC, "org/lwjgl/opengl/GL45C", "glViewport", "(IIII)V", false);
+                delegate.visitJumpInsn(Opcodes.GOTO, done);
+
+                delegate.visitLabel(disableStencil);
+                delegate.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+                delegate.visitIntInsn(Opcodes.SIPUSH, 2960);
+                delegate.visitMethodInsn(Opcodes.INVOKESTATIC, "org/lwjgl/opengl/GL45C", "glDisable", "(I)V", false);
+
+                delegate.visitLabel(done);
+                delegate.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+                delegate.visitInsn(Opcodes.ICONST_1);
+                delegate.visitInsn(Opcodes.ICONST_1);
+                delegate.visitInsn(Opcodes.ICONST_1);
+                delegate.visitInsn(Opcodes.ICONST_1);
+                delegate.visitMethodInsn(Opcodes.INVOKESTATIC, "org/lwjgl/opengl/GL45C", "glColorMask", "(ZZZZ)V", false);
+                delegate.visitInsn(Opcodes.RETURN);
+                delegate.visitMaxs(7, 5);
+                delegate.visitEnd();
+                return null;
+            }
+        }, 0);
+        return writer.toByteArray();
     }
 
     private static byte[] patchVoxyConfigDefaults(byte[] input) {
@@ -1524,8 +1635,8 @@ public final class RoxyBytecodeRemapper {
                 method.visitVarInsn(Opcodes.ASTORE, 5);
                 method.visitMethodInsn(
                         Opcodes.INVOKESTATIC,
-                        "me/cortex/voxy/client/core/util/IrisUtil",
-                        "irisShaderPackEnabled",
+                        "net/rasanovum/roxy/mixin/RoxyIrisViewportCompat",
+                        "consumeCapturedViewport",
                         "()Z",
                         false
                 );
