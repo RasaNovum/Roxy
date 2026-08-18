@@ -1,4 +1,4 @@
-package net.rasanovum.roxy.mixin;
+package net.rasanovum.roxy.compat;
 
 import com.mojang.logging.LogUtils;
 import net.minecraft.client.Camera;
