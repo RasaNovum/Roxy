@@ -1,10 +1,12 @@
 package net.rasanovum.roxy;
 
 import net.rasanovum.roxy.loader.RoxyFabricRuntime;
+import net.rasanovum.roxy.compat.RoxyPowerGridCompat;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
+import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.common.NeoForge;
 
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
@@ -14,6 +16,7 @@ public final class RoxyNeoForge {
     public RoxyNeoForge(IEventBus modBus) {
         modBus.addListener(this::onClientSetup);
         NeoForge.EVENT_BUS.addListener(this::onRegisterClientCommands);
+        NeoForge.EVENT_BUS.addListener(this::onRenderLevelStage);
     }
 
     private void onClientSetup(FMLClientSetupEvent event) {
@@ -29,5 +32,9 @@ public final class RoxyNeoForge {
         } catch (ReflectiveOperationException | LinkageError exception) {
             System.err.println("Roxy: unable to register the Voxy client command: " + exception);
         }
+    }
+
+    private void onRenderLevelStage(RenderLevelStageEvent event) {
+        RoxyPowerGridCompat.render(event);
     }
 }

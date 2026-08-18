@@ -11,7 +11,7 @@ import java.io.InputStream;
 
 
 @Mixin(targets = "me.cortex.voxy.client.core.gl.shader.ShaderLoader$ShaderLoadingParser", remap = false)
-public final class VoxyShaderResourceMixin {
+public final class RoxyShaderResourceMixin {
     @Redirect(
             method = "loadShaderAsset",
             at = @At(
@@ -45,7 +45,7 @@ public final class VoxyShaderResourceMixin {
 
         return roxy$patchShaderResource(
                 path,
-                VoxyShaderResourceMixin.class.getClassLoader().getResourceAsStream(path)
+                RoxyShaderResourceMixin.class.getClassLoader().getResourceAsStream(path)
         );
     }
 
