@@ -68,6 +68,7 @@ public final class RoxyIrisViewportCompat {
                     captureSuccessLogged = true;
                     LOGGER.info("Roxy Iris viewport bridge active at {}x{}", dimensions[0], dimensions[1]);
                 }
+                current.apply.invoke(captured, renderer);
             }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
             // Iris and Voxy remain optional at this boundary. If their runtime ABI changes, the normal non-Iris viewport path must remain usable.
