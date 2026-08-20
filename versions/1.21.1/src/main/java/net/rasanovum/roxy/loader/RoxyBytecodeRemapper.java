@@ -141,6 +141,7 @@ public final class RoxyBytecodeRemapper {
     private static final String CHUNK_SECTION_LAYER_NEW = "net/minecraft/class_11515";
     private static final String RENDER_TYPE = "net/minecraft/client/renderer/RenderType";
     private static final String ITEM_BLOCK_RENDER_TYPES = "net/minecraft/client/renderer/ItemBlockRenderTypes";
+    private static final String RENDER_TYPE_COMPAT = "net/rasanovum/roxy/loader/RoxyRenderTypeCompat";
     private static final String VOXY_SETUP_VIEWPORT_1_21_1 =
             "(L" + SODIUM_CHUNK_RENDER_MATRICES + ";DDD)L" + VOXY_VIEWPORT + ";";
 
@@ -220,7 +221,7 @@ public final class RoxyBytecodeRemapper {
                 delegate.visitVarInsn(Opcodes.ALOAD, 0);
                 delegate.visitFieldInsn(Opcodes.GETFIELD, VOXY_IRIS_RENDER_PIPELINE, "data", "L" + VOXY_IRIS_PIPELINE_DATA + ";");
                 delegate.visitFieldInsn(Opcodes.GETFIELD, VOXY_IRIS_PIPELINE_DATA, "useViewportDims", "Z");
-                delegate.visitJumpInsn(Opcodes.IFEQ, done);
+                delegate.visitJumpInsn(Opcodes.IFEQ, disableStencil);
                 delegate.visitInsn(Opcodes.ICONST_0);
                 delegate.visitInsn(Opcodes.ICONST_0);
                 delegate.visitVarInsn(Opcodes.ALOAD, 1);
@@ -274,6 +275,8 @@ public final class RoxyBytecodeRemapper {
                 delegate.visitLabel(disableStencil);
                 delegate.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
                 delegate.visitIntInsn(Opcodes.SIPUSH, 2960);
+                delegate.visitMethodInsn(Opcodes.INVOKESTATIC, "org/lwjgl/opengl/GL45C", "glDisable", "(I)V", false);
+                delegate.visitIntInsn(Opcodes.SIPUSH, 2929);
                 delegate.visitMethodInsn(Opcodes.INVOKESTATIC, "org/lwjgl/opengl/GL45C", "glDisable", "(I)V", false);
 
                 delegate.visitLabel(done);
@@ -543,6 +546,19 @@ public final class RoxyBytecodeRemapper {
                                 && descriptor.equals(
                                 "(Lnet/minecraft/world/level/material/FluidState;)L" + RENDER_TYPE + ";")) {
                             super.visitMethodInsn(opcode, owner, "getRenderLayer", descriptor, false);
+                        } else if (opcode == Opcodes.INVOKESTATIC
+                                && owner.equals(ITEM_BLOCK_RENDER_TYPES)
+                                && descriptor.equals("(L" + BLOCK_STATE + ";)L" + RENDER_TYPE + ";")) {
+                            super.visitInsn(Opcodes.DUP);
+                            super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
+                            super.visitMethodInsn(
+                                    Opcodes.INVOKESTATIC,
+                                    RENDER_TYPE_COMPAT,
+                                    "getChunkRenderType",
+                                    "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
+                                    false
+                            );
+                            super.visitTypeInsn(Opcodes.CHECKCAST, RENDER_TYPE);
                         } else if (opcode == Opcodes.INVOKEINTERFACE
                                 && owner.equals("net/minecraft/core/Registry")
                                 && name.equals("get")
