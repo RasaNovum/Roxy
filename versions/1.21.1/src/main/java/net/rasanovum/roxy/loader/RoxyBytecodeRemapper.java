@@ -1635,7 +1635,7 @@ public final class RoxyBytecodeRemapper {
                 method.visitVarInsn(Opcodes.ASTORE, 5);
                 method.visitMethodInsn(
                         Opcodes.INVOKESTATIC,
-                        "net/rasanovum/roxy/mixin/RoxyIrisViewportCompat",
+                        "net/rasanovum/roxy/compat/RoxyIrisViewportCompat",
                         "consumeCapturedViewport",
                         "()Z",
                         false
