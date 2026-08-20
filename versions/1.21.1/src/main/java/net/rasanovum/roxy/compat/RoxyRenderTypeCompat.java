@@ -1,4 +1,4 @@
-package net.rasanovum.roxy.loader;
+package net.rasanovum.roxy.compat;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -24,11 +24,21 @@ public final class RoxyRenderTypeCompat {
             );
             Field emptyField = modelDataClass.getField("EMPTY");
             Object modelData = emptyField.get(null);
-            Method getRenderTypes = findMethod(model.getClass(), "getRenderTypes", 3);
+            Class<?> bakedModelClass = Class.forName(
+                    "net.minecraft.client.resources.model.BakedModel",
+                    false,
+                    loader
+            );
+            Method getRenderTypes = findMethod(bakedModelClass, "getRenderTypes", 3);
             Object types = getRenderTypes.invoke(model, state, random, modelData);
 
             Class<?> renderTypeClass = Class.forName("net.minecraft.client.renderer.RenderType", false, loader);
-            Method contains = types.getClass().getMethod("contains", renderTypeClass);
+            Class<?> renderTypeSetClass = Class.forName(
+                    "net.neoforged.neoforge.client.ChunkRenderTypeSet",
+                    false,
+                    loader
+            );
+            Method contains = renderTypeSetClass.getMethod("contains", renderTypeClass);
             for (String methodName : new String[]{"translucent", "cutoutMipped", "cutout", "tripwire", "solid"}) {
                 Object renderType = renderTypeClass.getMethod(methodName).invoke(null);
                 if ((Boolean) contains.invoke(types, renderType)) {
@@ -36,8 +46,8 @@ public final class RoxyRenderTypeCompat {
                 }
             }
             return fallback;
-        } catch (ReflectiveOperationException exception) {
-            throw new IllegalStateException("Unable to resolve NeoForge model render types", exception);
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException exception) {
+            return fallback;
         }
     }
 

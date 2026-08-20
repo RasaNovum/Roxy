@@ -35,7 +35,7 @@ public final class RoxyBytecodeRemapper {
     private static final String GL_TEXTURE = "com/mojang/blaze3d/opengl/GlTexture";
     private static final String GPU_COMPAT = "net/rasanovum/roxy/loader/RoxyGpuCompat";
     private static final String BLOCK_COLORS = "net/minecraft/client/color/block/BlockColors";
-    private static final String COLOR_COMPAT = "net/rasanovum/roxy/loader/RoxyColorCompat";
+    private static final String COLOR_COMPAT = "net/rasanovum/roxy/compat/RoxyColorCompat";
 
     private RoxyBytecodeRemapper() {
     }

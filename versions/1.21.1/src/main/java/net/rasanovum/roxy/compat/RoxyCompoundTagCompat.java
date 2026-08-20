@@ -1,4 +1,4 @@
-package net.rasanovum.roxy.loader;
+package net.rasanovum.roxy.compat;
 
 import java.lang.reflect.Method;
 import java.util.Optional;
