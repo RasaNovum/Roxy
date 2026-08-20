@@ -1,4 +1,4 @@
-package net.rasanovum.roxy.loader;
+package net.rasanovum.roxy.compat;
 
 import net.minecraft.client.color.block.BlockColor;
 import net.minecraft.client.color.block.BlockColors;

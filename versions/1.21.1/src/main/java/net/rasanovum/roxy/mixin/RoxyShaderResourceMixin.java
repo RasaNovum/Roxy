@@ -6,8 +6,10 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 
 
 @Mixin(targets = "me.cortex.voxy.client.core.gl.shader.ShaderLoader$ShaderLoadingParser", remap = false)
@@ -50,7 +52,25 @@ public final class RoxyShaderResourceMixin {
     }
 
     private static InputStream roxy$patchShaderResource(String path, InputStream input) {
-        return input;
+        if (input == null) return input;
+
+        try {
+            String source = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+            if (path.endsWith("/assets/voxy/shaders/lod/quad_util.glsl")) {
+                source = source.replace(
+                        "quad.basePoint = (quadStart*lodScale)+vec3(baseSection<<5);",
+                        "quad.basePoint = (quadStart*lodScale)+vec3(baseSection<<5)-vec3(0.0, lodScale-1.0, 0.0);"
+                );
+            } else if (path.endsWith("/assets/voxy/shaders/chunkoutline/outline.vsh")) {
+                source = source.replace(
+                        "mix(mix(ivec3(0), icorner-1, greaterThan(icorner-1, ivec3(0))), icorner+17, lessThan(icorner+17, ivec3(0)))",
+                        "mix(mix(ivec3(0), icorner, greaterThan(icorner, ivec3(0))), icorner+16, lessThan(icorner+16, ivec3(0)))"
+                );
+            }
+            return new ByteArrayInputStream(source.getBytes(StandardCharsets.UTF_8));
+        } catch (IOException ignored) {
+            return input;
+        }
     }
 
     private static InputStream roxy$openFromResourceManager(String path) {

@@ -1,4 +1,4 @@
-package net.rasanovum.roxy.loader;
+package net.rasanovum.roxy.compat;
 
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL15C;

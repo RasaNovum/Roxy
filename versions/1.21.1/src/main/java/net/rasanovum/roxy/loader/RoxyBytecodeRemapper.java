@@ -34,7 +34,7 @@ public final class RoxyBytecodeRemapper {
     private static final String MODIFY_VARIABLE = "Lorg/spongepowered/asm/mixin/injection/ModifyVariable;";
     private static final String MODIFY_CONSTANT = "Lorg/spongepowered/asm/mixin/injection/ModifyConstant;";
     private static final String BLOCK_COLORS = "net/minecraft/client/color/block/BlockColors";
-    private static final String COLOR_COMPAT = "net/rasanovum/roxy/loader/RoxyColorCompat";
+    private static final String COLOR_COMPAT = "net/rasanovum/roxy/compat/RoxyColorCompat";
     private static final String COLOR_HELPER_NEW = "net/minecraft/class_9848";
     private static final String FABRIC_METADATA = "net/fabricmc/loader/api/metadata/ModMetadata";
     private static final String FABRIC_CUSTOM_VALUE = "net/fabricmc/loader/api/metadata/CustomValue";
@@ -80,16 +80,16 @@ public final class RoxyBytecodeRemapper {
     private static final String VOXY_RENDER_SYSTEM_CALLBACK_NEW =
             "(IZLorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V";
     private static final String BLOCK_STATE = "net/minecraft/world/level/block/state/BlockState";
-    private static final String BLOCK_STATE_COMPAT = "net/rasanovum/roxy/loader/RoxyBlockStateCompat";
+    private static final String BLOCK_STATE_COMPAT = "net/rasanovum/roxy/compat/RoxyBlockStateCompat";
     private static final String COMPOUND_TAG = "net/minecraft/nbt/CompoundTag";
-    private static final String COMPOUND_TAG_COMPAT = "net/rasanovum/roxy/loader/RoxyCompoundTagCompat";
+    private static final String COMPOUND_TAG_COMPAT = "net/rasanovum/roxy/compat/RoxyCompoundTagCompat";
     private static final String TEXTURE_ATLAS = "net/minecraft/client/renderer/texture/TextureAtlas";
-    private static final String TEXTURE_ATLAS_COMPAT = "net/rasanovum/roxy/loader/RoxyTextureAtlasCompat";
+    private static final String TEXTURE_ATLAS_COMPAT = "net/rasanovum/roxy/compat/RoxyTextureAtlasCompat";
     private static final String VOXY_TEXTURE_BAKERY = "me/cortex/voxy/client/core/model/bakery/SoftwareModelTextureBakery";
-    private static final String TEXTURE_COMPAT = "net/rasanovum/roxy/loader/RoxyTextureCompat";
+    private static final String TEXTURE_COMPAT = "net/rasanovum/roxy/compat/RoxyTextureCompat";
     private static final String VOXY_RASTERIZER = "Lme/cortex/voxy/client/core/model/bakery/SoftwareRasterizer;";
     private static final String VOXY_LIGHT_MAP_HELPER = "me/cortex/voxy/client/core/rendering/util/LightMapHelper";
-    private static final String LIGHT_MAP_COMPAT = "net/rasanovum/roxy/loader/RoxyLightMapCompat";
+    private static final String LIGHT_MAP_COMPAT = "net/rasanovum/roxy/compat/RoxyLightMapCompat";
     private static final String VOXY_IRIS_PIPELINE_MIXIN =
             "me/cortex/voxy/client/mixin/iris/MixinIrisRenderingPipeline";
     private static final String VOXY_IRIS_SHADER_PATCH =
@@ -107,11 +107,11 @@ public final class RoxyBytecodeRemapper {
     private static final String IRIS_GL_SAMPLER =
             "net/irisshaders/iris/gl/sampler/GlSampler";
     private static final String IRIS_SAMPLER_COMPAT =
-            "net/rasanovum/roxy/loader/RoxyIrisCompat";
+            "net/rasanovum/roxy/compat/RoxyIrisCompat";
     private static final String GSON_BUILDER = "com/google/gson/GsonBuilder";
     private static final String GSON_STRICTNESS = "com/google/gson/Strictness";
     private static final String VOXY_VERTEX_CONSUMER = "me/cortex/voxy/client/core/model/bakery/ReuseVertexConsumer";
-    private static final String VOXY_VERTEX_CONSUMER_COMPAT = "net/rasanovum/roxy/loader/RoxyBakedQuadCompat";
+    private static final String VOXY_VERTEX_CONSUMER_COMPAT = "net/rasanovum/roxy/compat/RoxyBakedQuadCompat";
     private static final String BAKED_MODEL = "net/minecraft/client/resources/model/BakedModel";
     private static final String BAKED_QUAD = "net/minecraft/client/renderer/block/model/BakedQuad";
     private static final String TEXTURE_ATLAS_SPRITE = "net/minecraft/client/renderer/texture/TextureAtlasSprite";
@@ -137,10 +137,11 @@ public final class RoxyBytecodeRemapper {
     private static final String SODIUM_TERRAIN_RENDER_PASS = "net/caffeinemc/mods/sodium/client/render/chunk/terrain/TerrainRenderPass";
     private static final String SODIUM_CAMERA_TRANSFORM = "net/caffeinemc/mods/sodium/client/render/viewport/CameraTransform";
     private static final String SODIUM_FOG_PARAMETERS_NEW = "net/caffeinemc/mods/sodium/client/util/FogParameters";
-    private static final String SODIUM_FOG_PARAMETERS = "net/rasanovum/roxy/loader/RoxyFogParameters";
+    private static final String SODIUM_FOG_PARAMETERS = "net/rasanovum/roxy/compat/RoxyFogParameters";
     private static final String CHUNK_SECTION_LAYER_NEW = "net/minecraft/class_11515";
     private static final String RENDER_TYPE = "net/minecraft/client/renderer/RenderType";
     private static final String ITEM_BLOCK_RENDER_TYPES = "net/minecraft/client/renderer/ItemBlockRenderTypes";
+    private static final String RENDER_TYPE_COMPAT = "net/rasanovum/roxy/compat/RoxyRenderTypeCompat";
     private static final String VOXY_SETUP_VIEWPORT_1_21_1 =
             "(L" + SODIUM_CHUNK_RENDER_MATRICES + ";DDD)L" + VOXY_VIEWPORT + ";";
 
@@ -220,7 +221,7 @@ public final class RoxyBytecodeRemapper {
                 delegate.visitVarInsn(Opcodes.ALOAD, 0);
                 delegate.visitFieldInsn(Opcodes.GETFIELD, VOXY_IRIS_RENDER_PIPELINE, "data", "L" + VOXY_IRIS_PIPELINE_DATA + ";");
                 delegate.visitFieldInsn(Opcodes.GETFIELD, VOXY_IRIS_PIPELINE_DATA, "useViewportDims", "Z");
-                delegate.visitJumpInsn(Opcodes.IFEQ, done);
+                delegate.visitJumpInsn(Opcodes.IFEQ, disableStencil);
                 delegate.visitInsn(Opcodes.ICONST_0);
                 delegate.visitInsn(Opcodes.ICONST_0);
                 delegate.visitVarInsn(Opcodes.ALOAD, 1);
@@ -274,6 +275,8 @@ public final class RoxyBytecodeRemapper {
                 delegate.visitLabel(disableStencil);
                 delegate.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
                 delegate.visitIntInsn(Opcodes.SIPUSH, 2960);
+                delegate.visitMethodInsn(Opcodes.INVOKESTATIC, "org/lwjgl/opengl/GL45C", "glDisable", "(I)V", false);
+                delegate.visitIntInsn(Opcodes.SIPUSH, 2929);
                 delegate.visitMethodInsn(Opcodes.INVOKESTATIC, "org/lwjgl/opengl/GL45C", "glDisable", "(I)V", false);
 
                 delegate.visitLabel(done);
@@ -543,6 +546,19 @@ public final class RoxyBytecodeRemapper {
                                 && descriptor.equals(
                                 "(Lnet/minecraft/world/level/material/FluidState;)L" + RENDER_TYPE + ";")) {
                             super.visitMethodInsn(opcode, owner, "getRenderLayer", descriptor, false);
+                        } else if (opcode == Opcodes.INVOKESTATIC
+                                && owner.equals(ITEM_BLOCK_RENDER_TYPES)
+                                && descriptor.equals("(L" + BLOCK_STATE + ";)L" + RENDER_TYPE + ";")) {
+                            super.visitInsn(Opcodes.DUP);
+                            super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
+                            super.visitMethodInsn(
+                                    Opcodes.INVOKESTATIC,
+                                    RENDER_TYPE_COMPAT,
+                                    "getChunkRenderType",
+                                    "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;",
+                                    false
+                            );
+                            super.visitTypeInsn(Opcodes.CHECKCAST, RENDER_TYPE);
                         } else if (opcode == Opcodes.INVOKEINTERFACE
                                 && owner.equals("net/minecraft/core/Registry")
                                 && name.equals("get")
@@ -1635,7 +1651,7 @@ public final class RoxyBytecodeRemapper {
                 method.visitVarInsn(Opcodes.ASTORE, 5);
                 method.visitMethodInsn(
                         Opcodes.INVOKESTATIC,
-                        "net/rasanovum/roxy/mixin/RoxyIrisViewportCompat",
+                        "net/rasanovum/roxy/compat/RoxyIrisViewportCompat",
                         "consumeCapturedViewport",
                         "()Z",
                         false

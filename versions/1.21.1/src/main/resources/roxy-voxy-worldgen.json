@@ -6,7 +6,8 @@
   "mixins": [
     "RoxyChunkyNeoForgeWorldMixin",
     "RoxyChunksmithVoxyRadiusMixin",
-    "RoxyChunksmithVoxyTargetMixin"
+    "RoxyChunksmithVoxyTargetMixin",
+    "RoxyVoxyWorldgenIngestMixin"
   ],
   "injectors": {
     "defaultRequire": 1
