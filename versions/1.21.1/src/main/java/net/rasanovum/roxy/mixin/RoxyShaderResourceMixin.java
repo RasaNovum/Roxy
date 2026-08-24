@@ -61,11 +61,6 @@ public final class RoxyShaderResourceMixin {
                         "quad.basePoint = (quadStart*lodScale)+vec3(baseSection<<5);",
                         "quad.basePoint = (quadStart*lodScale)+vec3(baseSection<<5)-vec3(0.0, lodScale-1.0, 0.0);"
                 );
-            } else if (path.endsWith("/assets/voxy/shaders/chunkoutline/outline.vsh")) {
-                source = source.replace(
-                        "mix(mix(ivec3(0), icorner-1, greaterThan(icorner-1, ivec3(0))), icorner+17, lessThan(icorner+17, ivec3(0)))",
-                        "mix(mix(ivec3(0), icorner, greaterThan(icorner, ivec3(0))), icorner+16, lessThan(icorner+16, ivec3(0)))"
-                );
             }
             return new ByteArrayInputStream(source.getBytes(StandardCharsets.UTF_8));
         } catch (IOException ignored) {

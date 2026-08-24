@@ -42,11 +42,37 @@ public final class RoxyBytecodeRemapper {
     private static final String MINECRAFT = "net/minecraft/client/Minecraft";
     private static final String GAME_RENDERER = "net/minecraft/client/renderer/GameRenderer";
     private static final String MINECRAFT_SCREEN = "Lnet/minecraft/client/gui/screens/Screen;";
+    private static final String IDENTIFIER = "net/minecraft/resources/Identifier";
+    private static final String RESOURCE_LOCATION = "net/minecraft/resources/ResourceLocation";
     private static final String NEWER_DISCONNECT = "disconnect(" + MINECRAFT_SCREEN + "ZZ)V";
     private static final String MC_1_21_1_DISCONNECT = "disconnect(" + MINECRAFT_SCREEN + "Z)V";
     private static final String VOXY_WORLD_MIXIN = "me/cortex/voxy/commonImpl/mixin/minecraft/MixinWorld";
+    private static final String VOXY_RENDER_DATA_FACTORY =
+            "me/cortex/voxy/client/core/rendering/building/RenderDataFactory";
+    private static final String VOXY_WORLD_SECTION = "me/cortex/voxy/common/world/WorldSection";
+    private static final String VOXY_RENDER_GENERATION_SERVICE =
+            "me/cortex/voxy/client/core/rendering/building/RenderGenerationService";
+    private static final String VOXY_RENDER_COMPAT = "net/rasanovum/roxy/compat/RoxyVoxyRenderCompat";
+    private static final String VOXY_REQUEST_COMPAT = "net/rasanovum/roxy/compat/RoxyVoxyRequestCompat";
+    private static final String VOXY_MASK_SWEEP_COMPAT = "net/rasanovum/roxy/compat/RoxyVoxyMaskSweepCompat";
+    private static final String VOXY_HIERARCHY_SWEEP_COMPAT = "net/rasanovum/roxy/compat/RoxyVoxyHierarchySweepCompat";
+    private static final String VOXY_ASYNC_NODE_MANAGER =
+            "me/cortex/voxy/client/core/rendering/hierachical/AsyncNodeManager";
+    private static final String VOXY_NODE_MANAGER =
+            "me/cortex/voxy/client/core/rendering/hierachical/NodeManager";
+    private static final String VOXY_SINGLE_NODE_REQUEST =
+            "me/cortex/voxy/client/core/rendering/hierachical/SingleNodeRequest";
+    private static final String VOXY_NODE_CHILD_REQUEST =
+            "me/cortex/voxy/client/core/rendering/hierachical/NodeChildRequest";
     private static final String VOXY_WORLD_CALLBACK = "voxy$injectIdentifier";
     private static final String VOXY_WORLD_CALLBACK_ORIGINAL = "roxy$voxyInjectIdentifier";
+    private static final String VOXY_WORLD_IMPORTER =
+            "me/cortex/voxy/commonImpl/importers/WorldImporter";
+    private static final String VOXY_DEFAULT_BIOME_PROVIDER = VOXY_WORLD_IMPORTER + "$1";
+    private static final String VOXY_PALETTED_CONTAINER_FACTORY = "net/minecraft/class_11897";
+    private static final String VOXY_PALETTED_CONTAINER_STRATEGY = "net/minecraft/class_6563";
+    private static final String VOXY_PALETTED_CONTAINER_FACTORY_COMPAT =
+            "net/rasanovum/roxy/compat/RoxyVoxyPalettedContainerCompat";
     private static final String VOXY_WORLD_CALLBACK_1_21_1 =
             "(Lnet/minecraft/world/level/storage/WritableLevelData;"
                     + "Lnet/minecraft/resources/ResourceKey;"
@@ -163,7 +189,10 @@ public final class RoxyBytecodeRemapper {
         output = patchVoxyFogParameters(output);
         output = patchVoxyChunkSectionLayer(output);
         output = patchVoxyWorldCallback(output);
+        output = patchVoxyAsyncNodeManager(output);
+        output = patchVoxyNodeManagerRequests(output);
         output = patchVoxyClientLevelCallback(output);
+        output = patchVoxyRenderGenerationService(output);
         output = patchVoxyRenderSystemCallback(output);
         output = patchVoxyRenderSystemViewport(output);
         output = patchVoxyDefaultChunkRenderer(output);
@@ -178,6 +207,8 @@ public final class RoxyBytecodeRemapper {
         output = patchVoxyIrisSamplerHolder(output);
         output = patchVoxyGsonCompatibility(output);
         output = patchVoxyClientWorldPath(output);
+        output = patchVoxyPalettedContainerFactory(output);
+        output = patchVoxyDefaultBiomeProvider(output);
         output = patchVoxyConfigDefaults(output);
         output = patchVoxyConfigMenu(output);
         output = patchMinecraftVersionBridges(output);
@@ -327,6 +358,15 @@ public final class RoxyBytecodeRemapper {
         ClassReader reader = new ClassReader(input);
         if (!reader.getClassName().equals(VOXY_CONFIG_MENU)) return input;
 
+        ClassWriter remappedWriter = new ClassWriter(reader, 0);
+        reader.accept(new ClassRemapper(remappedWriter, new Remapper() {
+            @Override
+            public String map(String internalName) {
+                return internalName.equals(IDENTIFIER) ? RESOURCE_LOCATION : internalName;
+            }
+        }), 0);
+
+        reader = new ClassReader(remappedWriter.toByteArray());
         ClassWriter writer = new ClassWriter(reader, 0);
         reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
             @Override
@@ -565,6 +605,12 @@ public final class RoxyBytecodeRemapper {
                                 && descriptor.equals(
                                 "(Lnet/minecraft/resources/ResourceLocation;)Ljava/util/Optional;")) {
                             super.visitMethodInsn(opcode, owner, "getHolder", descriptor, true);
+                        } else if (opcode == Opcodes.INVOKEINTERFACE
+                                && owner.equals("net/minecraft/core/Registry")
+                                && name.equals("getOrThrow")
+                                && descriptor.equals(
+                                "(Lnet/minecraft/resources/ResourceKey;)Lnet/minecraft/core/Holder$Reference;")) {
+                            super.visitMethodInsn(opcode, owner, "getHolderOrThrow", descriptor, true);
                         } else if (opcode == Opcodes.INVOKEVIRTUAL
                                 && owner.equals(BAKED_QUAD)
                                 && name.equals("comp_3725")
@@ -1803,6 +1849,102 @@ public final class RoxyBytecodeRemapper {
         return writer.toByteArray();
     }
 
+    private static byte[] patchVoxyPalettedContainerFactory(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals(VOXY_WORLD_IMPORTER)) return input;
+
+        ClassWriter writer = new ClassWriter(reader, 0);
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(
+                    int access,
+                    String name,
+                    String descriptor,
+                    String signature,
+                    String[] exceptions
+            ) {
+                MethodVisitor delegate = super.visitMethod(access, name, descriptor, signature, exceptions);
+                return new MethodVisitor(Opcodes.ASM9, delegate) {
+                    @Override
+                    public void visitMethodInsn(
+                            int opcode,
+                            String owner,
+                            String methodName,
+                            String methodDescriptor,
+                            boolean isInterface
+                    ) {
+                        if (opcode == Opcodes.INVOKESTATIC
+                                && owner.equals(VOXY_PALETTED_CONTAINER_FACTORY)
+                                && methodName.equals("method_74159")
+                                && methodDescriptor.equals(
+                                "(Lnet/minecraft/core/RegistryAccess;)L" + VOXY_PALETTED_CONTAINER_FACTORY + ";")) {
+                            super.visitMethodInsn(
+                                    Opcodes.INVOKESTATIC,
+                                    VOXY_PALETTED_CONTAINER_FACTORY_COMPAT,
+                                    "create",
+                                    "(Lnet/minecraft/core/RegistryAccess;)L" + VOXY_PALETTED_CONTAINER_FACTORY_COMPAT + ";",
+                                    false
+                            );
+                        } else if (opcode == Opcodes.INVOKEVIRTUAL
+                                && owner.equals(VOXY_PALETTED_CONTAINER_FACTORY)
+                                && methodName.equals("comp_4790")
+                                && methodDescriptor.equals("()Lcom/mojang/serialization/Codec;")) {
+                            super.visitMethodInsn(
+                                    Opcodes.INVOKEVIRTUAL,
+                                    VOXY_PALETTED_CONTAINER_FACTORY_COMPAT,
+                                    "biomeContainerCodec",
+                                    methodDescriptor,
+                                    false
+                            );
+                        } else if (opcode == Opcodes.INVOKEVIRTUAL
+                                && owner.equals(VOXY_PALETTED_CONTAINER_FACTORY)
+                                && methodName.equals("comp_4787")
+                                && methodDescriptor.equals("()Lcom/mojang/serialization/Codec;")) {
+                            super.visitMethodInsn(
+                                    Opcodes.INVOKEVIRTUAL,
+                                    VOXY_PALETTED_CONTAINER_FACTORY_COMPAT,
+                                    "blockStatesContainerCodec",
+                                    methodDescriptor,
+                                    false
+                            );
+                        } else {
+                            super.visitMethodInsn(opcode, owner, methodName, methodDescriptor, isInterface);
+                        }
+                    }
+                };
+            }
+        }, 0);
+        return writer.toByteArray();
+    }
+
+    private static byte[] patchVoxyDefaultBiomeProvider(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals(VOXY_DEFAULT_BIOME_PROVIDER)) return input;
+
+        String originalDescriptor = "(L" + VOXY_PALETTED_CONTAINER_STRATEGY
+                + ";)Lnet/minecraft/world/level/chunk/PalettedContainerRO$PackedData;";
+        String mappedDescriptor = "(Lnet/minecraft/core/IdMap;"
+                + "Lnet/minecraft/world/level/chunk/PalettedContainer$Strategy;)"
+                + "Lnet/minecraft/world/level/chunk/PalettedContainerRO$PackedData;";
+        ClassWriter writer = new ClassWriter(reader, 0);
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(
+                    int access,
+                    String name,
+                    String descriptor,
+                    String signature,
+                    String[] exceptions
+            ) {
+                if (descriptor.equals(originalDescriptor)) {
+                    return super.visitMethod(access, "pack", mappedDescriptor, signature, exceptions);
+                }
+                return super.visitMethod(access, name, descriptor, signature, exceptions);
+            }
+        }, 0);
+        return writer.toByteArray();
+    }
+
     private static byte[] patchVoxyWorldCallback(byte[] input) {
         ClassReader reader = new ClassReader(input);
         if (!reader.getClassName().equals(VOXY_WORLD_MIXIN)) return input;
@@ -1902,6 +2044,245 @@ public final class RoxyBytecodeRemapper {
                 method.visitInsn(Opcodes.RETURN);
                 method.visitMaxs(isStatic ? 11 : 12, callbackInfo + 1);
                 method.visitEnd();
+            }
+        }, 0);
+        return writer.toByteArray();
+    }
+
+    private static byte[] patchVoxyAsyncNodeManager(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals(VOXY_ASYNC_NODE_MANAGER)) return input;
+
+        String worldEventDescriptor = "(L" + VOXY_WORLD_SECTION + ";II)V";
+        ClassWriter writer = new ClassWriter(reader, 0);
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(
+                    int access,
+                    String name,
+                    String descriptor,
+                    String signature,
+                    String[] exceptions
+            ) {
+                MethodVisitor method = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (name.equals("run") && descriptor.equals("()V")) {
+                    return new MethodVisitor(Opcodes.ASM9, method) {
+                        @Override
+                        public void visitCode() {
+                            super.visitCode();
+                            visitVarInsn(Opcodes.ALOAD, 0);
+                            visitMethodInsn(
+                                    Opcodes.INVOKESTATIC,
+                                    VOXY_HIERARCHY_SWEEP_COMPAT,
+                                    "processAsync",
+                                    "(Ljava/lang/Object;)V",
+                                    false
+                            );
+                        }
+                    };
+                }
+                if (!name.equals("worldEvent") || !descriptor.equals(worldEventDescriptor)) return method;
+                return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override
+                    public void visitCode() {
+                        super.visitCode();
+                        visitVarInsn(Opcodes.ALOAD, 0);
+                        visitVarInsn(Opcodes.ALOAD, 1);
+                        visitMethodInsn(
+                                Opcodes.INVOKESTATIC,
+                                VOXY_MASK_SWEEP_COMPAT,
+                                "recordWorldEvent",
+                                "(Ljava/lang/Object;Ljava/lang/Object;)V",
+                                false
+                        );
+                    }
+                };
+            }
+        }, 0);
+        return writer.toByteArray();
+    }
+
+    private static byte[] patchVoxyNodeManagerRequests(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals(VOXY_NODE_MANAGER)) return input;
+
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_FRAMES);
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(
+                    int access,
+                    String name,
+                    String descriptor,
+                    String signature,
+                    String[] exceptions
+            ) {
+                MethodVisitor method = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (name.equals("processRequest") && descriptor.equals("(J)V")) {
+                    return new MethodVisitor(Opcodes.ASM9, method) {
+                        @Override
+                        public void visitMethodInsn(
+                                int opcode,
+                                String owner,
+                                String methodName,
+                                String methodDescriptor,
+                                boolean isInterface
+                        ) {
+                            super.visitMethodInsn(opcode, owner, methodName, methodDescriptor, isInterface);
+                            if (methodName.equals("isNodeRequestInFlight")
+                                    && methodDescriptor.equals("(I)Z")) {
+                                Label skip = new Label();
+                                visitInsn(Opcodes.DUP);
+                                visitJumpInsn(Opcodes.IFEQ, skip);
+                                visitVarInsn(Opcodes.ALOAD, 0);
+                                visitVarInsn(Opcodes.LLOAD, 1);
+                                visitMethodInsn(
+                                        Opcodes.INVOKESTATIC,
+                                        VOXY_REQUEST_COMPAT,
+                                        "defer",
+                                        "(Ljava/lang/Object;J)V",
+                                        false
+                                );
+                                visitLabel(skip);
+                            }
+                        }
+                    };
+                }
+                if (name.equals("finishRequest")
+                        && descriptor.equals("(L" + VOXY_SINGLE_NODE_REQUEST + ";)V")) {
+                    return new MethodVisitor(Opcodes.ASM9, method) {
+                        @Override
+                        public void visitInsn(int opcode) {
+                            if (opcode == Opcodes.RETURN) {
+                                visitVarInsn(Opcodes.ALOAD, 0);
+                                visitVarInsn(Opcodes.ALOAD, 1);
+                                visitMethodInsn(
+                                        Opcodes.INVOKEVIRTUAL,
+                                        VOXY_SINGLE_NODE_REQUEST,
+                                        "getPosition",
+                                        "()J",
+                                        false
+                                );
+                                visitMethodInsn(
+                                        Opcodes.INVOKESTATIC,
+                                        VOXY_REQUEST_COMPAT,
+                                        "retry",
+                                        "(Ljava/lang/Object;J)V",
+                                        false
+                                );
+                            }
+                            super.visitInsn(opcode);
+                        }
+                    };
+                }
+                if (name.equals("finishRequest")
+                        && descriptor.equals("(IL" + VOXY_NODE_CHILD_REQUEST + ";)V")) {
+                    return new MethodVisitor(Opcodes.ASM9, method) {
+                        @Override
+                        public void visitInsn(int opcode) {
+                            if (opcode == Opcodes.RETURN) {
+                                visitVarInsn(Opcodes.ALOAD, 0);
+                                visitVarInsn(Opcodes.ALOAD, 2);
+                                visitMethodInsn(
+                                        Opcodes.INVOKEVIRTUAL,
+                                        VOXY_NODE_CHILD_REQUEST,
+                                        "getPosition",
+                                        "()J",
+                                        false
+                                );
+                                visitMethodInsn(
+                                        Opcodes.INVOKESTATIC,
+                                        VOXY_REQUEST_COMPAT,
+                                        "retry",
+                                        "(Ljava/lang/Object;J)V",
+                                        false
+                                );
+                            }
+                            super.visitInsn(opcode);
+                        }
+                    };
+                }
+                return method;
+            }
+        }, 0);
+        return writer.toByteArray();
+    }
+
+    private static byte[] patchVoxyRenderGenerationService(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals(VOXY_RENDER_GENERATION_SERVICE)) return input;
+
+        String processDescriptor = "(L" + VOXY_RENDER_DATA_FACTORY
+                + ";Lit/unimi/dsi/fastutil/ints/IntOpenHashSet;)V";
+        String consumerDescriptor = "(Ljava/lang/Object;)V";
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_FRAMES);
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(
+                    int access,
+                    String name,
+                    String descriptor,
+                    String signature,
+                    String[] exceptions
+            ) {
+                MethodVisitor method = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (name.equals("enqueueTask") && descriptor.equals("(J)V")) {
+                    return new MethodVisitor(Opcodes.ASM9, method) {
+                        @Override
+                        public void visitCode() {
+                            super.visitCode();
+                            visitVarInsn(Opcodes.ALOAD, 0);
+                            visitVarInsn(Opcodes.LLOAD, 1);
+                            visitMethodInsn(
+                                    Opcodes.INVOKESTATIC,
+                                    VOXY_RENDER_COMPAT,
+                                    "markRenderTaskRequested",
+                                    "(Ljava/lang/Object;J)V",
+                                    false
+                            );
+                        }
+                    };
+                }
+                if (!name.equals("processJob") || !descriptor.equals(processDescriptor)) return method;
+                return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override
+                    public void visitMethodInsn(
+                            int opcode,
+                            String owner,
+                            String methodName,
+                            String methodDescriptor,
+                            boolean isInterface
+                    ) {
+                        if (opcode == Opcodes.INVOKEVIRTUAL
+                                && owner.equals("java/util/concurrent/PriorityBlockingQueue")
+                                && methodName.equals("poll")
+                                && methodDescriptor.equals("()Ljava/lang/Object;")) {
+                            super.visitMethodInsn(opcode, owner, methodName, methodDescriptor, isInterface);
+                            visitInsn(Opcodes.DUP);
+                            visitVarInsn(Opcodes.ALOAD, 0);
+                            visitInsn(Opcodes.SWAP);
+                            visitMethodInsn(
+                                    Opcodes.INVOKESTATIC,
+                                    VOXY_RENDER_COMPAT,
+                                    "beginRenderTask",
+                                    "(Ljava/lang/Object;Ljava/lang/Object;)V",
+                                    false
+                            );
+                        } else if (opcode == Opcodes.INVOKEINTERFACE
+                                && owner.equals("java/util/function/Consumer")
+                                && methodName.equals("accept")
+                                && methodDescriptor.equals(consumerDescriptor)) {
+                            super.visitMethodInsn(
+                                    Opcodes.INVOKESTATIC,
+                                    VOXY_RENDER_COMPAT,
+                                    "acceptIfCurrent",
+                                    "(Ljava/util/function/Consumer;Ljava/lang/Object;)V",
+                                    false
+                            );
+                        } else {
+                            super.visitMethodInsn(opcode, owner, methodName, methodDescriptor, isInterface);
+                        }
+                    }
+                };
             }
         }, 0);
         return writer.toByteArray();
