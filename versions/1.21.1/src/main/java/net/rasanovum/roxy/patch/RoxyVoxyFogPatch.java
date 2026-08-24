@@ -1,9 +1,9 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.patch;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
-public final class RoxyFogCompat {
+public final class RoxyVoxyFogPatch {
     private static final String VOXY_RENDER_BRIDGE = "me.cortex.voxy.client.core.IGetVoxyRenderSystem";
     private static final String VOXY_CONFIG = "me.cortex.voxy.client.config.VoxyConfig";
     private static final String MINECRAFT_RENDER_SYSTEM = "com.mojang.blaze3d.systems.RenderSystem";
@@ -14,7 +14,7 @@ public final class RoxyFogCompat {
     private static volatile FogSetter fogSetter;
     private static volatile boolean fogSetterLookupAttempted;
 
-    private RoxyFogCompat() {
+    private RoxyVoxyFogPatch() {
     }
 
     public static void apply(Object fogMode, boolean noFluid) {
@@ -50,7 +50,7 @@ public final class RoxyFogCompat {
     private static FogSetter getFogSetter() {
         FogSetter current = fogSetter;
         if (current != null || fogSetterLookupAttempted) return current;
-        synchronized (RoxyFogCompat.class) {
+        synchronized (RoxyVoxyFogPatch.class) {
             current = fogSetter;
             if (current != null || fogSetterLookupAttempted) return current;
             fogSetterLookupAttempted = true;
@@ -75,13 +75,13 @@ public final class RoxyFogCompat {
     private static Accessors getAccessors() {
         Accessors current = accessors;
         if (current != null || lookupAttempted) return current;
-        synchronized (RoxyFogCompat.class) {
+        synchronized (RoxyVoxyFogPatch.class) {
             current = accessors;
             if (current != null || lookupAttempted) return current;
             lookupAttempted = true;
             try {
                 ClassLoader loader = Thread.currentThread().getContextClassLoader();
-                if (loader == null) loader = RoxyFogCompat.class.getClassLoader();
+                if (loader == null) loader = RoxyVoxyFogPatch.class.getClassLoader();
                 Class<?> bridge = Class.forName(VOXY_RENDER_BRIDGE, false, loader);
                 Class<?> configClass = Class.forName(VOXY_CONFIG, false, loader);
                 current = new Accessors(
@@ -104,7 +104,7 @@ public final class RoxyFogCompat {
     private static ClassLoader findMinecraftLoader() {
         ClassLoader[] candidates = {
                 Thread.currentThread().getContextClassLoader(),
-                RoxyFogCompat.class.getClassLoader(),
+                RoxyVoxyFogPatch.class.getClassLoader(),
                 ClassLoader.getSystemClassLoader()
         };
         for (ClassLoader candidate : candidates) {

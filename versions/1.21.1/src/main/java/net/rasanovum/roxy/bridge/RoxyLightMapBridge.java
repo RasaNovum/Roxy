@@ -1,10 +1,10 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.bridge;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
-public final class RoxyLightMapCompat {
-    private RoxyLightMapCompat() {
+public final class RoxyLightMapBridge {
+    private RoxyLightMapBridge() {
     }
 
     public static int getLightmapTextureId() {
@@ -58,7 +58,7 @@ public final class RoxyLightMapCompat {
     private static ClassLoader findMinecraftLoader() {
         ClassLoader[] candidates = {
                 Thread.currentThread().getContextClassLoader(),
-                RoxyLightMapCompat.class.getClassLoader(),
+                RoxyLightMapBridge.class.getClassLoader(),
                 ClassLoader.getSystemClassLoader()
         };
         for (ClassLoader candidate : candidates) {

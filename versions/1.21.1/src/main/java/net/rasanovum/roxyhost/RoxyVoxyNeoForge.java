@@ -12,8 +12,8 @@ import net.neoforged.neoforge.common.NeoForge;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.Component;
 import net.rasanovum.roxy.compat.RoxyPowerGridCompat;
-import net.rasanovum.roxy.compat.RoxyVoxyHierarchySweepCompat;
-import net.rasanovum.roxy.compat.RoxyVoxyLifecycleCompat;
+import net.rasanovum.roxy.patch.RoxyVoxyHierarchySweep;
+import net.rasanovum.roxy.patch.RoxyVoxyLifecycle;
 import net.rasanovum.roxy.loader.RoxyFabricRuntime;
 
 @Mod("voxy")
@@ -50,7 +50,7 @@ public final class RoxyVoxyNeoForge {
     }
 
     private static int fixStaleLoDs(CommandContext<CommandSourceStack> context) {
-        boolean requested = RoxyVoxyHierarchySweepCompat.requestManualSweep();
+        boolean requested = RoxyVoxyHierarchySweep.requestManualSweep();
         context.getSource().sendSuccess(
                 () -> Component.literal(requested
                         ? "Started background stale LoD fix"
@@ -65,6 +65,6 @@ public final class RoxyVoxyNeoForge {
     }
 
     private void onClientTick(ClientTickEvent.Post event) {
-        RoxyVoxyLifecycleCompat.tick();
+        RoxyVoxyLifecycle.tick();
     }
 }

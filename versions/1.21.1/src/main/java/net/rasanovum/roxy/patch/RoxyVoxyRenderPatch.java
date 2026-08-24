@@ -1,4 +1,4 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.patch;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -10,7 +10,7 @@ import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
-public final class RoxyVoxyRenderCompat {
+public final class RoxyVoxyRenderPatch {
     private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
     private static final AtomicLong REPAIR_SEQUENCE = new AtomicLong();
     private static final AtomicLong STALE_RESULT_COUNT = new AtomicLong();
@@ -29,7 +29,7 @@ public final class RoxyVoxyRenderCompat {
     private static volatile boolean taskLookupFailed;
     private static volatile boolean generationLookupFailed;
 
-    private RoxyVoxyRenderCompat() {
+    private RoxyVoxyRenderPatch() {
     }
 
     public static void reset() {
@@ -43,14 +43,14 @@ public final class RoxyVoxyRenderCompat {
         TASK_POSITION.remove();
         TASK_GENERATION_SERVICE.remove();
         SUPPRESS_DIRTY_MARK.remove();
-        RoxyVoxyRequestCompat.reset();
+        RoxyVoxyRequestPatch.reset();
     }
 
     public static void beginRenderTask(Object renderGenerationService, Object task) {
         try {
             Field positionField = TASK_POSITION_FIELDS.computeIfAbsent(
                     task.getClass(),
-                    RoxyVoxyRenderCompat::findTaskPositionField
+                    RoxyVoxyRenderPatch::findTaskPositionField
             );
             long position = positionField.getLong(task);
             TASK_GENERATION_SERVICE.set(renderGenerationService);
@@ -140,7 +140,7 @@ public final class RoxyVoxyRenderCompat {
         try {
             Method enqueueTask = ENQUEUE_METHODS.computeIfAbsent(
                     renderGenerationService.getClass(),
-                    RoxyVoxyRenderCompat::findEnqueueMethod
+                    RoxyVoxyRenderPatch::findEnqueueMethod
             );
             SUPPRESS_DIRTY_MARK.set(Boolean.TRUE);
             try {
@@ -184,7 +184,7 @@ public final class RoxyVoxyRenderCompat {
 
     private static long position(Object result) {
         try {
-            Field field = POSITION_FIELDS.computeIfAbsent(result.getClass(), RoxyVoxyRenderCompat::findPositionField);
+            Field field = POSITION_FIELDS.computeIfAbsent(result.getClass(), RoxyVoxyRenderPatch::findPositionField);
             return field.getLong(result);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
             if (!positionLookupFailed) {

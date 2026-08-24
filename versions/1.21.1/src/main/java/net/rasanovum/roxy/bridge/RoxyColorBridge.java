@@ -1,4 +1,4 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.bridge;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -6,10 +6,10 @@ import java.lang.reflect.Modifier;
 import java.util.Map;
 import java.util.WeakHashMap;
 
-public final class RoxyColorCompat {
+public final class RoxyColorBridge {
     private static final Map<Object, Object> MAPPERS = new WeakHashMap<>();
 
-    private RoxyColorCompat() {
+    private RoxyColorBridge() {
     }
 
     public static Object getColorMapper(Object colors) {
@@ -108,7 +108,7 @@ public final class RoxyColorCompat {
         ClassLoader[] candidates = {
                 Thread.currentThread().getContextClassLoader(),
                 colors.getClass().getClassLoader(),
-                RoxyColorCompat.class.getClassLoader(),
+                RoxyColorBridge.class.getClassLoader(),
                 ClassLoader.getSystemClassLoader()
         };
         for (ClassLoader candidate : candidates) {

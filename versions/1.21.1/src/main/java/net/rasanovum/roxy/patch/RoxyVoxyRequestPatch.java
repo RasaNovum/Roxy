@@ -1,4 +1,4 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.patch;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -8,14 +8,14 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.atomic.AtomicLong;
 
-public final class RoxyVoxyRequestCompat {
+public final class RoxyVoxyRequestPatch {
     private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
     private static final ConcurrentMap<Object, ConcurrentMap<Long, Boolean>> PENDING = new ConcurrentHashMap<>();
     private static final AtomicLong DEFERRED = new AtomicLong();
     private static final AtomicLong RETRIED = new AtomicLong();
     private static volatile boolean retryFailed;
 
-    private RoxyVoxyRequestCompat() {
+    private RoxyVoxyRequestPatch() {
     }
 
     public static void reset() {

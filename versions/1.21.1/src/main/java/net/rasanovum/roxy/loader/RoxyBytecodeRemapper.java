@@ -34,7 +34,7 @@ public final class RoxyBytecodeRemapper {
     private static final String MODIFY_VARIABLE = "Lorg/spongepowered/asm/mixin/injection/ModifyVariable;";
     private static final String MODIFY_CONSTANT = "Lorg/spongepowered/asm/mixin/injection/ModifyConstant;";
     private static final String BLOCK_COLORS = "net/minecraft/client/color/block/BlockColors";
-    private static final String COLOR_COMPAT = "net/rasanovum/roxy/compat/RoxyColorCompat";
+    private static final String COLOR_COMPAT = "net/rasanovum/roxy/bridge/RoxyColorBridge";
     private static final String COLOR_HELPER_NEW = "net/minecraft/class_9848";
     private static final String FABRIC_METADATA = "net/fabricmc/loader/api/metadata/ModMetadata";
     private static final String FABRIC_CUSTOM_VALUE = "net/fabricmc/loader/api/metadata/CustomValue";
@@ -52,10 +52,10 @@ public final class RoxyBytecodeRemapper {
     private static final String VOXY_WORLD_SECTION = "me/cortex/voxy/common/world/WorldSection";
     private static final String VOXY_RENDER_GENERATION_SERVICE =
             "me/cortex/voxy/client/core/rendering/building/RenderGenerationService";
-    private static final String VOXY_RENDER_COMPAT = "net/rasanovum/roxy/compat/RoxyVoxyRenderCompat";
-    private static final String VOXY_REQUEST_COMPAT = "net/rasanovum/roxy/compat/RoxyVoxyRequestCompat";
-    private static final String VOXY_MASK_SWEEP_COMPAT = "net/rasanovum/roxy/compat/RoxyVoxyMaskSweepCompat";
-    private static final String VOXY_HIERARCHY_SWEEP_COMPAT = "net/rasanovum/roxy/compat/RoxyVoxyHierarchySweepCompat";
+    private static final String VOXY_RENDER_COMPAT = "net/rasanovum/roxy/patch/RoxyVoxyRenderPatch";
+    private static final String VOXY_REQUEST_COMPAT = "net/rasanovum/roxy/patch/RoxyVoxyRequestPatch";
+    private static final String VOXY_MASK_SWEEP_COMPAT = "net/rasanovum/roxy/patch/RoxyVoxyMaskSweep";
+    private static final String VOXY_HIERARCHY_SWEEP_COMPAT = "net/rasanovum/roxy/patch/RoxyVoxyHierarchySweep";
     private static final String VOXY_ASYNC_NODE_MANAGER =
             "me/cortex/voxy/client/core/rendering/hierachical/AsyncNodeManager";
     private static final String VOXY_NODE_MANAGER =
@@ -72,7 +72,7 @@ public final class RoxyBytecodeRemapper {
     private static final String VOXY_PALETTED_CONTAINER_FACTORY = "net/minecraft/class_11897";
     private static final String VOXY_PALETTED_CONTAINER_STRATEGY = "net/minecraft/class_6563";
     private static final String VOXY_PALETTED_CONTAINER_FACTORY_COMPAT =
-            "net/rasanovum/roxy/compat/RoxyVoxyPalettedContainerCompat";
+            "net/rasanovum/roxy/patch/RoxyVoxyPalettedContainerPatch";
     private static final String VOXY_WORLD_CALLBACK_1_21_1 =
             "(Lnet/minecraft/world/level/storage/WritableLevelData;"
                     + "Lnet/minecraft/resources/ResourceKey;"
@@ -106,16 +106,16 @@ public final class RoxyBytecodeRemapper {
     private static final String VOXY_RENDER_SYSTEM_CALLBACK_NEW =
             "(IZLorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V";
     private static final String BLOCK_STATE = "net/minecraft/world/level/block/state/BlockState";
-    private static final String BLOCK_STATE_COMPAT = "net/rasanovum/roxy/compat/RoxyBlockStateCompat";
+    private static final String BLOCK_STATE_COMPAT = "net/rasanovum/roxy/bridge/RoxyBlockStateBridge";
     private static final String COMPOUND_TAG = "net/minecraft/nbt/CompoundTag";
-    private static final String COMPOUND_TAG_COMPAT = "net/rasanovum/roxy/compat/RoxyCompoundTagCompat";
+    private static final String COMPOUND_TAG_COMPAT = "net/rasanovum/roxy/bridge/RoxyCompoundTagBridge";
     private static final String TEXTURE_ATLAS = "net/minecraft/client/renderer/texture/TextureAtlas";
-    private static final String TEXTURE_ATLAS_COMPAT = "net/rasanovum/roxy/compat/RoxyTextureAtlasCompat";
+    private static final String TEXTURE_ATLAS_COMPAT = "net/rasanovum/roxy/bridge/RoxyTextureAtlasBridge";
     private static final String VOXY_TEXTURE_BAKERY = "me/cortex/voxy/client/core/model/bakery/SoftwareModelTextureBakery";
-    private static final String TEXTURE_COMPAT = "net/rasanovum/roxy/compat/RoxyTextureCompat";
+    private static final String TEXTURE_COMPAT = "net/rasanovum/roxy/bridge/RoxyTextureBridge";
     private static final String VOXY_RASTERIZER = "Lme/cortex/voxy/client/core/model/bakery/SoftwareRasterizer;";
     private static final String VOXY_LIGHT_MAP_HELPER = "me/cortex/voxy/client/core/rendering/util/LightMapHelper";
-    private static final String LIGHT_MAP_COMPAT = "net/rasanovum/roxy/compat/RoxyLightMapCompat";
+    private static final String LIGHT_MAP_COMPAT = "net/rasanovum/roxy/bridge/RoxyLightMapBridge";
     private static final String VOXY_IRIS_PIPELINE_MIXIN =
             "me/cortex/voxy/client/mixin/iris/MixinIrisRenderingPipeline";
     private static final String VOXY_IRIS_SHADER_PATCH =
@@ -137,7 +137,7 @@ public final class RoxyBytecodeRemapper {
     private static final String GSON_BUILDER = "com/google/gson/GsonBuilder";
     private static final String GSON_STRICTNESS = "com/google/gson/Strictness";
     private static final String VOXY_VERTEX_CONSUMER = "me/cortex/voxy/client/core/model/bakery/ReuseVertexConsumer";
-    private static final String VOXY_VERTEX_CONSUMER_COMPAT = "net/rasanovum/roxy/compat/RoxyBakedQuadCompat";
+    private static final String VOXY_VERTEX_CONSUMER_COMPAT = "net/rasanovum/roxy/bridge/RoxyBakedQuadBridge";
     private static final String BAKED_MODEL = "net/minecraft/client/resources/model/BakedModel";
     private static final String BAKED_QUAD = "net/minecraft/client/renderer/block/model/BakedQuad";
     private static final String TEXTURE_ATLAS_SPRITE = "net/minecraft/client/renderer/texture/TextureAtlasSprite";
@@ -163,11 +163,11 @@ public final class RoxyBytecodeRemapper {
     private static final String SODIUM_TERRAIN_RENDER_PASS = "net/caffeinemc/mods/sodium/client/render/chunk/terrain/TerrainRenderPass";
     private static final String SODIUM_CAMERA_TRANSFORM = "net/caffeinemc/mods/sodium/client/render/viewport/CameraTransform";
     private static final String SODIUM_FOG_PARAMETERS_NEW = "net/caffeinemc/mods/sodium/client/util/FogParameters";
-    private static final String SODIUM_FOG_PARAMETERS = "net/rasanovum/roxy/compat/RoxyFogParameters";
+    private static final String SODIUM_FOG_PARAMETERS = "net/rasanovum/roxy/util/RoxyFogParameters";
     private static final String CHUNK_SECTION_LAYER_NEW = "net/minecraft/class_11515";
     private static final String RENDER_TYPE = "net/minecraft/client/renderer/RenderType";
     private static final String ITEM_BLOCK_RENDER_TYPES = "net/minecraft/client/renderer/ItemBlockRenderTypes";
-    private static final String RENDER_TYPE_COMPAT = "net/rasanovum/roxy/compat/RoxyRenderTypeCompat";
+    private static final String RENDER_TYPE_COMPAT = "net/rasanovum/roxy/bridge/RoxyRenderTypeBridge";
     private static final String VOXY_SETUP_VIEWPORT_1_21_1 =
             "(L" + SODIUM_CHUNK_RENDER_MATRICES + ";DDD)L" + VOXY_VIEWPORT + ";";
 
@@ -1733,7 +1733,7 @@ public final class RoxyBytecodeRemapper {
                 method.visitLabel(render);
                 method.visitMethodInsn(
                         Opcodes.INVOKESTATIC,
-                        "net/rasanovum/roxy/compat/RoxyFramebufferCompat",
+                        "net/rasanovum/roxy/bridge/RoxyFramebufferBridge",
                         "prepareVoxySource",
                         "()J",
                         false
@@ -1768,7 +1768,7 @@ public final class RoxyBytecodeRemapper {
                 method.visitLabel(sourceReady);
                 method.visitMethodInsn(
                         Opcodes.INVOKESTATIC,
-                        "net/rasanovum/roxy/compat/RoxyFramebufferCompat",
+                        "net/rasanovum/roxy/bridge/RoxyFramebufferBridge",
                         "useMainColorAttachment",
                         "()V",
                         false
@@ -1792,7 +1792,7 @@ public final class RoxyBytecodeRemapper {
                 method.visitVarInsn(Opcodes.LLOAD, 6);
                 method.visitMethodInsn(
                         Opcodes.INVOKESTATIC,
-                        "net/rasanovum/roxy/compat/RoxyFramebufferCompat",
+                        "net/rasanovum/roxy/bridge/RoxyFramebufferBridge",
                         "restoreFramebuffer",
                         "(J)V",
                         false
@@ -1803,7 +1803,7 @@ public final class RoxyBytecodeRemapper {
                 method.visitVarInsn(Opcodes.LLOAD, 6);
                 method.visitMethodInsn(
                         Opcodes.INVOKESTATIC,
-                        "net/rasanovum/roxy/compat/RoxyFramebufferCompat",
+                        "net/rasanovum/roxy/bridge/RoxyFramebufferBridge",
                         "restoreFramebuffer",
                         "(J)V",
                         false

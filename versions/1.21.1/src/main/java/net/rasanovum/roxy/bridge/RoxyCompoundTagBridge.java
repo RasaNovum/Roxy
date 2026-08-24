@@ -1,10 +1,10 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.bridge;
 
 import java.lang.reflect.Method;
 import java.util.Optional;
 
-public final class RoxyCompoundTagCompat {
-    private RoxyCompoundTagCompat() {
+public final class RoxyCompoundTagBridge {
+    private RoxyCompoundTagBridge() {
     }
 
     public static int getInt(Object compoundTag, String key, int fallback) {

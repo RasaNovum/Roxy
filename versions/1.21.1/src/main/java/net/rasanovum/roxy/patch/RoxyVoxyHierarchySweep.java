@@ -1,4 +1,4 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.patch;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,7 +13,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
 
-public final class RoxyVoxyHierarchySweepCompat {
+public final class RoxyVoxyHierarchySweep {
     private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
     private static final long SWEEP_DELAY_MILLIS = 10_000L;
     private static final long WAKE_DELAY_MILLIS = 50L;
@@ -31,7 +31,7 @@ public final class RoxyVoxyHierarchySweepCompat {
     private static volatile Access access;
     private static volatile boolean accessFailed;
 
-    private RoxyVoxyHierarchySweepCompat() {
+    private RoxyVoxyHierarchySweep() {
     }
 
     public static void setContext(Object engine, Object renderer, Object nodeManager) {
@@ -113,9 +113,7 @@ public final class RoxyVoxyHierarchySweepCompat {
                         plan.nodeInvalidations++;
                     }
                 }
-                if (!active && !topLevel) {
-                    resolved.addTopLevel.invoke(asyncNodeManager, position);
-                } else if (active && topLevel) {
+                if (active && topLevel) {
                     Object section = resolved.acquireIfExists.invoke(current.engine, position);
                     if (section != null) {
                         try {
@@ -125,7 +123,7 @@ public final class RoxyVoxyHierarchySweepCompat {
                         }
                     }
                 }
-                if (RoxyVoxyRenderCompat.requestMesh(plan.renderGenerationService, position)) {
+                if (RoxyVoxyRenderPatch.requestMesh(plan.renderGenerationService, position)) {
                     plan.meshRequests++;
                 }
             }
@@ -164,7 +162,7 @@ public final class RoxyVoxyHierarchySweepCompat {
     private static Access access(ClassLoader loader, Class<?> asyncNodeManager) throws ReflectiveOperationException {
         Access cached = access;
         if (cached != null && cached.asyncNodeManager == asyncNodeManager) return cached;
-        synchronized (RoxyVoxyHierarchySweepCompat.class) {
+        synchronized (RoxyVoxyHierarchySweep.class) {
             if (access == null || access.asyncNodeManager != asyncNodeManager) {
                 access = Access.resolve(loader, asyncNodeManager);
             }
@@ -262,7 +260,6 @@ public final class RoxyVoxyHierarchySweepCompat {
             Method activeContains,
             Method activeGet,
             Method topLevelContains,
-            Method addTopLevel,
             Method acquireIfExists,
             Method submitChildChange,
             Method invalidateNode,
@@ -293,7 +290,6 @@ public final class RoxyVoxyHierarchySweepCompat {
                     activeSectionMap.getType().getMethod("containsKey", long.class),
                     activeSectionMap.getType().getMethod("get", long.class),
                     topLevelNodes.getType().getMethod("contains", long.class),
-                    asyncNodeManager.getMethod("addTopLevel", long.class),
                     worldEngine.getMethod("acquireIfExists", long.class),
                     submitChildChange,
                     invalidateNode,

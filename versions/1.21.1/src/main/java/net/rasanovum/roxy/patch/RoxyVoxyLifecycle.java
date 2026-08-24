@@ -1,4 +1,4 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.patch;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -6,7 +6,7 @@ import org.slf4j.LoggerFactory;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
-public final class RoxyVoxyLifecycleCompat {
+public final class RoxyVoxyLifecycle {
     private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
     private static final long TICK_INTERVAL_MILLIS = 250L;
     private static volatile Methods methods;
@@ -16,7 +16,7 @@ public final class RoxyVoxyLifecycleCompat {
     private static Object engine;
     private static Object renderer;
 
-    private RoxyVoxyLifecycleCompat() {
+    private RoxyVoxyLifecycle() {
     }
 
     public static void tick() {
@@ -34,10 +34,10 @@ public final class RoxyVoxyLifecycleCompat {
                     instance = currentInstance;
                     engine = currentEngine;
                     renderer = null;
-                    RoxyVoxyRenderCompat.reset();
+                    RoxyVoxyRenderPatch.reset();
                 }
-                RoxyVoxyMaskSweepCompat.setContext(null, null);
-                RoxyVoxyHierarchySweepCompat.setContext(null, null, null);
+                RoxyVoxyMaskSweep.setContext(null, null);
+                RoxyVoxyHierarchySweep.setContext(null, null, null);
                 return;
             }
 
@@ -50,13 +50,13 @@ public final class RoxyVoxyLifecycleCompat {
                 instance = currentInstance;
                 engine = currentEngine;
                 renderer = currentRenderer;
-                RoxyVoxyRenderCompat.reset();
+                RoxyVoxyRenderPatch.reset();
                 if (currentRenderer != null) {
                     LOGGER.info("Prepared background Voxy LoD verification for a world or renderer change");
                 }
             }
-            RoxyVoxyMaskSweepCompat.setContext(currentEngine, currentNodeManager);
-            RoxyVoxyHierarchySweepCompat.setContext(currentEngine, currentRenderer, currentNodeManager);
+            RoxyVoxyMaskSweep.setContext(currentEngine, currentNodeManager);
+            RoxyVoxyHierarchySweep.setContext(currentEngine, currentRenderer, currentNodeManager);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
             if (!resolutionFailed) {
                 resolutionFailed = true;
@@ -68,7 +68,7 @@ public final class RoxyVoxyLifecycleCompat {
     private static Methods methods() throws ReflectiveOperationException {
         Methods cached = methods;
         if (cached != null) return cached;
-        synchronized (RoxyVoxyLifecycleCompat.class) {
+        synchronized (RoxyVoxyLifecycle.class) {
             if (methods == null) methods = Methods.resolve(Thread.currentThread().getContextClassLoader());
             return methods;
         }
@@ -84,7 +84,7 @@ public final class RoxyVoxyLifecycleCompat {
             Field nodeManager
     ) {
         private static Methods resolve(ClassLoader loader) throws ReflectiveOperationException {
-            if (loader == null) loader = RoxyVoxyLifecycleCompat.class.getClassLoader();
+            if (loader == null) loader = RoxyVoxyLifecycle.class.getClassLoader();
             Class<?> voxyCommon = Class.forName("me.cortex.voxy.commonImpl.VoxyCommon", false, loader);
             Class<?> minecraft = Class.forName("net.minecraft.client.Minecraft", false, loader);
             Class<?> levelClass = Class.forName("net.minecraft.world.level.Level", false, loader);

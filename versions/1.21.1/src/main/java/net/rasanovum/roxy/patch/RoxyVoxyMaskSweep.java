@@ -1,4 +1,4 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.patch;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -13,7 +13,7 @@ import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ThreadFactory;
 import java.util.concurrent.TimeUnit;
 
-public final class RoxyVoxyMaskSweepCompat {
+public final class RoxyVoxyMaskSweep {
     private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
     private static final long SWEEP_DELAY_MILLIS = 10_000L;
     private static final int MAX_PENDING_POSITIONS = 16_384;
@@ -37,14 +37,14 @@ public final class RoxyVoxyMaskSweepCompat {
 
     static {
         EXECUTOR.scheduleWithFixedDelay(
-                RoxyVoxyMaskSweepCompat::processBatch,
+                RoxyVoxyMaskSweep::processBatch,
                 250L,
                 250L,
                 TimeUnit.MILLISECONDS
         );
     }
 
-    private RoxyVoxyMaskSweepCompat() {
+    private RoxyVoxyMaskSweep() {
     }
 
     public static void setContext(Object currentEngine, Object currentNodeManager) {
@@ -191,7 +191,7 @@ public final class RoxyVoxyMaskSweepCompat {
     private static Access access(ClassLoader loader) throws ReflectiveOperationException {
         Access cached = access;
         if (cached != null) return cached;
-        synchronized (RoxyVoxyMaskSweepCompat.class) {
+        synchronized (RoxyVoxyMaskSweep.class) {
             if (access == null) access = Access.resolve(loader);
             return access;
         }

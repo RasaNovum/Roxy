@@ -1,10 +1,10 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.bridge;
 
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
-public final class RoxyBlockStateCompat {
-    private RoxyBlockStateCompat() {
+public final class RoxyBlockStateBridge {
+    private RoxyBlockStateBridge() {
     }
 
     public static int getLightBlock(Object state) {
