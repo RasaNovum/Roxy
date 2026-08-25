@@ -1,17 +1,17 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.bridge;
 
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL20;
 import org.lwjgl.opengl.GL30;
 import org.lwjgl.opengl.GL45;
 
-public final class RoxyFramebufferCompat {
+public final class RoxyFramebufferBridge {
     private static final int DRAW_FRAMEBUFFER_BINDING = 0x8CA6;
     private static final int READ_FRAMEBUFFER_BINDING = 0x8CAA;
     private static final ThreadLocal<FramebufferState> SAVED_STATE = new ThreadLocal<>();
     private static int adapterFramebuffer;
 
-    private RoxyFramebufferCompat() {
+    private RoxyFramebufferBridge() {
     }
 
     public static long prepareVoxySource() {

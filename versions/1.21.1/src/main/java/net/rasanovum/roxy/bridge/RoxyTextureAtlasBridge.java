@@ -1,10 +1,10 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.bridge;
 
 import java.lang.reflect.Method;
 
 
-public final class RoxyTextureAtlasCompat {
-    private RoxyTextureAtlasCompat() {
+public final class RoxyTextureAtlasBridge {
+    private RoxyTextureAtlasBridge() {
     }
 
     public static int getMaxSupportedTextureSize(Object textureAtlas) {

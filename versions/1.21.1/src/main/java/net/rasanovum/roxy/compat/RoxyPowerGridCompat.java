@@ -10,12 +10,16 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 public final class RoxyPowerGridCompat {
     private static final double CACHE_DISTANCE_SQUARED = 64.0 * 64.0;
+    private static final int STORE_VERSION = 1;
     private static final Map<UUID, Object> WIRES = new LinkedHashMap<>();
     private static final Map<UUID, Object> STORED_WIRES = new LinkedHashMap<>();
     private static final Map<UUID, Object> PENDING_WIRES = new LinkedHashMap<>();
+    private static final Set<UUID> DESTROYED_WIRES = ConcurrentHashMap.newKeySet();
     private static Object level;
     private static Path storePath;
     private static boolean reflectionFailureReported;
@@ -27,6 +31,7 @@ public final class RoxyPowerGridCompat {
         if (!isPowerGridWire(entity)) return;
         try {
             ensureLevel(invoke(entity, "level"));
+            purgeDestroyedWires();
             UUID uuid = (UUID) invoke(entity, "getUUID");
             WIRES.remove(uuid);
             PENDING_WIRES.put(uuid, entity);
@@ -39,16 +44,21 @@ public final class RoxyPowerGridCompat {
         if (!isPowerGridWire(entity)) return;
         try {
             Object minecraft = minecraft();
-            Object player = field(minecraft, "player");
+            Object entityLevel = invoke(entity, "level");
+            ensureLevel(entityLevel);
+            purgeDestroyedWires();
             UUID uuid = (UUID) invoke(entity, "getUUID");
-            if (player == null || ((Number) invoke(entity, "distanceToSqr", player)).doubleValue() < CACHE_DISTANCE_SQUARED) {
-                WIRES.remove(uuid);
-                PENDING_WIRES.remove(uuid);
+            if (DESTROYED_WIRES.contains(uuid)) {
+                removeWire(uuid);
                 return;
             }
-            ensureLevel(invoke(entity, "level"));
+            Object player = field(minecraft, "player");
+            if (player == null || ((Number) invoke(entity, "distanceToSqr", player)).doubleValue() < CACHE_DISTANCE_SQUARED) {
+                removeWire(uuid);
+                return;
+            }
             Object tag = saveTag(entity);
-            Object snapshot = snapshot(tag, invoke(entity, "level"));
+            Object snapshot = snapshot(tag, entityLevel);
             if (snapshot == null) return;
             PENDING_WIRES.remove(uuid);
             STORED_WIRES.put(uuid, tag);
@@ -67,6 +77,7 @@ public final class RoxyPowerGridCompat {
             Object player = field(minecraft, "player");
             if (currentLevel == null || player == null) return;
             ensureLevel(currentLevel);
+            purgeDestroyedWires();
             persistPending();
             if (WIRES.isEmpty()) return;
 
@@ -86,6 +97,7 @@ public final class RoxyPowerGridCompat {
             for (Object wire : WIRES.values()) {
                 int id = ((Number) invoke(wire, "getId")).intValue();
                 if (invoke(currentLevel, "getEntity", id) == wire) continue;
+                if (((Number) invoke(wire, "distanceToSqr", player)).doubleValue() <= CACHE_DISTANCE_SQUARED) continue;
                 render.invoke(
                         dispatcher,
                         wire,
@@ -147,6 +159,7 @@ public final class RoxyPowerGridCompat {
         WIRES.clear();
         STORED_WIRES.clear();
         PENDING_WIRES.clear();
+        DESTROYED_WIRES.clear();
         reflectionFailureReported = false;
         level = currentLevel;
         storePath = storePath(currentLevel);
@@ -170,6 +183,10 @@ public final class RoxyPowerGridCompat {
         Class<?> nbtIo = Class.forName("net.minecraft.nbt.NbtIo", false, loader);
         Object root = staticInvoke(nbtIo, "read", storePath);
         if (root == null) return;
+        if (((Number) invoke(root, "getInt", "Version")).intValue() != STORE_VERSION) {
+            writeStore();
+            return;
+        }
         Object tags = invoke(root, "getList", "Wires", 10);
         for (Object tag : (Iterable<?>) tags) {
             Object wire = snapshot(tag, currentLevel);
@@ -185,6 +202,7 @@ public final class RoxyPowerGridCompat {
         ClassLoader loader = Thread.currentThread().getContextClassLoader();
         Object root = Class.forName("net.minecraft.nbt.CompoundTag", false, loader).getConstructor().newInstance();
         Object tags = Class.forName("net.minecraft.nbt.ListTag", false, loader).getConstructor().newInstance();
+        invoke(root, "putInt", "Version", STORE_VERSION);
         for (Object tag : STORED_WIRES.values()) invoke(tags, "add", tag);
         invoke(root, "put", "Wires", tags);
         try {
@@ -193,6 +211,35 @@ public final class RoxyPowerGridCompat {
             throw new ReflectiveOperationException(exception);
         }
         staticInvoke(Class.forName("net.minecraft.nbt.NbtIo", false, loader), "write", root, storePath);
+    }
+
+    private static void removeWire(UUID uuid) throws ReflectiveOperationException {
+        WIRES.remove(uuid);
+        PENDING_WIRES.remove(uuid);
+        if (STORED_WIRES.remove(uuid) != null) writeStore();
+    }
+
+    private static void purgeDestroyedWires() throws ReflectiveOperationException {
+        boolean changed = false;
+        for (UUID uuid : DESTROYED_WIRES) {
+            WIRES.remove(uuid);
+            PENDING_WIRES.remove(uuid);
+            changed |= STORED_WIRES.remove(uuid) != null;
+        }
+        if (changed) writeStore();
+    }
+
+    public static void markServerRemoval(Object entity, Object level) {
+        if (!isPowerGridWire(entity)) return;
+        try {
+            if (Boolean.TRUE.equals(invoke(level, "isClientSide"))) return;
+            Object reason = invoke(entity, "getRemovalReason");
+            if (reason != null && Boolean.TRUE.equals(invoke(reason, "shouldDestroy"))) {
+                DESTROYED_WIRES.add((UUID) invoke(entity, "getUUID"));
+            }
+        } catch (ReflectiveOperationException | RuntimeException exception) {
+            reportReflectionFailure(exception);
+        }
     }
 
     private static boolean isPowerGridWire(Object entity) {

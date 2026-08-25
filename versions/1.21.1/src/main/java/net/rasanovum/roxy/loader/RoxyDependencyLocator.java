@@ -91,7 +91,6 @@ public final class RoxyDependencyLocator implements IDependencyLocator {
             }
             try {
                 if (Files.isDirectory(path)) {
-                    if (Files.exists(path.resolve("net/fabricmc/loader/api/FabricLoader.class"))) return true;
                     try (Stream<Path> files = Files.walk(path.resolve("META-INF/jars"), 1)) {
                         if (files.anyMatch(file -> isForgifiedFabricLoaderEntry(
                                 path.relativize(file).toString().replace('\\', '/')
@@ -105,8 +104,7 @@ public final class RoxyDependencyLocator implements IDependencyLocator {
                 try (ZipInputStream zip = new ZipInputStream(Files.newInputStream(path))) {
                     ZipEntry entry;
                     while ((entry = zip.getNextEntry()) != null) {
-                        if (isForgifiedFabricLoaderEntry(entry.getName())
-                                || entry.getName().equals("net/fabricmc/loader/api/FabricLoader.class")) {
+                        if (isForgifiedFabricLoaderEntry(entry.getName())) {
                             return true;
                         }
                     }

@@ -1,4 +1,4 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.bridge;
 
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL15C;
@@ -7,10 +7,10 @@ import org.lwjgl.opengl.GL30C;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
-public final class RoxyTextureCompat {
+public final class RoxyTextureBridge {
     private static final String BLOCK_ATLAS = "textures/atlas/blocks.png";
 
-    private RoxyTextureCompat() {
+    private RoxyTextureBridge() {
     }
 
     public static void setupBlockAtlas(Object rasterizer) {
@@ -96,7 +96,7 @@ public final class RoxyTextureCompat {
     private static ClassLoader findMinecraftLoader() {
         ClassLoader[] candidates = {
                 Thread.currentThread().getContextClassLoader(),
-                RoxyTextureCompat.class.getClassLoader(),
+                RoxyTextureBridge.class.getClassLoader(),
                 ClassLoader.getSystemClassLoader()
         };
         for (ClassLoader candidate : candidates) {

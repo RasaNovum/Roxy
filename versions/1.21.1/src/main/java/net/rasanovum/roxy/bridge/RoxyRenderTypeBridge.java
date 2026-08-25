@@ -1,10 +1,10 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.bridge;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
-public final class RoxyRenderTypeCompat {
-    private RoxyRenderTypeCompat() {
+public final class RoxyRenderTypeBridge {
+    private RoxyRenderTypeBridge() {
     }
 
     public static Object getChunkRenderType(Object state, Object fallback) {

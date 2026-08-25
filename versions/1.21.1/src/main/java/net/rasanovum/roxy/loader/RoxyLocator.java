@@ -83,10 +83,15 @@ public final class RoxyLocator implements IModFileCandidateLocator {
 
     static Path findVoxyJar() throws IOException, URISyntaxException {
         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+        Path patchedFallback = null;
         Enumeration<URL> urls = classLoader.getResources("fabric.mod.json");
         while (urls.hasMoreElements()) {
             Path candidate = pathForFabricMetadata(urls.nextElement());
             if (candidate != null && isVoxy(candidate)) {
+                if (isPatchedVoxy(candidate)) {
+                    if (patchedFallback == null) patchedFallback = candidate;
+                    continue;
+                }
                 return candidate;
             }
         }
@@ -95,10 +100,21 @@ public final class RoxyLocator implements IModFileCandidateLocator {
         for (String entry : classPath.split(System.getProperty("path.separator"))) {
             Path candidate = Path.of(entry);
             if (isVoxy(candidate)) {
+                if (isPatchedVoxy(candidate)) {
+                    if (patchedFallback == null) patchedFallback = candidate;
+                    continue;
+                }
                 return candidate;
             }
         }
-        return null;
+        return patchedFallback;
+    }
+
+    private static boolean isPatchedVoxy(Path candidate) {
+        String name = candidate.getFileName() == null
+                ? ""
+                : candidate.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+        return name.startsWith("roxy-patched-voxy-");
     }
 
     private static Path pathForFabricMetadata(URL url) throws IOException, URISyntaxException {

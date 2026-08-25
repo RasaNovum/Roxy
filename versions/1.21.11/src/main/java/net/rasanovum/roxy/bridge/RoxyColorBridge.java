@@ -1,4 +1,4 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.bridge;
 
 import net.minecraft.client.color.block.BlockColor;
 import net.minecraft.client.color.block.BlockColors;
@@ -11,11 +11,11 @@ import java.lang.reflect.Modifier;
 import java.util.Map;
 import java.util.WeakHashMap;
 
-public final class RoxyColorCompat {
+public final class RoxyColorBridge {
     private static final Map<BlockColors, IdMapper<BlockColor>> MAPPERS = new WeakHashMap<>();
     private static final Field BACKING_FIELD = findBackingField();
 
-    private RoxyColorCompat() {
+    private RoxyColorBridge() {
     }
 
     @SuppressWarnings("unchecked")
