@@ -8,6 +8,7 @@ import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
 
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 
@@ -17,6 +18,7 @@ public final class RoxyNeoForge {
         modBus.addListener(this::onClientSetup);
         NeoForge.EVENT_BUS.addListener(this::onRegisterClientCommands);
         NeoForge.EVENT_BUS.addListener(this::onRenderLevelStage);
+        NeoForge.EVENT_BUS.addListener(this::onEntityLeaveLevel);
     }
 
     private void onClientSetup(FMLClientSetupEvent event) {
@@ -36,5 +38,9 @@ public final class RoxyNeoForge {
 
     private void onRenderLevelStage(RenderLevelStageEvent event) {
         RoxyPowerGridCompat.render(event);
+    }
+
+    private void onEntityLeaveLevel(EntityLeaveLevelEvent event) {
+        RoxyPowerGridCompat.markServerRemoval(event.getEntity(), event.getLevel());
     }
 }

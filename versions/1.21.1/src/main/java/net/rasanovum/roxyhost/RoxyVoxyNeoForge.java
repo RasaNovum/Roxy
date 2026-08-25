@@ -9,6 +9,7 @@ import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
 import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.common.NeoForge;
+import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
 import net.minecraft.commands.CommandSourceStack;
 import net.minecraft.network.chat.Component;
 import net.rasanovum.roxy.compat.RoxyPowerGridCompat;
@@ -23,6 +24,7 @@ public final class RoxyVoxyNeoForge {
         NeoForge.EVENT_BUS.addListener(this::onRegisterClientCommands);
         NeoForge.EVENT_BUS.addListener(this::onRenderLevelStage);
         NeoForge.EVENT_BUS.addListener(this::onClientTick);
+        NeoForge.EVENT_BUS.addListener(this::onEntityLeaveLevel);
     }
 
     private void onClientSetup(FMLClientSetupEvent event) {
@@ -66,5 +68,9 @@ public final class RoxyVoxyNeoForge {
 
     private void onClientTick(ClientTickEvent.Post event) {
         RoxyVoxyLifecycle.tick();
+    }
+
+    private void onEntityLeaveLevel(EntityLeaveLevelEvent event) {
+        RoxyPowerGridCompat.markServerRemoval(event.getEntity(), event.getLevel());
     }
 }
