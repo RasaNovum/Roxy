@@ -190,7 +190,15 @@ public final class RoxyChunksmithCompat {
                     }
                 }
 
-                boolean busy = (boolean) resolved.rendererHasWork.invoke(renderer);
+                Object nodeManager = resolved.renderNodeManager.get(renderer);
+                Object renderGeneration = resolved.renderGeneration.get(renderer);
+                Object modelService = resolved.modelService.get(renderer);
+                boolean busy = nodeManager == null
+                        || renderGeneration == null
+                        || modelService == null
+                        || (boolean) resolved.nodeManagerHasWork.invoke(nodeManager)
+                        || (int) resolved.renderTaskCount.invoke(renderGeneration) != 0
+                        || !(boolean) resolved.modelQueuesEmpty.invoke(modelService);
                 if (!busy && System.currentTimeMillis() >= earliestReady) {
                     if (++idlePolls >= 10) {
                         readyRenderer = renderer;
@@ -235,7 +243,12 @@ public final class RoxyChunksmithCompat {
             Method minecraftInstance,
             Field levelRenderer,
             Method getRenderSystem,
-            Method rendererHasWork,
+            Field renderNodeManager,
+            Field renderGeneration,
+            Field modelService,
+            Method nodeManagerHasWork,
+            Method renderTaskCount,
+            Method modelQueuesEmpty,
             Method worldIdentifierOf,
             Method recordSections,
             Method recordChunkX,
@@ -278,10 +291,29 @@ public final class RoxyChunksmithCompat {
                     loader
             );
             Class<?> renderSystem = Class.forName("me.cortex.voxy.client.core.VoxyRenderSystem", false, loader);
+            Class<?> asyncNodeManager = Class.forName(
+                    "me.cortex.voxy.client.core.rendering.hierachical.AsyncNodeManager",
+                    false,
+                    loader
+            );
+            Class<?> renderGeneration = Class.forName(
+                    "me.cortex.voxy.client.core.rendering.building.RenderGenerationService",
+                    false,
+                    loader
+            );
+            Class<?> modelService = Class.forName(
+                    "me.cortex.voxy.client.core.model.ModelBakerySubsystem",
+                    false,
+                    loader
+            );
             Field ingestQueue = ingestService.getDeclaredField("ingestQueue");
             ingestQueue.setAccessible(true);
-            Method rendererHasWork = renderSystem.getDeclaredMethod("frexStillHasWork");
-            rendererHasWork.setAccessible(true);
+            Field renderNodeManager = renderSystem.getDeclaredField("nodeManager");
+            Field renderGenerationField = renderSystem.getDeclaredField("renderGen");
+            Field modelServiceField = renderSystem.getDeclaredField("modelService");
+            renderNodeManager.setAccessible(true);
+            renderGenerationField.setAccessible(true);
+            modelServiceField.setAccessible(true);
 
             return new Methods(
                     voxyCommon.getMethod("getInstance"),
@@ -291,7 +323,12 @@ public final class RoxyChunksmithCompat {
                     minecraft.getMethod("getInstance"),
                     minecraft.getField("levelRenderer"),
                     renderSystemBridge.getMethod("voxy$getRenderSystem"),
-                    rendererHasWork,
+                    renderNodeManager,
+                    renderGenerationField,
+                    modelServiceField,
+                    asyncNodeManager.getMethod("hasWork"),
+                    renderGeneration.getMethod("getTaskCount"),
+                    modelService.getMethod("areQueuesEmpty"),
                     worldIdentifier.getMethod("of", level),
                     record.getMethod("getSections"),
                     record.getMethod("getChunkX"),

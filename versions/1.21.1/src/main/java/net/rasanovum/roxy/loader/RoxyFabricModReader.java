@@ -21,6 +21,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Set;
 import java.util.List;
+import java.util.Map;
 import java.util.StringJoiner;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
@@ -32,8 +33,13 @@ public final class RoxyFabricModReader implements IModFileReader {
     private static final String RELOCATED_JARS = "META-INF/roxy-jars/";
     private static final String SUPPLEMENTAL_SHADER_MIXIN = "roxy-voxy-shader.json";
     private static final String SUPPLEMENTAL_WORLDGEN_MIXIN = "roxy-voxy-worldgen.json";
-    private static final String VOXY_NEOFORGE_HOST = "net/rasanovum/roxyhost/RoxyVoxyNeoForge.class";
-    private static final String VOXY_NEOFORGE_HOST_RESOURCE = "roxy/embedded/RoxyVoxyNeoForge.bin";
+    private static final Map<String, String> EMBEDDED_HOST_CLASSES = Map.of(
+            "net/rasanovum/roxyhost/RoxyPalettedContainerFactory.class", "roxy/embedded/RoxyPalettedContainerFactory.bin",
+            "net/rasanovum/roxyhost/RoxyVoxyNeoForge.class", "roxy/embedded/RoxyVoxyNeoForge.bin",
+            "net/rasanovum/roxy/client/RoxyClientWarnings.class", "roxy/embedded/RoxyClientWarnings.bin",
+            "net/rasanovum/roxy/client/RoxyClientWarnings$Warning.class", "roxy/embedded/RoxyClientWarnings$Warning.bin",
+            "net/rasanovum/roxy/client/RoxyWarningScreen.class", "roxy/embedded/RoxyWarningScreen.bin"
+    );
     private static final Set<String> UNSUPPORTED_1_21_1_CLIENT_MIXINS = Set.of(
             "minecraft.MixinBlockableEventLoop",
             "minecraft.MixinGPUSelect",
@@ -59,11 +65,19 @@ public final class RoxyFabricModReader implements IModFileReader {
             return null;
         }
 
+        Path original = jar.getPrimaryPath();
+        RoxyCrashReportHeader.patching(original);
         try {
-            Path patched = patchJar(jar.getPrimaryPath(), fabricMetadata);
-            return JarModsDotTomlModFileReader.createModFile(JarContents.of(patched), attributes);
+            Path patched = patchJar(original, fabricMetadata);
+            IModFile modFile = JarModsDotTomlModFileReader.createModFile(JarContents.of(patched), attributes);
+            RoxyCrashReportHeader.patched(original);
+            return modFile;
         } catch (IOException e) {
+            RoxyCrashReportHeader.failed(e);
             throw new RuntimeException("Roxy: failed to patch Fabric mod jar", e);
+        } catch (RuntimeException | Error throwable) {
+            RoxyCrashReportHeader.failed(throwable);
+            throw throwable;
         }
     }
 
@@ -110,13 +124,15 @@ public final class RoxyFabricModReader implements IModFileReader {
                 output.closeEntry();
             }
 
-            byte[] lifecycleHost = readResource(VOXY_NEOFORGE_HOST_RESOURCE);
-            if (lifecycleHost == null) {
-                throw new IOException("Roxy: missing Voxy NeoForge lifecycle host");
+            for (Map.Entry<String, String> hostClass : EMBEDDED_HOST_CLASSES.entrySet()) {
+                byte[] contents = readResource(hostClass.getValue());
+                if (contents == null) {
+                    throw new IOException("Roxy: missing embedded host class " + hostClass.getKey());
+                }
+                output.putNextEntry(new ZipEntry(hostClass.getKey()));
+                output.write(contents);
+                output.closeEntry();
             }
-            output.putNextEntry(new ZipEntry(VOXY_NEOFORGE_HOST));
-            output.write(lifecycleHost);
-            output.closeEntry();
 
             if (supplementalShaderMixin != null) {
                 output.putNextEntry(new ZipEntry(SUPPLEMENTAL_SHADER_MIXIN));

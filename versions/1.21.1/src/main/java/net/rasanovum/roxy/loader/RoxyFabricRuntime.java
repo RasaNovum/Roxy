@@ -26,7 +26,18 @@ public final class RoxyFabricRuntime {
     public static synchronized void initializeFabricEntrypoints() {
         if (initialized) return;
         initialized = true;
+        RoxyCrashReportHeader.initializing();
 
+        try {
+            initializeFabricEntrypoints0();
+            RoxyCrashReportHeader.initialized();
+        } catch (RuntimeException | Error throwable) {
+            RoxyCrashReportHeader.failed(throwable);
+            throw throwable;
+        }
+    }
+
+    private static void initializeFabricEntrypoints0() {
         if (isVoxyManagedByFabricLoader()) return;
 
         if (hasForgifiedFabricLoader()) {

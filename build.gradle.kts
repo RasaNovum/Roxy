@@ -12,7 +12,7 @@ plugins {
 }
 
 group = "net.rasanovum"
-version = "0.2.0"
+version = "0.3.0-d-1"
 
 prism {
     metadata {
@@ -105,6 +105,15 @@ project(":1.21.1") {
                 into("roxy/embedded")
                 rename { "RoxyVoxyNeoForge.bin" }
             }
+            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyPalettedContainerFactory.class")) {
+                into("roxy/embedded")
+                rename { "RoxyPalettedContainerFactory.bin" }
+            }
+            from(layout.buildDirectory.dir("classes/java/main/net/rasanovum/roxy/client")) {
+                include("RoxyClientWarnings*.class", "RoxyWarningScreen.class")
+                into("roxy/embedded")
+                rename { it.replace(".class", ".bin") }
+            }
         }
         tasks.named<JavaExec>("runClient") {
             doFirst {
@@ -130,6 +139,8 @@ project(":1.21.1") {
             dependsOn(fabricStubsJar)
             exclude("net/fabricmc/**")
             exclude("net/rasanovum/roxyhost/**")
+            exclude("net/rasanovum/roxy/client/RoxyClientWarnings*.class")
+            exclude("net/rasanovum/roxy/client/RoxyWarningScreen.class")
             from(fabricStubsJar.map { it.archiveFile }) {
                 into("META-INF/jars")
             }
@@ -144,6 +155,8 @@ project(":1.21.1") {
                 // Keep conditional Fabric stubs out of MOD_CLASSES to avoid a second net.fabricmc.* supplier.
                 exclude("net/fabricmc/**")
                 exclude("net/rasanovum/roxyhost/**")
+                exclude("net/rasanovum/roxy/client/RoxyClientWarnings*.class")
+                exclude("net/rasanovum/roxy/client/RoxyWarningScreen.class")
             }
             into(packagedMainClassesDir)
         }

@@ -36,18 +36,20 @@ public final class RoxyIrisViewportCompat {
             Matrix4f positionMatrix,
             Matrix4f projectionMatrix
     ) {
+        capturedViewportReady = false;
         Accessors current = getAccessors();
         if (current == null) {
             logAccessorsFailure();
             return;
         }
 
+        Object captured = null;
         try {
             if (!Boolean.TRUE.equals(current.shaderPackEnabled.invoke(null))) return;
 
             Object matrices = current.matricesConstructor.newInstance(projectionMatrix, positionMatrix);
             Object position = camera.getClass().getMethod("getPosition").invoke(camera);
-            Object captured = current.capturedConstructor.newInstance(
+            captured = current.capturedConstructor.newInstance(
                     matrices,
                     RoxyFogParameters.current(),
                     coordinate(position, "x"),
@@ -61,20 +63,29 @@ public final class RoxyIrisViewportCompat {
             if (renderer != null) {
                 int[] dimensions = getMainTargetDimensions(levelRenderer.getClass().getClassLoader());
                 GL11.glViewport(0, 0, dimensions[0], dimensions[1]);
-                current.apply.invoke(captured, renderer);
-                current.capturedViewport.set(null, null);
-                capturedViewportReady = true;
+                Object viewport = current.apply.invoke(captured, renderer);
+                if (viewport != null) capturedViewportReady = true;
                 if (!captureSuccessLogged) {
                     captureSuccessLogged = true;
                     LOGGER.info("Roxy Iris viewport bridge active at {}x{}", dimensions[0], dimensions[1]);
                 }
-                current.apply.invoke(captured, renderer);
             }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
             // Iris and Voxy remain optional at this boundary. If their runtime ABI changes, the normal non-Iris viewport path must remain usable.
             if (!captureFailureLogged) {
                 captureFailureLogged = true;
                 LOGGER.warn("Roxy could not apply Voxy's Iris viewport bridge", exception);
+            }
+        } finally {
+            if (captured != null) {
+                try {
+                    current.capturedViewport.set(null, null);
+                } catch (IllegalAccessException exception) {
+                    if (!captureFailureLogged) {
+                        captureFailureLogged = true;
+                        LOGGER.warn("Roxy could not clear Voxy's captured Iris viewport", exception);
+                    }
+                }
             }
         }
     }

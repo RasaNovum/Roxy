@@ -1,7 +1,6 @@
 package net.rasanovum.roxyhost;
 
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
-import com.mojang.brigadier.context.CommandContext;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
@@ -10,21 +9,22 @@ import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
-import net.minecraft.commands.CommandSourceStack;
-import net.minecraft.network.chat.Component;
 import net.rasanovum.roxy.compat.RoxyPowerGridCompat;
-import net.rasanovum.roxy.patch.RoxyVoxyHierarchySweep;
 import net.rasanovum.roxy.patch.RoxyVoxyLifecycle;
 import net.rasanovum.roxy.loader.RoxyFabricRuntime;
+import net.rasanovum.roxy.loader.RoxyCrashReportHeader;
+import net.rasanovum.roxy.client.RoxyClientWarnings;
 
 @Mod("voxy")
 public final class RoxyVoxyNeoForge {
     public RoxyVoxyNeoForge(IEventBus modBus) {
+        RoxyCrashReportHeader.register();
         modBus.addListener(this::onClientSetup);
         NeoForge.EVENT_BUS.addListener(this::onRegisterClientCommands);
         NeoForge.EVENT_BUS.addListener(this::onRenderLevelStage);
         NeoForge.EVENT_BUS.addListener(this::onClientTick);
         NeoForge.EVENT_BUS.addListener(this::onEntityLeaveLevel);
+        NeoForge.EVENT_BUS.addListener(RoxyClientWarnings::onScreenOpening);
     }
 
     private void onClientSetup(FMLClientSetupEvent event) {
@@ -42,24 +42,6 @@ public final class RoxyVoxyNeoForge {
                 System.err.println("Roxy: unable to register the Voxy client command: " + exception);
             }
         }
-        if (event.getDispatcher().getRoot().getChild("roxy") == null) {
-            event.getDispatcher().register(
-                    LiteralArgumentBuilder.<CommandSourceStack>literal("roxy")
-                            .then(LiteralArgumentBuilder.<CommandSourceStack>literal("fixStaleLoDs")
-                                    .executes(RoxyVoxyNeoForge::fixStaleLoDs))
-            );
-        }
-    }
-
-    private static int fixStaleLoDs(CommandContext<CommandSourceStack> context) {
-        boolean requested = RoxyVoxyHierarchySweep.requestManualSweep();
-        context.getSource().sendSuccess(
-                () -> Component.literal(requested
-                        ? "Started background stale LoD fix"
-                        : "Voxy is not ready for a stale LoD fix"),
-                false
-        );
-        return requested ? 1 : 0;
     }
 
     private void onRenderLevelStage(RenderLevelStageEvent event) {

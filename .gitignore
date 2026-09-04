@@ -11,3 +11,12 @@ runs/
 run/
 **/run/
 .DS_Store
+/me/
+/assets/
+/META-INF/
+/client.voxy.mixins.json
+/common.voxy.mixins.json
+/fabric.mod.json
+/voxy.accesswidener
+/tools/audittemp/META-INF/jarjar/flywheel-neoforge-1.21.1-1.0.6.jar
+/tools/audittemp/META-INF/jarjar/net.caffeinemc.sodium-neoforge-0.8.12+mc1.21.1-mod.jar

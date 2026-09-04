@@ -23,18 +23,25 @@ import java.util.ArrayList;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.zip.ZipFile;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipOutputStream;
 
 public final class RoxyLocator implements IModFileCandidateLocator {
     @Override
     public void findCandidates(ILaunchContext context, IDiscoveryPipeline pipeline) {
+        RoxyCrashReportHeader.register();
+        RoxyCrashReportHeader.searching();
         readdSelf(pipeline);
 
         try {
             Path voxyJar = findVoxyJar();
+            if (voxyJar == null) RoxyCrashReportHeader.notFound();
+            else RoxyCrashReportHeader.located(voxyJar);
             if (voxyJar != null && !context.isLocated(voxyJar)) {
                 pipeline.addPath(voxyJar, ModFileDiscoveryAttributes.DEFAULT, IncompatibleFileReporting.WARN_ON_KNOWN_INCOMPATIBILITY);
             }
         } catch (Exception e) {
+            RoxyCrashReportHeader.failed(e);
             throw new RuntimeException("Roxy: failed to locate Voxy jar", e);
         }
     }
@@ -44,7 +51,54 @@ public final class RoxyLocator implements IModFileCandidateLocator {
         if (ownPaths.isEmpty()) {
             return;
         }
-        pipeline.addPath(ownPaths, ModFileDiscoveryAttributes.DEFAULT, IncompatibleFileReporting.ERROR);
+        try {
+            Path metadataJar = createMetadataMod(ownPaths);
+            pipeline.addPath(metadataJar, ModFileDiscoveryAttributes.DEFAULT, IncompatibleFileReporting.ERROR);
+        } catch (IOException exception) {
+            throw new IllegalStateException("Roxy could not create its metadata mod", exception);
+        }
+    }
+
+    private static Path createMetadataMod(List<Path> ownPaths) throws IOException {
+        byte[] metadata = readOwnResource(ownPaths, "META-INF/neoforge.mods.toml");
+        if (metadata == null) throw new IOException("Roxy metadata is missing");
+        String toml = new String(metadata, StandardCharsets.UTF_8)
+                .replace("modLoader = \"javafml\"", "modLoader = \"lowcodefml\"")
+                .replaceAll("(?ms)^\\[\\[mixins]]\\s*\\Rconfig\\s*=\\s*\"[^\"]+\"\\s*", "");
+
+        Path output = Files.createTempFile("roxy-metadata-", ".jar");
+        output.toFile().deleteOnExit();
+        try (ZipOutputStream zip = new ZipOutputStream(Files.newOutputStream(output))) {
+            zip.putNextEntry(new ZipEntry("META-INF/neoforge.mods.toml"));
+            zip.write(toml.getBytes(StandardCharsets.UTF_8));
+            zip.closeEntry();
+            byte[] icon = readOwnResource(ownPaths, "assets/roxy/icon.png");
+            if (icon != null) {
+                zip.putNextEntry(new ZipEntry("assets/roxy/icon.png"));
+                zip.write(icon);
+                zip.closeEntry();
+            }
+        }
+        return output;
+    }
+
+    private static byte[] readOwnResource(List<Path> roots, String resource) throws IOException {
+        for (Path root : roots) {
+            if (Files.isDirectory(root)) {
+                Path file = root.resolve(resource);
+                if (Files.isRegularFile(file)) return Files.readAllBytes(file);
+            } else if (Files.isRegularFile(root)) {
+                try (ZipFile zip = new ZipFile(root.toFile())) {
+                    ZipEntry entry = zip.getEntry(resource);
+                    if (entry != null) {
+                        try (InputStream input = zip.getInputStream(entry)) {
+                            return input.readAllBytes();
+                        }
+                    }
+                }
+            }
+        }
+        return null;
     }
 
     private static List<Path> ownModPaths() {
