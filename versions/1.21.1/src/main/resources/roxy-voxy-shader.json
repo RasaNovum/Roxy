@@ -4,6 +4,7 @@
   "package": "net.rasanovum.roxy.mixin",
   "compatibilityLevel": "JAVA_21",
     "client": [
+        "RoxyIrisReloadMixin",
         "RoxyClientLevelEntityMixin",
         "RoxyShaderResourceMixin",
         "RoxySoftwareRasterizerMixin",

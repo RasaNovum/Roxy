@@ -7,7 +7,6 @@
     "RoxyChunkyNeoForgeWorldMixin",
     "RoxyChunksmithVoxyRadiusMixin",
     "RoxyChunksmithVoxyTargetMixin",
-    "RoxyVoxyWorldgenIngestMixin",
     "RoxyMinecraftLevelMixin"
   ],
   "injectors": {

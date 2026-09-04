@@ -341,10 +341,6 @@ public final class RoxyMappings {
         };
     }
 
-    private static String mapOfficialDescriptorToIntermediary(String descriptor, Map<String, String> classes) {
-        return mapDescriptorWith(descriptor, classes);
-    }
-
     private static String mapDescriptorWith(String descriptor, Map<String, String> classes) {
         StringBuilder result = new StringBuilder(descriptor.length());
         for (int i = 0; i < descriptor.length(); i++) {

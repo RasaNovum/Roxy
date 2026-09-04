@@ -1,5 +1,6 @@
 package net.rasanovum.roxy.patch;
 
+import net.rasanovum.roxy.compat.RoxyVoxyRendererReloadCompat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -15,6 +16,7 @@ public final class RoxyVoxyLifecycle {
     private static Object instance;
     private static Object engine;
     private static Object renderer;
+    private static boolean rendererReady;
 
     private RoxyVoxyLifecycle() {
     }
@@ -28,39 +30,44 @@ public final class RoxyVoxyLifecycle {
             Object currentInstance = resolved.voxyInstance.invoke(null);
             Object minecraft = resolved.minecraftInstance.invoke(null);
             Object level = resolved.level.get(minecraft);
+            if (currentInstance != null) RoxyVoxyRendererReloadCompat.processPending();
             Object currentEngine = level == null ? null : resolved.worldEngine.invoke(null, level);
             if (currentInstance == null || currentEngine == null) {
                 if (instance != currentInstance || engine != currentEngine) {
                     instance = currentInstance;
                     engine = currentEngine;
                     renderer = null;
-                    RoxyVoxyRenderPatch.reset();
+                    rendererReady = false;
                 }
-                RoxyVoxyMaskSweep.setContext(null, null);
-                RoxyVoxyHierarchySweep.setContext(null, null, null);
                 return;
             }
 
             Object levelRenderer = resolved.levelRenderer.get(minecraft);
             Object currentRenderer = resolved.getRenderSystem.invoke(levelRenderer);
-            Object currentNodeManager = currentRenderer == null
-                    ? null
-                    : resolved.nodeManager.get(currentRenderer);
-            if (currentInstance != instance || currentEngine != engine || currentRenderer != renderer) {
+            boolean worldChanged = currentInstance != instance || currentEngine != engine;
+            boolean rendererChanged = currentRenderer != renderer;
+            if (worldChanged || rendererChanged) {
                 instance = currentInstance;
                 engine = currentEngine;
                 renderer = currentRenderer;
-                RoxyVoxyRenderPatch.reset();
+                rendererReady = false;
+                if (worldChanged) RoxyVoxyRenderPatch.observeWorld(level, currentEngine);
                 if (currentRenderer != null) {
-                    LOGGER.info("Prepared background Voxy LoD verification for a world or renderer change");
+                    RoxyVoxyRenderPatch.registerRenderer(currentRenderer);
+                    LOGGER.info("Registered Voxy render task tracking for a world or renderer change");
                 }
             }
-            RoxyVoxyMaskSweep.setContext(currentEngine, currentNodeManager);
-            RoxyVoxyHierarchySweep.setContext(currentEngine, currentRenderer, currentNodeManager);
+            if (currentRenderer != null) {
+                if (!rendererReady) {
+                    rendererReady = true;
+                    return;
+                }
+                RoxyVoxyRenderPatch.flushPendingRenderTasks();
+            }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
             if (!resolutionFailed) {
                 resolutionFailed = true;
-                LOGGER.warn("Background Voxy LoD verification is unavailable", exception);
+                LOGGER.warn("Voxy render task lifecycle tracking is unavailable", exception);
             }
         }
     }
@@ -80,8 +87,7 @@ public final class RoxyVoxyLifecycle {
             Field level,
             Field levelRenderer,
             Method worldEngine,
-            Method getRenderSystem,
-            Field nodeManager
+            Method getRenderSystem
     ) {
         private static Methods resolve(ClassLoader loader) throws ReflectiveOperationException {
             if (loader == null) loader = RoxyVoxyLifecycle.class.getClassLoader();
@@ -94,17 +100,13 @@ public final class RoxyVoxyLifecycle {
                     false,
                     loader
             );
-            Class<?> renderSystem = Class.forName("me.cortex.voxy.client.core.VoxyRenderSystem", false, loader);
-            Field nodeManager = renderSystem.getDeclaredField("nodeManager");
-            nodeManager.setAccessible(true);
             return new Methods(
                     voxyCommon.getMethod("getInstance"),
                     minecraft.getMethod("getInstance"),
                     minecraft.getField("level"),
                     minecraft.getField("levelRenderer"),
                     worldIdentifier.getMethod("ofEngineNullable", levelClass),
-                    renderSystemBridge.getMethod("voxy$getRenderSystem"),
-                    nodeManager
+                    renderSystemBridge.getMethod("voxy$getRenderSystem")
             );
         }
     }

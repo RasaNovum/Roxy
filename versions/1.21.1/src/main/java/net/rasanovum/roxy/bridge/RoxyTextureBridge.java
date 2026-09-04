@@ -58,7 +58,6 @@ public final class RoxyTextureBridge {
         int alignment = GL11.glGetInteger(3333);
         try {
             GL11.glFlush();
-            GL11.glFinish();
             GL30C.glBindFramebuffer(36160, 0);
             GL15C.glBindBuffer(35051, 0);
             GL11.glPixelStorei(3330, width);

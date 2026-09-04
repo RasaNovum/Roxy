@@ -1,7 +1,9 @@
 package net.rasanovum.roxy;
 
 import net.rasanovum.roxy.loader.RoxyFabricRuntime;
+import net.rasanovum.roxy.loader.RoxyCrashReportHeader;
 import net.rasanovum.roxy.compat.RoxyPowerGridCompat;
+import net.rasanovum.roxy.client.RoxyClientWarnings;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
@@ -15,10 +17,12 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 @Mod("roxy")
 public final class RoxyNeoForge {
     public RoxyNeoForge(IEventBus modBus) {
+        RoxyCrashReportHeader.register();
         modBus.addListener(this::onClientSetup);
         NeoForge.EVENT_BUS.addListener(this::onRegisterClientCommands);
         NeoForge.EVENT_BUS.addListener(this::onRenderLevelStage);
         NeoForge.EVENT_BUS.addListener(this::onEntityLeaveLevel);
+        NeoForge.EVENT_BUS.addListener(RoxyClientWarnings::onScreenOpening);
     }
 
     private void onClientSetup(FMLClientSetupEvent event) {
