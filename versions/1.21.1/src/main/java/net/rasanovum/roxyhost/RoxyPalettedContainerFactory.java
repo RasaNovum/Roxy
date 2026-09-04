@@ -1,4 +1,4 @@
-package net.rasanovum.roxy.patch;
+package net.rasanovum.roxyhost;
 
 import com.mojang.serialization.Codec;
 import net.minecraft.core.Holder;
@@ -13,11 +13,11 @@ import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.PalettedContainer;
 import net.minecraft.world.level.chunk.PalettedContainerRO;
 
-public final class RoxyVoxyPalettedContainerPatch {
+public final class RoxyPalettedContainerFactory {
     private final Codec<?> biomeContainerCodec;
     private final Codec<?> blockStatesContainerCodec;
 
-    private RoxyVoxyPalettedContainerPatch(
+    private RoxyPalettedContainerFactory(
             Codec<?> biomeContainerCodec,
             Codec<?> blockStatesContainerCodec
     ) {
@@ -26,7 +26,7 @@ public final class RoxyVoxyPalettedContainerPatch {
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})
-    public static RoxyVoxyPalettedContainerPatch create(RegistryAccess registryAccess) {
+    public static RoxyPalettedContainerFactory create(RegistryAccess registryAccess) {
         Registry<Biome> biomeRegistry = registryAccess.registryOrThrow(Registries.BIOME);
         Holder<Biome> defaultBiome = biomeRegistry.getHolderOrThrow(Biomes.PLAINS);
         Codec<PalettedContainer<BlockState>> blockStatesCodec = PalettedContainer.codecRW(
@@ -41,7 +41,7 @@ public final class RoxyVoxyPalettedContainerPatch {
                 PalettedContainer.Strategy.SECTION_BIOMES,
                 defaultBiome
         );
-        return new RoxyVoxyPalettedContainerPatch(biomeCodec, blockStatesCodec);
+        return new RoxyPalettedContainerFactory(biomeCodec, blockStatesCodec);
     }
 
     public Codec<?> biomeContainerCodec() {

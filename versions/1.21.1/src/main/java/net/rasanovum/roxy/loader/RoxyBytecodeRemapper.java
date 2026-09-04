@@ -91,7 +91,7 @@ public final class RoxyBytecodeRemapper {
     private static final String VOXY_DEFAULT_BIOME_PROVIDER = VOXY_WORLD_IMPORTER + "$1";
     private static final String VOXY_PALETTED_CONTAINER_FACTORY = "net/minecraft/class_11897";
     private static final String VOXY_PALETTED_CONTAINER_FACTORY_COMPAT =
-            "net/rasanovum/roxy/patch/RoxyVoxyPalettedContainerPatch";
+            "net/rasanovum/roxyhost/RoxyPalettedContainerFactory";
     private static final String VOXY_WORLD_CALLBACK_1_21_1 =
             "(Lnet/minecraft/world/level/storage/WritableLevelData;"
                     + "Lnet/minecraft/resources/ResourceKey;"
@@ -283,6 +283,7 @@ public final class RoxyBytecodeRemapper {
         output = patchVoxyDefaultChunkRenderer(output);
         output = patchVoxyTextureSetup(output);
         output = patchVoxyBakedModel(output);
+        output = patchVoxyModelTinting(output);
         output = patchVoxyModelFactory(output);
         output = patchVoxyFluidClassification(output);
         output = patchVoxyMetaFromLayer(output);
@@ -296,6 +297,7 @@ public final class RoxyBytecodeRemapper {
         output = patchVoxyClientWorldPath(output);
         output = patchVoxyPalettedContainerFactory(output);
         output = patchVoxyWorldImporterDefaultBiomeProvider(output);
+        output = patchVoxyStoredStateDataFix(output);
         output = patchVoxyConfigDefaults(output);
         output = patchVoxyConfigMenu(output);
         output = patchMinecraftVersionBridges(output);
@@ -698,6 +700,16 @@ public final class RoxyBytecodeRemapper {
                                 && descriptor.equals(
                                 "(Lnet/minecraft/resources/ResourceKey;)Lnet/minecraft/core/Holder$Reference;")) {
                             super.visitMethodInsn(opcode, owner, "getHolderOrThrow", descriptor, true);
+                        } else if (opcode == Opcodes.INVOKEINTERFACE
+                                && owner.equals("net/minecraft/WorldVersion")
+                                && (name.equals("comp_4026") || name.equals("dataVersion"))
+                                && descriptor.equals("()Lnet/minecraft/world/level/storage/DataVersion;")) {
+                            super.visitMethodInsn(opcode, owner, "getDataVersion", descriptor, true);
+                        } else if (opcode == Opcodes.INVOKEVIRTUAL
+                                && owner.equals("net/minecraft/world/level/storage/DataVersion")
+                                && (name.equals("comp_4038") || name.equals("version"))
+                                && descriptor.equals("()I")) {
+                            super.visitMethodInsn(opcode, owner, "getVersion", descriptor, false);
                         } else if (opcode == Opcodes.INVOKEVIRTUAL
                                 && owner.equals(BAKED_QUAD)
                                 && name.equals("comp_3725")
@@ -731,11 +743,19 @@ public final class RoxyBytecodeRemapper {
                             );
                         } else if (opcode == Opcodes.INVOKEVIRTUAL
                                 && owner.equals(COMPOUND_TAG)
+                                && (name.equals("getCompound") || name.equals("method_10562")
+                                || name.equals("getList") || name.equals("method_10554")
+                                || name.equals("getByteArray") || name.equals("method_10547"))
                                 && descriptor.equals("(Ljava/lang/String;)Ljava/util/Optional;")) {
+                            String getter = switch (name) {
+                                case "getList", "method_10554" -> "getList";
+                                case "getByteArray", "method_10547" -> "getByteArray";
+                                default -> "getCompound";
+                            };
                             super.visitMethodInsn(
                                     Opcodes.INVOKESTATIC,
                                     COMPOUND_TAG_COMPAT,
-                                    "getCompound",
+                                    getter,
                                     "(Ljava/lang/Object;Ljava/lang/String;)Ljava/util/Optional;",
                                     false
                             );
@@ -1343,8 +1363,6 @@ public final class RoxyBytecodeRemapper {
                 Label faceDone = new Label();
                 Label quadLoop = new Label();
                 Label quadDone = new Label();
-                Label noShade = new Label();
-                Label shadeValue = new Label();
 
                 method.visitCode();
 
@@ -1367,6 +1385,10 @@ public final class RoxyBytecodeRemapper {
                 method.visitInsn(Opcodes.RETURN);
 
                 method.visitLabel(visible);
+
+                method.visitVarInsn(Opcodes.ALOAD, 1);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        "net/rasanovum/roxy/bridge/RoxyModelTintBridge", "beginBlock", "(Ljava/lang/Object;)V", false);
 
                 method.visitMethodInsn(
                         Opcodes.INVOKESTATIC,
@@ -1392,7 +1414,11 @@ public final class RoxyBytecodeRemapper {
                 );
                 method.visitVarInsn(Opcodes.ASTORE, 3);
 
+                method.visitVarInsn(Opcodes.ALOAD, 1);
                 method.visitVarInsn(Opcodes.ALOAD, 2);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC, RENDER_TYPE_COMPAT, "getChunkRenderType",
+                        "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", false);
+                method.visitTypeInsn(Opcodes.CHECKCAST, RENDER_TYPE);
                 method.visitMethodInsn(
                         Opcodes.INVOKESTATIC,
                         VOXY_TEXTURE_BAKERY,
@@ -1482,22 +1508,12 @@ public final class RoxyBytecodeRemapper {
                 method.visitVarInsn(Opcodes.ALOAD, 0);
                 method.visitFieldInsn(Opcodes.GETFIELD, VOXY_TEXTURE_BAKERY, "vc", vertexConsumer);
                 method.visitVarInsn(Opcodes.ALOAD, 9);
-                method.visitVarInsn(Opcodes.ILOAD, 4);
+                method.visitVarInsn(Opcodes.ALOAD, 1);
                 method.visitVarInsn(Opcodes.ALOAD, 9);
-                method.visitMethodInsn(
-                        Opcodes.INVOKEVIRTUAL,
-                        BAKED_QUAD,
-                        "isTinted",
-                        "()Z",
-                        false
-                );
-                method.visitJumpInsn(Opcodes.IFEQ, noShade);
-                method.visitInsn(Opcodes.ICONST_4);
-                method.visitJumpInsn(Opcodes.GOTO, shadeValue);
-                method.visitLabel(noShade);
-                method.visitInsn(Opcodes.ICONST_0);
-                method.visitLabel(shadeValue);
-                method.visitInsn(Opcodes.IOR);
+                method.visitVarInsn(Opcodes.ILOAD, 4);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        "net/rasanovum/roxy/bridge/RoxyModelTintBridge", "metadata",
+                        "(Ljava/lang/Object;Ljava/lang/Object;I)I", false);
                 method.visitMethodInsn(
                         Opcodes.INVOKEVIRTUAL,
                         VOXY_VERTEX_CONSUMER,
@@ -1518,6 +1534,56 @@ public final class RoxyBytecodeRemapper {
                 method.visitEnd();
             }
         }, 0);
+        return writer.toByteArray();
+    }
+
+    private static byte[] patchVoxyModelTinting(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        boolean factory = reader.getClassName().equals(VOXY_MODEL_FACTORY);
+        boolean raster = reader.getClassName().equals("me/cortex/voxy/client/core/model/bakery/SoftwareRasterizer");
+        if (!factory && !raster) return input;
+        int[] hooks = {0};
+        ClassWriter writer = new RoxyClassWriter(reader, ClassWriter.COMPUTE_FRAMES);
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                MethodVisitor method = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (factory && name.equals("getColourProvider")) {
+                    return new MethodVisitor(Opcodes.ASM9, method) {
+                        @Override
+                        public void visitInsn(int opcode) {
+                            if (opcode == Opcodes.ARETURN) {
+                                super.visitMethodInsn(Opcodes.INVOKESTATIC,
+                                        "net/rasanovum/roxy/bridge/RoxyModelTintBridge", "wrapProvider",
+                                        "(Ljava/lang/Object;)Ljava/lang/Object;", false);
+                                super.visitTypeInsn(Opcodes.CHECKCAST, "net/minecraft/client/color/block/BlockColor");
+                                hooks[0]++;
+                            }
+                            super.visitInsn(opcode);
+                        }
+                    };
+                }
+                if (raster && name.equals("rasterPixel") && descriptor.equals("(IFFF)V")) {
+                    return new MethodVisitor(Opcodes.ASM9, method) {
+                        @Override
+                        public void visitMethodInsn(int opcode, String owner, String name, String descriptor, boolean isInterface) {
+                            super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
+                            if (owner.equals(reader.getClassName()) && name.equals("sampleTexture") && descriptor.equals("(FF)I")) {
+                                super.visitVarInsn(Opcodes.ALOAD, 0);
+                                super.visitFieldInsn(Opcodes.GETFIELD, owner, "a1", "Lorg/joml/Vector3f;");
+                                super.visitFieldInsn(Opcodes.GETFIELD, "org/joml/Vector3f", "x", "F");
+                                super.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Float", "floatToRawIntBits", "(F)I", false);
+                                super.visitMethodInsn(Opcodes.INVOKESTATIC,
+                                        "net/rasanovum/roxy/bridge/RoxyModelTintBridge", "tintSample", "(II)I", false);
+                                hooks[0]++;
+                            }
+                        }
+                    };
+                }
+                return method;
+            }
+        }, 0);
+        if (hooks[0] != 1) throw new IllegalStateException("Unsupported Voxy model tinting: " + reader.getClassName());
         return writer.toByteArray();
     }
 
@@ -2914,6 +2980,36 @@ public final class RoxyBytecodeRemapper {
                 };
             }
         }, 0);
+        return writer.toByteArray();
+    }
+
+    private static byte[] patchVoxyStoredStateDataFix(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals("me/cortex/voxy/common/world/other/Mapper$StateEntry")) return input;
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+        int[] patched = {0};
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                MethodVisitor method = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (!name.equals("deserialize")) return method;
+                return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String name, String descriptor, boolean isInterface) {
+                        if (opcode == Opcodes.INVOKEINTERFACE && owner.equals("com/mojang/datafixers/DataFixer")
+                                && name.equals("update") && descriptor.equals("(Lcom/mojang/datafixers/DSL$TypeReference;Lcom/mojang/serialization/Dynamic;II)Lcom/mojang/serialization/Dynamic;")) {
+                            super.visitInsn(Opcodes.SWAP);
+                            super.visitIntInsn(Opcodes.BIPUSH, 100);
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC, "java/lang/Math", "max", "(II)I", false);
+                            super.visitInsn(Opcodes.SWAP);
+                            patched[0]++;
+                        }
+                        super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
+                    }
+                };
+            }
+        }, 0);
+        if (patched[0] != 1) throw new IllegalStateException("Unsupported Voxy cached block-state data fixer");
         return writer.toByteArray();
     }
 

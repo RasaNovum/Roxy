@@ -12,7 +12,7 @@ plugins {
 }
 
 group = "net.rasanovum"
-version = "0.2.1-d-85"
+version = "0.3.0-d-1"
 
 prism {
     metadata {
@@ -104,6 +104,10 @@ project(":1.21.1") {
             from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyVoxyNeoForge.class")) {
                 into("roxy/embedded")
                 rename { "RoxyVoxyNeoForge.bin" }
+            }
+            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyPalettedContainerFactory.class")) {
+                into("roxy/embedded")
+                rename { "RoxyPalettedContainerFactory.bin" }
             }
             from(layout.buildDirectory.dir("classes/java/main/net/rasanovum/roxy/client")) {
                 include("RoxyClientWarnings*.class", "RoxyWarningScreen.class")

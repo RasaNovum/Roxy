@@ -18,12 +18,24 @@ public final class RoxyCompoundTagBridge {
     }
 
     public static Optional<?> getCompound(Object compoundTag, String key) {
+        return getOptional(compoundTag, key, 10, "getCompound");
+    }
+
+    public static Optional<?> getList(Object compoundTag, String key) {
+        return getOptional(compoundTag, key, 9, "get");
+    }
+
+    public static Optional<?> getByteArray(Object compoundTag, String key) {
+        return getOptional(compoundTag, key, 7, "getByteArray");
+    }
+
+    private static Optional<?> getOptional(Object compoundTag, String key, int tagType, String getter) {
         try {
-            if (!contains(compoundTag, key, 10)) return Optional.empty();
-            Method getCompound = findMethod(compoundTag.getClass(), "getCompound", 1, CompoundTagReturn.IGNORE);
-            return Optional.ofNullable(getCompound.invoke(compoundTag, key));
+            if (!contains(compoundTag, key, tagType)) return Optional.empty();
+            Method method = findMethod(compoundTag.getClass(), getter, 1, CompoundTagReturn.IGNORE);
+            return Optional.ofNullable(method.invoke(compoundTag, key));
         } catch (ReflectiveOperationException exception) {
-            throw new IllegalStateException("Unable to bridge CompoundTag.getCompound", exception);
+            throw new IllegalStateException("Unable to bridge CompoundTag." + getter, exception);
         }
     }
 
