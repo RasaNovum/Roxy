@@ -263,6 +263,7 @@ public final class RoxyBytecodeRemapper {
         reader.accept(new RoxyClassRemapper(writer, remapper, metadata), 0);
         byte[] output = patchJavaVersion(patchNeoForgeColorMapAccess(patchClasspathDirectoryScan(writer.toByteArray())));
         output = patchVoxyFogParameters(output);
+        output = patchVoxyMissingStates(output);
         output = patchVoxyTextureTintUpload(output);
         output = patchVoxyNormalFog(output);
         output = patchVoxyChunkSectionLayer(output);
@@ -416,6 +417,60 @@ public final class RoxyBytecodeRemapper {
                 return null;
             }
         }, 0);
+        return writer.toByteArray();
+    }
+
+    private static byte[] patchVoxyMissingStates(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals("me/cortex/voxy/common/world/other/Mapper")) return input;
+        var node = new org.objectweb.asm.tree.ClassNode();
+        reader.accept(node, ClassReader.EXPAND_FRAMES);
+        var method = node.methods.stream().filter(m -> m.name.equals("loadFromStorage") && m.desc.equals("()V"))
+                .findFirst().orElseThrow(() -> new IllegalStateException("Unsupported Voxy mapping loader"));
+        org.objectweb.asm.tree.AbstractInsnNode start = null;
+        for (var instruction : method.instructions) {
+            if (instruction instanceof org.objectweb.asm.tree.TypeInsnNode type && type.getOpcode() == Opcodes.NEW && type.desc.equals("java/util/Random")) {
+                if (start != null) throw new IllegalStateException("Ambiguous Voxy missing-state recovery");
+                start = instruction;
+            }
+        }
+        if (start == null) throw new IllegalStateException("Unsupported Voxy missing-state recovery");
+        org.objectweb.asm.tree.LabelNode end = null;
+        int missingLocal = -1;
+        for (var instruction = start.getPrevious(); instruction != null; instruction = instruction.getPrevious()) {
+            if (instruction instanceof org.objectweb.asm.tree.JumpInsnNode jump) {
+                if (jump.getOpcode() != Opcodes.IFNE || !(jump.getPrevious() instanceof org.objectweb.asm.tree.MethodInsnNode call)
+                        || !call.owner.equals("java/util/List") || !call.name.equals("isEmpty"))
+                    throw new IllegalStateException("Unsupported Voxy missing-state branch");
+                end = jump.label;
+                if (!(call.getPrevious() instanceof org.objectweb.asm.tree.VarInsnNode local) || local.getOpcode() != Opcodes.ALOAD)
+                    throw new IllegalStateException("Unsupported Voxy missing-state list");
+                missingLocal = local.var;
+                break;
+            }
+        }
+        if (end == null || method.instructions.indexOf(end) <= method.instructions.indexOf(start))
+            throw new IllegalStateException("Unsupported Voxy missing-state branch target");
+        var continuation = end.getNext();
+        while (continuation != null && continuation.getOpcode() < 0) continuation = continuation.getNext();
+        if (!(continuation instanceof org.objectweb.asm.tree.VarInsnNode entries) || entries.getOpcode() != Opcodes.ALOAD
+                || !(entries.getNext() instanceof org.objectweb.asm.tree.MethodInsnNode stream)
+                || !stream.owner.equals("java/util/List") || !stream.name.equals("stream"))
+            throw new IllegalStateException("Unsupported Voxy indexed-state list");
+        var replacement = new org.objectweb.asm.tree.InsnList();
+        replacement.add(new org.objectweb.asm.tree.VarInsnNode(Opcodes.ALOAD, missingLocal));
+        replacement.add(new org.objectweb.asm.tree.VarInsnNode(Opcodes.ALOAD, entries.var));
+        replacement.add(new org.objectweb.asm.tree.MethodInsnNode(Opcodes.INVOKESTATIC,
+                "net/rasanovum/roxy/bridge/RoxyMissingStateBridge", "retainMissingIds", "(Ljava/util/List;Ljava/util/List;)V", false));
+        method.instructions.insertBefore(start, replacement);
+        while (start != end) {
+            var next = start.getNext();
+            method.instructions.remove(start);
+            start = next;
+        }
+        method.localVariables = null;
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+        node.accept(writer);
         return writer.toByteArray();
     }
 
