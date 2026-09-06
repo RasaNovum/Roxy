@@ -12,7 +12,7 @@ plugins {
 }
 
 group = "net.rasanovum"
-version = "0.3.1"
+version = "0.3.1-d-7-fog"
 
 prism {
     metadata {
@@ -124,6 +124,10 @@ project(":1.21.1") {
             from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyChunkBoundaryMask.class")) {
                 into("roxy/embedded")
                 rename { "RoxyChunkBoundaryMask.bin" }
+            }
+            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyFogOptions.class")) {
+                into("roxy/embedded")
+                rename { "RoxyFogOptions.bin" }
             }
             from(layout.buildDirectory.dir("classes/java/main/net/rasanovum/roxy/client")) {
                 include("RoxyClientWarnings*.class", "RoxyWarningScreen.class")

@@ -3,6 +3,8 @@ package net.rasanovum.roxy.mixin;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
 import net.rasanovum.roxy.compat.RoxyVoxyRequestShader;
+import net.rasanovum.roxy.compat.RoxyFogShader;
+import net.rasanovum.roxy.compat.RoxyModelTintShader;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;
@@ -58,6 +60,8 @@ public final class RoxyShaderResourceMixin {
         try {
             String source = new String(input.readAllBytes(), StandardCharsets.UTF_8);
             source = RoxyVoxyRequestShader.patch(path, source);
+            source = RoxyFogShader.patch(path, source);
+            source = RoxyModelTintShader.patch(path, source);
             if (path.endsWith("/assets/voxy/shaders/lod/quad_util.glsl")) {
                 source = source.replace(
                         "quad.basePoint = (quadStart*lodScale)+vec3(baseSection<<5);",

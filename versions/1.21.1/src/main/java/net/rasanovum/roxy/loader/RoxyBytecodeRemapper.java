@@ -263,6 +263,8 @@ public final class RoxyBytecodeRemapper {
         reader.accept(new RoxyClassRemapper(writer, remapper, metadata), 0);
         byte[] output = patchJavaVersion(patchNeoForgeColorMapAccess(patchClasspathDirectoryScan(writer.toByteArray())));
         output = patchVoxyFogParameters(output);
+        output = patchVoxyTextureTintUpload(output);
+        output = patchVoxyNormalFog(output);
         output = patchVoxyChunkSectionLayer(output);
         output = patchVoxyWorldCallback(output);
         output = patchVoxyNodeStore(output);
@@ -417,6 +419,74 @@ public final class RoxyBytecodeRemapper {
         return writer.toByteArray();
     }
 
+    private static byte[] patchVoxyTextureTintUpload(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals(VOXY_MODEL_FACTORY)) return input;
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+        int[] matches = {0};
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                MethodVisitor method = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (!name.equals("processTextureBakeResult")) return method;
+                return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override public void visitMethodInsn(int opcode, String owner, String called, String desc, boolean itf) {
+                        if (opcode == Opcodes.INVOKESTATIC && owner.equals("me/cortex/voxy/client/core/model/MipGen") && called.equals("putTextures")) {
+                            super.visitVarInsn(Opcodes.ALOAD, 6);
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxy/bridge/RoxyTextureTintBridge", "putTextures",
+                                    "(Z[Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V", false);
+                            matches[0]++;
+                        } else super.visitMethodInsn(opcode, owner, called, desc, itf);
+                    }
+                };
+            }
+        }, 0);
+        if (matches[0] != 1) throw new IllegalStateException("Unsupported Voxy texture upload");
+        return writer.toByteArray();
+    }
+
+    private static byte[] patchVoxyNormalFog(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals("me/cortex/voxy/client/core/NormalRenderPipeline")) return input;
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+        int[] matches = new int[3];
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                MethodVisitor method = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (name.equals("<init>")) return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override public void visitFieldInsn(int opcode, String owner, String field, String desc) {
+                        super.visitFieldInsn(opcode, owner, field, desc);
+                        if (opcode == Opcodes.GETFIELD && owner.equals(VOXY_CONFIG) && field.equals("useEnvironmentalFog") && desc.equals("Z")) {
+                            super.visitInsn(Opcodes.POP);
+                            super.visitInsn(Opcodes.ICONST_1);
+                            matches[0]++;
+                        }
+                    }
+                };
+                if (!name.equals("finish")) return method;
+                return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override public void visitMethodInsn(int opcode, String owner, String called, String desc, boolean itf) {
+                        if (owner.equals(SODIUM_FOG_PARAMETERS) && called.equals("environmentalEnd") && matches[1] == 0) {
+                            called = "cullingEnd";
+                            matches[1]++;
+                        }
+                        if (owner.startsWith("org/lwjgl/opengl/") && called.equals("glUniform4f") && matches[2] == 0) {
+                            super.visitInsn(Opcodes.SWAP);
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxy/patch/RoxyVoxyFogPatch", "opacityLimit", "(F)F", false);
+                            super.visitInsn(Opcodes.SWAP);
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxy/patch/RoxyVoxyFogPatch", "shaderMode", "(F)F", false);
+                            matches[2]++;
+                        }
+                        super.visitMethodInsn(opcode, owner, called, desc, itf);
+                    }
+                };
+            }
+        }, 0);
+        if (matches[0] != 1 || matches[1] != 1 || matches[2] != 1)
+            throw new IllegalStateException("Unsupported Voxy normal fog pipeline");
+        return writer.toByteArray();
+    }
+
     private static byte[] patchVoxyConfigDefaults(byte[] input) {
         ClassReader reader = new ClassReader(input);
         if (!reader.getClassName().equals(VOXY_CONFIG)) return input;
@@ -458,11 +528,27 @@ public final class RoxyBytecodeRemapper {
         }), 0);
 
         reader = new ClassReader(remappedWriter.toByteArray());
-        ClassWriter writer = new ClassWriter(reader, 0);
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
         reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
             @Override
             public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
                 MethodVisitor delegate = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (name.equals("registerConfigLate") && descriptor.equals("(Lnet/caffeinemc/mods/sodium/api/config/structure/ConfigBuilder;)V")) {
+                    return new MethodVisitor(Opcodes.ASM9, delegate) {
+                        private boolean registered;
+                        @Override public void visitMethodInsn(int opcode, String owner, String called, String desc, boolean itf) {
+                            if (owner.equals("net/caffeinemc/mods/sodium/api/config/structure/ConfigBuilder") && called.equals("registerModOptions")) registered = true;
+                            super.visitMethodInsn(opcode, owner, called, desc, itf);
+                        }
+                        @Override public void visitInsn(int opcode) {
+                            if (opcode == Opcodes.RETURN && registered) {
+                                super.visitVarInsn(Opcodes.ALOAD, 1);
+                                super.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxyhost/RoxyFogOptions", "register", "(Ljava/lang/Object;)V", false);
+                            }
+                            super.visitInsn(opcode);
+                        }
+                    };
+                }
                 if (!name.equals("lambda$registerConfigLate$26")
                         || !descriptor.endsWith(")Z")) return delegate;
                 delegate.visitCode();

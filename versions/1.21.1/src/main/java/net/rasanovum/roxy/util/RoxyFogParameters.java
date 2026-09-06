@@ -81,6 +81,10 @@ public final class RoxyFogParameters {
         return environmentalEnd;
     }
 
+    public float cullingEnd() {
+        return net.rasanovum.roxy.patch.RoxyVoxyFogPatch.hasExtendedFog() ? 1.0E9F : environmentalEnd;
+    }
+
     public float red() {
         return red;
     }
