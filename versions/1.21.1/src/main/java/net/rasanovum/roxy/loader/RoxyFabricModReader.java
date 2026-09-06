@@ -34,6 +34,7 @@ public final class RoxyFabricModReader implements IModFileReader {
     private static final String SUPPLEMENTAL_SHADER_MIXIN = "roxy-voxy-shader.json";
     private static final String SUPPLEMENTAL_WORLDGEN_MIXIN = "roxy-voxy-worldgen.json";
     private static final Map<String, String> EMBEDDED_HOST_CLASSES = Map.of(
+            "net/rasanovum/roxyhost/RoxyChunkBoundaryMask.class", "roxy/embedded/RoxyChunkBoundaryMask.bin",
             "net/rasanovum/roxyhost/RoxyPalettedContainerFactory.class", "roxy/embedded/RoxyPalettedContainerFactory.bin",
             "net/rasanovum/roxyhost/RoxyVoxyNeoForge.class", "roxy/embedded/RoxyVoxyNeoForge.bin",
             "net/rasanovum/roxy/client/RoxyClientWarnings.class", "roxy/embedded/RoxyClientWarnings.bin",

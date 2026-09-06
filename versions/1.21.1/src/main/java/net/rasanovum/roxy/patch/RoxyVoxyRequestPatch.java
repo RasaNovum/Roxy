@@ -103,7 +103,7 @@ public final class RoxyVoxyRequestPatch {
             if (pending.putIfAbsent(position, generation) == null) {
                 long count = DEFERRED.incrementAndGet();
                 if (count <= 8 || count % 100 == 0) {
-                    LOGGER.info(
+                    LOGGER.debug(
                             "Deferred Voxy node request at {} while a request was already in flight ({} total)",
                             position,
                             count
@@ -132,7 +132,7 @@ public final class RoxyVoxyRequestPatch {
             );
             long count = RETRIED.incrementAndGet();
             if (count <= 8 || count % 100 == 0) {
-                LOGGER.info("Retried deferred Voxy node request at {} ({} total)", position, count);
+                LOGGER.debug("Retried deferred Voxy node request at {} ({} total)", position, count);
             }
             processRequest.invoke(nodeManager, position);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {

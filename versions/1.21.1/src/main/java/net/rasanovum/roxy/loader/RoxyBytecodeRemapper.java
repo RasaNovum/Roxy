@@ -277,6 +277,8 @@ public final class RoxyBytecodeRemapper {
         output = patchVoxyRenderSystemWorkDrain(output);
         output = patchVoxyRenderDistanceBatchRate(output);
         output = patchVoxyChunkBoundReset(output);
+        output = patchVoxyVisibleChunkBounds(output);
+        output = patchVoxyDepthClearState(output);
         output = patchVoxyLevelRendererLifecycle(output);
         output = patchVoxyCommandsReload(output);
         output = patchVoxyRenderSystemViewport(output);
@@ -2023,6 +2025,81 @@ public final class RoxyBytecodeRemapper {
         if (patched[0] != 1 || renderEntries[0] != 1) {
             throw new IllegalStateException("Unsupported Voxy render-system work drain");
         }
+        return writer.toByteArray();
+    }
+
+
+
+    private static byte[] patchVoxyDepthClearState(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals("me/cortex/voxy/client/core/AbstractRenderPipeline")) return input;
+        int[] matches = {0};
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                MethodVisitor method = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (!name.equals("initDepthStencil") || !descriptor.equals("(IIIIII)V")) return method;
+                matches[0]++;
+                return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override public void visitCode() {
+                        super.visitCode();
+                        super.visitInsn(Opcodes.ICONST_1);
+                        super.visitMethodInsn(Opcodes.INVOKESTATIC, "org/lwjgl/opengl/GL11C", "glDepthMask", "(Z)V", false);
+                        super.visitIntInsn(Opcodes.SIPUSH, 255);
+                        super.visitMethodInsn(Opcodes.INVOKESTATIC, "org/lwjgl/opengl/GL11C", "glStencilMask", "(I)V", false);
+                    }
+                };
+            }
+        }, 0);
+        if (matches[0] != 1) throw new IllegalStateException("Unsupported Voxy depth/stencil initialization");
+        return writer.toByteArray();
+    }
+
+    private static byte[] patchVoxyVisibleChunkBounds(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals(VOXY_CHUNK_BOUND_RENDERER)) return input;
+        String helper = "net/rasanovum/roxyhost/RoxyChunkBoundaryMask";
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+        int[] matches = new int[2];
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                MethodVisitor method = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (name.equals("<init>")) return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override public void visitInsn(int opcode) {
+                        if (opcode == Opcodes.RETURN) {
+                            super.visitVarInsn(Opcodes.ALOAD, 0);
+                            super.visitTypeInsn(Opcodes.NEW, helper);
+                            super.visitInsn(Opcodes.DUP);
+                            super.visitVarInsn(Opcodes.ALOAD, 0);
+                            super.visitMethodInsn(Opcodes.INVOKESPECIAL, helper, "<init>", "(Ljava/lang/Object;)V", false);
+                            super.visitFieldInsn(Opcodes.PUTFIELD, VOXY_CHUNK_BOUND_RENDERER, "roxy$visibleMask", "L" + helper + ";");
+                            matches[0]++;
+                        }
+                        super.visitInsn(opcode);
+                    }
+                };
+                if (name.equals("render") && descriptor.equals("(L" + VOXY_VIEWPORT + ";)V")) return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override public void visitCode() {
+                        super.visitCode();
+                        super.visitInsn(Opcodes.ICONST_1);
+                        super.visitMethodInsn(Opcodes.INVOKESTATIC, "org/lwjgl/opengl/GL11C", "glDepthMask", "(Z)V", false);
+                        super.visitVarInsn(Opcodes.ALOAD, 0);
+                        super.visitFieldInsn(Opcodes.GETFIELD, VOXY_CHUNK_BOUND_RENDERER, "roxy$visibleMask", "L" + helper + ";");
+                        super.visitVarInsn(Opcodes.ALOAD, 1);
+                        super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, helper, "sync", "(Ljava/lang/Object;)V", false);
+                        matches[1]++;
+                    }
+                };
+                return method;
+            }
+            @Override public void visitEnd() {
+                super.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "roxy$visibleMask", "L" + helper + ";", null, null).visitEnd();
+                super.visitEnd();
+            }
+        }, 0);
+        if (matches[0] != 1 || matches[1] != 1) throw new IllegalStateException("Unsupported Voxy chunk boundary renderer");
         return writer.toByteArray();
     }
 

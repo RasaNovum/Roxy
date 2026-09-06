@@ -15,19 +15,11 @@ public final class RoxyVoxyRequestShader {
         if (!path.endsWith("/assets/voxy/shaders/lod/hierarchical/traversal_dev.comp")) return source;
         retriesEnabled = false;
         if (!Boolean.parseBoolean(System.getProperty("roxy.voxyRequestRetries", "true"))) return source;
-        try {
-            Class<?> iris = Class.forName("me.cortex.voxy.client.core.util.IrisUtil", false,
-                    Thread.currentThread().getContextClassLoader());
-            if (!Boolean.TRUE.equals(iris.getMethod("irisShaderPackEnabled").invoke(null))) return source;
-        } catch (ReflectiveOperationException | LinkageError exception) {
-            LOGGER.warn("Unable to enable Voxy shader request recovery", exception);
-            return source;
-        }
         if (source.indexOf(REQUEST_GATE) < 0
                 || source.indexOf(REQUEST_GATE) != source.lastIndexOf(REQUEST_GATE)) {
             throw new IllegalStateException("Unsupported Voxy traversal request gate");
         }
-        LOGGER.info("Voxy shader request recovery enabled: staggered 256-traversal retries, 32-request soft limit");
+        LOGGER.info("Voxy traversal request recovery enabled: staggered 256-traversal retries, 32-request soft limit");
         retriesEnabled = true;
         return source.replace(REQUEST_GATE,
                 "if (!hasRequested(node) || (((frameId + getId(node) * 2654435761u) & 255u) == 0u"
