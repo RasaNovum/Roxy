@@ -1,4 +1,4 @@
-package net.rasanovum.roxy.util;
+package net.rasanovum.roxy.fog;
 
 public record RoxyFogRange(float start, float end) {
     public static RoxyFogRange extend(float originalStart, float originalEnd, int originalShape,

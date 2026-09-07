@@ -184,7 +184,7 @@ public final class RoxyBytecodeRemapper {
     private static final String SODIUM_TERRAIN_RENDER_PASS = "net/caffeinemc/mods/sodium/client/render/chunk/terrain/TerrainRenderPass";
     private static final String SODIUM_CAMERA_TRANSFORM = "net/caffeinemc/mods/sodium/client/render/viewport/CameraTransform";
     private static final String SODIUM_FOG_PARAMETERS_NEW = "net/caffeinemc/mods/sodium/client/util/FogParameters";
-    private static final String SODIUM_FOG_PARAMETERS = "net/rasanovum/roxy/util/RoxyFogParameters";
+    private static final String SODIUM_FOG_PARAMETERS = "net/rasanovum/roxy/fog/RoxyFogParameters";
     private static final String CHUNK_SECTION_LAYER_NEW = "net/minecraft/class_11515";
     private static final String RENDER_TYPE = "net/minecraft/client/renderer/RenderType";
     private static final String ITEM_BLOCK_RENDER_TYPES = "net/minecraft/client/renderer/ItemBlockRenderTypes";
@@ -527,9 +527,9 @@ public final class RoxyBytecodeRemapper {
                         }
                         if (owner.startsWith("org/lwjgl/opengl/") && called.equals("glUniform4f") && matches[2] == 0) {
                             super.visitInsn(Opcodes.SWAP);
-                            super.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxy/patch/RoxyVoxyFogPatch", "opacityLimit", "(F)F", false);
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxy/fog/RoxyVoxyFogPatch", "opacityLimit", "(F)F", false);
                             super.visitInsn(Opcodes.SWAP);
-                            super.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxy/patch/RoxyVoxyFogPatch", "shaderMode", "(F)F", false);
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxy/fog/RoxyVoxyFogPatch", "shaderMode", "(F)F", false);
                             matches[2]++;
                         }
                         super.visitMethodInsn(opcode, owner, called, desc, itf);
@@ -2089,7 +2089,7 @@ public final class RoxyBytecodeRemapper {
                             );
                             super.visitMethodInsn(
                                     Opcodes.INVOKESTATIC,
-                                    "net/rasanovum/roxy/compat/RoxyVoxyWorkDrainCompat",
+                                    "net/rasanovum/roxy/render/RoxyVoxyWorkDrain",
                                     "beginRender",
                                     "(Ljava/lang/Object;ZZ)V",
                                     false
@@ -2134,7 +2134,7 @@ public final class RoxyBytecodeRemapper {
                         );
                         super.visitMethodInsn(
                                 Opcodes.INVOKESTATIC,
-                                "net/rasanovum/roxy/compat/RoxyVoxyWorkDrainCompat",
+                                "net/rasanovum/roxy/render/RoxyVoxyWorkDrain",
                                 "shouldRun",
                                 "(Ljava/lang/Object;Z)Z",
                                 false
@@ -3727,7 +3727,7 @@ public final class RoxyBytecodeRemapper {
                                 super.visitVarInsn(Opcodes.ALOAD, 0);
                                 super.visitMethodInsn(
                                         Opcodes.INVOKESTATIC,
-                                        "net/rasanovum/roxy/compat/RoxyVoxyWorkDrainCompat",
+                                        "net/rasanovum/roxy/render/RoxyVoxyWorkDrain",
                                         "beginProduction",
                                         "(Ljava/lang/Object;)V",
                                         false
@@ -3739,7 +3739,7 @@ public final class RoxyBytecodeRemapper {
                             super.visitVarInsn(Opcodes.ALOAD, 0);
                             super.visitMethodInsn(
                                     Opcodes.INVOKESTATIC,
-                                    "net/rasanovum/roxy/compat/RoxyVoxyWorkDrainCompat",
+                                    "net/rasanovum/roxy/render/RoxyVoxyWorkDrain",
                                     "publishResult",
                                     "(Ljava/lang/Object;)V",
                                     false
@@ -3808,7 +3808,7 @@ public final class RoxyBytecodeRemapper {
                             );
                             super.visitMethodInsn(
                                     Opcodes.INVOKESTATIC,
-                                    "net/rasanovum/roxy/compat/RoxyVoxyWorkDrainCompat",
+                                    "net/rasanovum/roxy/render/RoxyVoxyWorkDrain",
                                     "signalRequest",
                                     "(Ljava/lang/Object;)V",
                                     false

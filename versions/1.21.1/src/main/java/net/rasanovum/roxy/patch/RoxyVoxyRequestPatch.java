@@ -1,6 +1,6 @@
 package net.rasanovum.roxy.patch;
 
-import net.rasanovum.roxy.compat.RoxyVoxyRequestShader;
+import net.rasanovum.roxy.shader.RoxyVoxyRequestShader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 

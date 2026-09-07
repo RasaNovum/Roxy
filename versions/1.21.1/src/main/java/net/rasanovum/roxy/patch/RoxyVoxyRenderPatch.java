@@ -1,6 +1,6 @@
 package net.rasanovum.roxy.patch;
 
-import net.rasanovum.roxy.compat.RoxyVoxyWorkDrainCompat;
+import net.rasanovum.roxy.render.RoxyVoxyWorkDrain;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -140,7 +140,7 @@ public final class RoxyVoxyRenderPatch {
     }
 
     private static void resetState(boolean clearPendingRenderTasks) {
-        RoxyVoxyWorkDrainCompat.reset();
+        RoxyVoxyWorkDrain.reset();
         synchronized (PUBLICATION_LOCK) {
             synchronized (RENDER_LOCK) {
                 Object retiredService = activeRenderGenerationService;
@@ -198,7 +198,7 @@ public final class RoxyVoxyRenderPatch {
                 if (rendererReplaced) resetState(false);
 
                 RoxyVoxyRequestPatch.registerAsyncNodeManager(nodeManager);
-                RoxyVoxyWorkDrainCompat.bind(nodeManager);
+                RoxyVoxyWorkDrain.bind(nodeManager);
                 synchronized (RENDER_LOCK) {
                     SERVICE_SEQUENCES.put(renderGenerationService, REPAIR_SEQUENCE.get());
                     SERVICE_WORLDS.put(renderGenerationService, WORLD_GENERATION.get());

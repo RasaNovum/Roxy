@@ -2,9 +2,9 @@ package net.rasanovum.roxy.mixin;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
-import net.rasanovum.roxy.compat.RoxyVoxyRequestShader;
-import net.rasanovum.roxy.compat.RoxyFogShader;
-import net.rasanovum.roxy.compat.RoxyModelTintShader;
+import net.rasanovum.roxy.shader.RoxyVoxyRequestShader;
+import net.rasanovum.roxy.shader.RoxyFogShader;
+import net.rasanovum.roxy.shader.RoxyModelTintShader;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;

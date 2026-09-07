@@ -10,6 +10,8 @@
         "RoxySoftwareRasterizerMixin",
         "RoxyFogRendererMixin",
         "RoxyFogWeatherMixin",
+        "RoxyFogDawnMixin",
+        "RoxyFogHorizonMixin",
         "RoxyGameRendererMixin",
         "RoxyIrisRenderTargetMixin",
         "RoxyIrisLevelRendererMixin"

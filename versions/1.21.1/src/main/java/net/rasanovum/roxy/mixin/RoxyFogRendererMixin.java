@@ -9,7 +9,7 @@ import com.llamalad7.mixinextras.sugar.Local;
 import net.minecraft.world.entity.LivingEntity;
 import net.minecraft.world.effect.MobEffects;
 import net.minecraft.client.renderer.FogRenderer;
-import net.rasanovum.roxy.patch.RoxyVoxyFogPatch;
+import net.rasanovum.roxy.fog.RoxyVoxyFogPatch;
 import net.minecraft.world.level.material.FogType;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;

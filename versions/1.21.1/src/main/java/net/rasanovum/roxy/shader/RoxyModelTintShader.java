@@ -1,4 +1,4 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.shader;
 
 public final class RoxyModelTintShader {
     private RoxyModelTintShader() {}

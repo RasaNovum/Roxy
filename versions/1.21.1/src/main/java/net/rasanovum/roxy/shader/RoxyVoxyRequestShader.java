@@ -1,4 +1,4 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.shader;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

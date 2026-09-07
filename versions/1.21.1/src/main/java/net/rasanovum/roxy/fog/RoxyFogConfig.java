@@ -1,9 +1,8 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.fog;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import net.neoforged.fml.loading.FMLPaths;
-import net.rasanovum.roxy.util.RoxyFogRange;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -28,7 +27,7 @@ public final class RoxyFogConfig {
             result.normalize();
             return result;
         } catch (IOException | RuntimeException exception) {
-            org.slf4j.LoggerFactory.getLogger("Roxy").warn("Unable to read Roxy fog options; using automatic range", exception);
+            org.slf4j.LoggerFactory.getLogger("Roxy").warn("Unable to read Roxy fog options; using defaults", exception);
             return new Settings();
         }
     }
@@ -55,9 +54,11 @@ public final class RoxyFogConfig {
     }
 
     public static final class Settings {
+        public static final int DEFAULT_START_CHUNKS = 12;
+        public static final int DEFAULT_WEATHER_ROLL_IN = 25;
         public boolean automatic = true;
-        public int start = 0;
-        public int weatherRollIn = 50;
+        public int start = DEFAULT_START_CHUNKS * 16;
+        public int weatherRollIn = DEFAULT_WEATHER_ROLL_IN;
 
         public void normalize() {
             start = Math.max(0, Math.min(8176, start)) / 16 * 16;

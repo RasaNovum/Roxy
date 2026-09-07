@@ -2,7 +2,7 @@ package net.rasanovum.roxy.compat;
 
 import com.mojang.logging.LogUtils;
 import net.minecraft.client.Camera;
-import net.rasanovum.roxy.util.RoxyFogParameters;
+import net.rasanovum.roxy.fog.RoxyFogParameters;
 import org.joml.Matrix4f;
 import org.lwjgl.opengl.GL11;
 import org.slf4j.Logger;

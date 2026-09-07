@@ -17,6 +17,10 @@ public final class RoxyFogModCompat {
         return loaded("fog") || loaded("nomansland");
     }
 
+    public static boolean fogHorizonActive() {
+        return !loaded("nomansland") && fogActive();
+    }
+
     private static boolean loaded(String id) {
         var mods = LoadingModList.get();
         return mods != null && mods.getModFileById(id) != null;

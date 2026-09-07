@@ -1,4 +1,4 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.shader;
 
 public final class RoxyFogShader {
     private RoxyFogShader() {}

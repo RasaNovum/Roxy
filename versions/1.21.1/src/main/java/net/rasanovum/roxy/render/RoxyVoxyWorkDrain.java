@@ -1,6 +1,6 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.render;
 
-public final class RoxyVoxyWorkDrainCompat {
+public final class RoxyVoxyWorkDrain {
     private static final int MAX_PENDING_SIGNALS = 8;
     private static final int SHADER_TAIL_FRAMES = 4;
     private static Object activeManager;
@@ -12,7 +12,7 @@ public final class RoxyVoxyWorkDrainCompat {
     private static boolean tailUsed;
     private static boolean producing;
 
-    private RoxyVoxyWorkDrainCompat() {
+    private RoxyVoxyWorkDrain() {
     }
 
     public static synchronized void beginRender(Object manager, boolean shaderPackEnabled, boolean shadowActive) {

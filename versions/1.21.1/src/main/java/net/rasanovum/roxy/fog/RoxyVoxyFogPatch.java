@@ -1,11 +1,8 @@
-package net.rasanovum.roxy.patch;
+package net.rasanovum.roxy.fog;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import net.rasanovum.roxy.util.RoxyFogRange;
 import net.rasanovum.roxy.compat.RoxyFogModCompat;
-import net.rasanovum.roxy.compat.RoxyFogConfig;
-import net.rasanovum.roxy.compat.RoxyWeatherFog;
 import java.lang.ref.WeakReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -131,6 +128,14 @@ public final class RoxyVoxyFogPatch {
 
     public static boolean synchronizeWeatherColor() {
         if (!RoxyFogModCompat.fogActive() || !optionsEnabled() || !RoxyFogConfig.get().automatic) return false;
+        return normalPipelineActive();
+    }
+
+    public static boolean fadeFogHorizon() {
+        return RoxyFogModCompat.fogHorizonActive() && optionsEnabled() && normalPipelineActive();
+    }
+
+    private static boolean normalPipelineActive() {
         try {
             Accessors current = getAccessors();
             Object renderer = current.getNullable.invoke(null);

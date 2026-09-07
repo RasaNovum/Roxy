@@ -5,9 +5,9 @@ import net.caffeinemc.mods.sodium.api.config.StorageEventHandler;
 import net.caffeinemc.mods.sodium.api.config.structure.ConfigBuilder;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
-import net.rasanovum.roxy.compat.RoxyFogConfig;
+import net.rasanovum.roxy.fog.RoxyFogConfig;
 import net.rasanovum.roxy.compat.RoxyFogModCompat;
-import net.rasanovum.roxy.patch.RoxyVoxyFogPatch;
+import net.rasanovum.roxy.fog.RoxyVoxyFogPatch;
 
 public final class RoxyFogOptions {
     private RoxyFogOptions() {}
@@ -31,7 +31,7 @@ public final class RoxyFogOptions {
         var start = builder.createIntegerOption(ResourceLocation.fromNamespaceAndPath("roxy", "fog_start"))
                 .setName(text("start"))
                 .setTooltip(tooltip("start.tooltip"))
-                .setDefaultValue(12).setRange(0, maxChunks - 1, 1)
+                .setDefaultValue(RoxyFogConfig.Settings.DEFAULT_START_CHUNKS).setRange(0, maxChunks - 1, 1)
                 .setValueFormatter(v -> Component.translatable("roxy.fog.chunks", v))
                 .setStorageHandler(storage).setBinding(v -> settings.start = v * 16, () -> settings.start / 16)
                 .setControlHiddenWhenDisabled(false)
@@ -39,7 +39,7 @@ public final class RoxyFogOptions {
         var rollIn = builder.createIntegerOption(ResourceLocation.fromNamespaceAndPath("roxy", "weather_fog_roll_in"))
                 .setName(text("weather_roll_in"))
                 .setTooltip(tooltip("weather_roll_in.tooltip"))
-                .setDefaultValue(25).setRange(0, 100, 1)
+                .setDefaultValue(RoxyFogConfig.Settings.DEFAULT_WEATHER_ROLL_IN).setRange(0, 100, 1)
                 .setValueFormatter(v -> Component.translatable("roxy.fog.percent", v))
                 .setStorageHandler(storage).setBinding(v -> settings.weatherRollIn = v, () -> settings.weatherRollIn)
                 .setControlHiddenWhenDisabled(false)

@@ -1,4 +1,4 @@
-package net.rasanovum.roxy.util;
+package net.rasanovum.roxy.fog;
 
 import java.lang.reflect.Method;
 
@@ -82,7 +82,7 @@ public final class RoxyFogParameters {
     }
 
     public float cullingEnd() {
-        return net.rasanovum.roxy.patch.RoxyVoxyFogPatch.hasExtendedFog() ? 1.0E9F : environmentalEnd;
+        return net.rasanovum.roxy.fog.RoxyVoxyFogPatch.hasExtendedFog() ? 1.0E9F : environmentalEnd;
     }
 
     public float red() {

@@ -1,7 +1,6 @@
-package net.rasanovum.roxy.compat;
+package net.rasanovum.roxy.fog;
 
 import java.lang.ref.WeakReference;
-import net.rasanovum.roxy.util.RoxyFogRange;
 
 public final class RoxyWeatherFog {
     private WeakReference<Object> world = new WeakReference<>(null);
