@@ -5,6 +5,7 @@ import java.lang.reflect.Method;
 import net.rasanovum.roxy.util.RoxyFogRange;
 import net.rasanovum.roxy.compat.RoxyFogModCompat;
 import net.rasanovum.roxy.compat.RoxyFogConfig;
+import net.rasanovum.roxy.compat.RoxyWeatherFog;
 import java.lang.ref.WeakReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -16,6 +17,7 @@ public final class RoxyVoxyFogPatch {
     private static final String MINECRAFT_RENDER_SYSTEM = "com.mojang.blaze3d.systems.RenderSystem";
     private static final float NO_FOG = 1.0E9F;
     private static int extendedFogMode;
+    private static final RoxyWeatherFog WEATHER = new RoxyWeatherFog();
     private static WeakReference<Object> diagnosticRenderer = new WeakReference<>(null);
     private static int diagnosticCount;
     private static long nextDiagnostic;
@@ -32,6 +34,14 @@ public final class RoxyVoxyFogPatch {
     public static void apply(Object fogMode, boolean noFluid, float viewDistance,
                              float originalStart, float originalEnd, int originalShape,
                              float start, float end, int shape) {
+        apply(fogMode, noFluid, viewDistance, originalStart, originalEnd, originalShape, start, end, shape,
+                null, 0, 0, 0, 0);
+    }
+
+    public static void apply(Object fogMode, boolean noFluid, float viewDistance,
+                             float originalStart, float originalEnd, int originalShape,
+                             float start, float end, int shape, Object level, double tick,
+                             float rain, float thunder, float partialTick) {
         // Avoid exposing Minecraft's nested FogMode type through this helper's descriptor.
         if (!"FOG_TERRAIN".equals(String.valueOf(fogMode))) return;
         extendedFogMode = 0;
@@ -66,7 +76,11 @@ public final class RoxyVoxyFogPatch {
                         : RoxyFogRange.extend(originalStart, originalEnd, originalShape, start, end, shape, viewDistance, lodDistance);
                 if (range != null && RoxyFogModCompat.supportedModPresent()) {
                     float voxyDistance = Math.round(lodDistance / 32.0F) * 32.0F;
-                    range = RoxyFogConfig.get().apply(range, voxyDistance);
+                    var settings = RoxyFogConfig.get();
+                    range = settings.apply(range, voxyDistance);
+                    float progress = RoxyWeatherFog.fallbackProgress(rain, thunder);
+                    if (fogMod) progress = RoxyFogModCompat.weatherProgress(partialTick, progress);
+                    range = WEATHER.apply(range, level, tick, settings.automatic ? progress : 0, settings.weatherRollIn, viewDistance);
                 }
                 if (range != null) {
                     FogSetter setter = getFogSetter();

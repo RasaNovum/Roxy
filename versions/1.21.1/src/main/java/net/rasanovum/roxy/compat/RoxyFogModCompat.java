@@ -8,6 +8,8 @@ import org.slf4j.LoggerFactory;
 public final class RoxyFogModCompat {
     private static Accessors accessors;
     private static boolean attempted;
+    private static WeatherAccessors weather;
+    private static boolean weatherAttempted;
 
     private RoxyFogModCompat() {}
 
@@ -46,4 +48,36 @@ public final class RoxyFogModCompat {
     }
 
     private record Accessors(Method config, Field enabled, Method disabledBiome) {}
+
+    public static float weatherProgress(float partialTick, float progress) {
+        if (accessors == null) return progress;
+        if (!weatherAttempted) {
+            weatherAttempted = true;
+            try {
+                ClassLoader loader = accessors.config.getDeclaringClass().getClassLoader();
+                Class<?> manager = Class.forName("dev.imb11.fog.client.FogManager", false, loader);
+                Field underground = manager.getField("undergroundness");
+                weather = new WeatherAccessors(manager.getMethod("getInstance"), underground,
+                        underground.getType().getMethod("get", float.class),
+                        accessors.config.getDeclaringClass().getField("rainFogMultiplier"));
+            } catch (ReflectiveOperationException | LinkageError | RuntimeException exception) {
+                LoggerFactory.getLogger("Roxy").warn("Fog weather API unavailable; using Minecraft weather", exception);
+            }
+        }
+        if (weather == null) return progress;
+        try {
+            Object manager = weather.manager.invoke(null);
+            float underground = (float) weather.value.invoke(weather.undergroundness.get(manager), partialTick);
+            float strength = weather.multiplier.getFloat(accessors.config.invoke(null));
+            if (!Float.isFinite(strength) || !Float.isFinite(underground)) return progress;
+            return strength <= 0 ? 0 : progress * (1 - Math.max(0, Math.min(1, underground)));
+        } catch (ReflectiveOperationException | RuntimeException exception) {
+            LoggerFactory.getLogger("Roxy").warn("Fog weather API failed; using Minecraft weather", exception);
+            weather = null;
+            return progress;
+        }
+    }
+
+    private record WeatherAccessors(Method manager, Field undergroundness, Method value, Field multiplier) {}
+
 }

@@ -57,13 +57,15 @@ public final class RoxyFogConfig {
     public static final class Settings {
         public boolean automatic = true;
         public int start = 0;
+        public int weatherRollIn = 50;
 
         public void normalize() {
             start = Math.max(0, Math.min(8176, start)) / 16 * 16;
+            weatherRollIn = Math.max(0, Math.min(100, weatherRollIn));
         }
 
         public RoxyFogRange apply(RoxyFogRange range, float voxyDistance) {
-            if (automatic || range == null || !Float.isFinite(voxyDistance) || voxyDistance <= 0) return range;
+            if (range == null || !Float.isFinite(voxyDistance) || voxyDistance <= 0) return range;
             float fogStart = Math.min(start, voxyDistance - Math.min(16.0F, voxyDistance));
             return new RoxyFogRange(fogStart, voxyDistance);
         }

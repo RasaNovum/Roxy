@@ -72,14 +72,42 @@ public final class RoxyLocator implements IModFileCandidateLocator {
             zip.putNextEntry(new ZipEntry("META-INF/neoforge.mods.toml"));
             zip.write(toml.getBytes(StandardCharsets.UTF_8));
             zip.closeEntry();
-            byte[] icon = readOwnResource(ownPaths, "assets/roxy/icon.png");
-            if (icon != null) {
-                zip.putNextEntry(new ZipEntry("assets/roxy/icon.png"));
-                zip.write(icon);
-                zip.closeEntry();
-            }
+            copyAssets(ownPaths, zip);
         }
         return output;
+    }
+
+    private static void copyAssets(List<Path> roots, ZipOutputStream output) throws IOException {
+        var copied = new java.util.HashSet<String>();
+        for (Path root : roots) {
+            if (Files.isDirectory(root)) {
+                Path assets = root.resolve("assets");
+                if (!Files.isDirectory(assets)) continue;
+                try (var files = Files.walk(assets)) {
+                    for (Path file : files.filter(Files::isRegularFile).toList()) {
+                        String name = root.relativize(file).toString().replace('\\', '/');
+                        if (!copied.add(name)) continue;
+                        output.putNextEntry(new ZipEntry(name));
+                        Files.copy(file, output);
+                        output.closeEntry();
+                    }
+                }
+            } else if (Files.isRegularFile(root)) {
+                try (ZipFile source = new ZipFile(root.toFile())) {
+                    var entries = source.entries();
+                    while (entries.hasMoreElements()) {
+                        ZipEntry entry = entries.nextElement();
+                        if (entry.isDirectory() || !entry.getName().startsWith("assets/")
+                                || !copied.add(entry.getName())) continue;
+                        output.putNextEntry(new ZipEntry(entry.getName()));
+                        try (InputStream input = source.getInputStream(entry)) {
+                            input.transferTo(output);
+                        }
+                        output.closeEntry();
+                    }
+                }
+            }
+        }
     }
 
     private static byte[] readOwnResource(List<Path> roots, String resource) throws IOException {
