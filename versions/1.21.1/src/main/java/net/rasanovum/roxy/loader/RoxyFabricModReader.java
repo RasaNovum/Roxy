@@ -33,14 +33,19 @@ public final class RoxyFabricModReader implements IModFileReader {
     private static final String RELOCATED_JARS = "META-INF/roxy-jars/";
     private static final String SUPPLEMENTAL_SHADER_MIXIN = "roxy-voxy-shader.json";
     private static final String SUPPLEMENTAL_WORLDGEN_MIXIN = "roxy-voxy-worldgen.json";
-    private static final Map<String, String> EMBEDDED_HOST_CLASSES = Map.of(
-            "net/rasanovum/roxyhost/RoxyFogOptions.class", "roxy/embedded/RoxyFogOptions.bin",
-            "net/rasanovum/roxyhost/RoxyChunkBoundaryMask.class", "roxy/embedded/RoxyChunkBoundaryMask.bin",
-            "net/rasanovum/roxyhost/RoxyPalettedContainerFactory.class", "roxy/embedded/RoxyPalettedContainerFactory.bin",
-            "net/rasanovum/roxyhost/RoxyVoxyNeoForge.class", "roxy/embedded/RoxyVoxyNeoForge.bin",
-            "net/rasanovum/roxy/client/RoxyClientWarnings.class", "roxy/embedded/RoxyClientWarnings.bin",
-            "net/rasanovum/roxy/client/RoxyClientWarnings$Warning.class", "roxy/embedded/RoxyClientWarnings$Warning.bin",
-            "net/rasanovum/roxy/client/RoxyWarningScreen.class", "roxy/embedded/RoxyWarningScreen.bin"
+    private static final Map<String, String> EMBEDDED_HOST_CLASSES = Map.ofEntries(
+            Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcBackfill.class", "roxy/embedded/RoxyTfcBackfill.bin"),
+            Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcProgress.class", "roxy/embedded/RoxyTfcProgress.bin"),
+            Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcAdapter.class", "roxy/embedded/RoxyTfcAdapter.bin"),
+            Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcImport.class", "roxy/embedded/RoxyTfcImport.bin"),
+            Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcImport$ChunkCapture.class", "roxy/embedded/RoxyTfcImport$ChunkCapture.bin"),
+            Map.entry("net/rasanovum/roxyhost/RoxyFogOptions.class", "roxy/embedded/RoxyFogOptions.bin"),
+            Map.entry("net/rasanovum/roxyhost/RoxyChunkBoundaryMask.class", "roxy/embedded/RoxyChunkBoundaryMask.bin"),
+            Map.entry("net/rasanovum/roxyhost/RoxyPalettedContainerFactory.class", "roxy/embedded/RoxyPalettedContainerFactory.bin"),
+            Map.entry("net/rasanovum/roxyhost/RoxyVoxyNeoForge.class", "roxy/embedded/RoxyVoxyNeoForge.bin"),
+            Map.entry("net/rasanovum/roxy/client/RoxyClientWarnings.class", "roxy/embedded/RoxyClientWarnings.bin"),
+            Map.entry("net/rasanovum/roxy/client/RoxyClientWarnings$Warning.class", "roxy/embedded/RoxyClientWarnings$Warning.bin"),
+            Map.entry("net/rasanovum/roxy/client/RoxyWarningScreen.class", "roxy/embedded/RoxyWarningScreen.bin")
     );
     private static final Set<String> UNSUPPORTED_1_21_1_CLIENT_MIXINS = Set.of(
             "minecraft.MixinBlockableEventLoop",

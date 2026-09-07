@@ -4,6 +4,12 @@
   "package": "net.rasanovum.roxy.mixin",
   "compatibilityLevel": "JAVA_21",
     "client": [
+        "tfc.RoxyTfcTickMixin",
+        "tfc.RoxyTfcChunkDataMixin",
+        "tfc.RoxyTfcCalendarMixin",
+        "tfc.RoxyTfcImportMixin",
+        "tfc.RoxyTfcIngestMixin",
+        "tfc.RoxyTfcWorldGenMixin",
         "RoxyIrisReloadMixin",
         "RoxyClientLevelEntityMixin",
         "RoxyShaderResourceMixin",

@@ -426,6 +426,7 @@ public final class RoxyVoxyRenderPatch {
 
             try {
                 ((Consumer<Object>) consumer).accept(result);
+                if(taskStamp!=null)net.rasanovum.roxy.tfc.TfcVoxyBridge.meshAccepted(taskStamp.position);
             } catch (RuntimeException | Error exception) {
                 synchronized (RENDER_LOCK) {
                     retainFailedTaskLocked(taskStamp);

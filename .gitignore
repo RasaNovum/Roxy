@@ -20,3 +20,5 @@ run/
 /voxy.accesswidener
 /tools/audittemp/META-INF/jarjar/flywheel-neoforge-1.21.1-1.0.6.jar
 /tools/audittemp/META-INF/jarjar/net.caffeinemc.sodium-neoforge-0.8.12+mc1.21.1-mod.jar
+/tools/
+/logs/

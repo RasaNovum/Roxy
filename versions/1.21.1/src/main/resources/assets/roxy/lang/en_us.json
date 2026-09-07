@@ -1,4 +1,8 @@
 {
+  "roxy.tfc.progress": "TFC leaf refresh: %s / %s sampled chunks ready",
+  "roxy.tfc.progress.reads": " | %s climate reads queued",
+  "roxy.tfc.progress.meshes": " | %s meshes pending",
+  "roxy.tfc.progress.missing": " | %s need climate",
   "roxy.fog.page": "LoD Fog",
   "roxy.fog.automatic": "Dynamic Weather Fog",
   "roxy.fog.automatic.tooltip": "Bring fog into nearby terrain during rain and thunderstorms.",

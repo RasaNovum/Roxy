@@ -4,6 +4,12 @@ public final class RoxyModelTintShader {
     private RoxyModelTintShader() {}
 
     public static String patch(String path, String source) {
+        if (path.equals("/assets/voxy/shaders/lod/quad_util.glsl")) {
+            String marker = "bool hasAO = isShaded;";
+            if (source.indexOf(marker) < 0 || source.indexOf(marker) != source.lastIndexOf(marker))
+                throw new IllegalStateException("Unsupported Voxy ambient occlusion shader");
+            return source.replace(marker, "bool hasAO = isShaded || (model.flagsA & 16u) != 0u;");
+        }
         if (!path.equals("/assets/voxy/shaders/lod/gl46/quads.frag")) return source;
         source = replace(source, "vec4 tintTest = textureLod(blockModelAtlas, texturePos, 0);", "texturePos");
         return replace(source, "vec4 tintTest = texture(blockModelAtlas, texPos, -2);", "texPos");
