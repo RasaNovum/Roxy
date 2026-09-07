@@ -58,7 +58,7 @@ public final class RoxyClientWarnings {
                             .append(Component.literal(" in Voxy config!").withStyle(ChatFormatting.WHITE)),
                     Component.literal("This will cause no distant LoDs to render if enabled. Set this option to ")
                             .append(Component.literal("false").withStyle(ChatFormatting.GOLD))
-                            .append(Component.literal(" in config or in the Sodium video settings."))
+                            .append(Component.literal(" in config or in the Sodium video settings. Certain fog mods may allow you to re-enable this."))
             ));
         }
         if (amdGpuDetected() && !amdNoHyperZEnabled()) {
@@ -66,7 +66,7 @@ public final class RoxyClientWarnings {
                     Component.literal("AMD GPU detected but no ").withStyle(ChatFormatting.WHITE)
                             .append(Component.literal("AMD_DEBUG=nohyperz").withStyle(ChatFormatting.GOLD))
                             .append(Component.literal(" environment variable found!").withStyle(ChatFormatting.WHITE)),
-                    Component.literal("AMD users with Mesa drivers will likely experience graphical issues with LoD rendering. Add the environment variable ")
+                    Component.literal("AMD users, especially on older GPUs, will likely experience graphical issues with LoD rendering. Add the environment variable ")
                             .append(Component.literal("AMD_DEBUG=nohyperz").withStyle(ChatFormatting.GOLD))
                             .append(Component.literal(" to resolve many of these issues."))
             ));

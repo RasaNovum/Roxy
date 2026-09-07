@@ -263,6 +263,9 @@ public final class RoxyBytecodeRemapper {
         reader.accept(new RoxyClassRemapper(writer, remapper, metadata), 0);
         byte[] output = patchJavaVersion(patchNeoForgeColorMapAccess(patchClasspathDirectoryScan(writer.toByteArray())));
         output = patchVoxyFogParameters(output);
+        output = patchVoxyMissingStates(output);
+        output = patchVoxyTextureTintUpload(output);
+        output = patchVoxyNormalFog(output);
         output = patchVoxyChunkSectionLayer(output);
         output = patchVoxyWorldCallback(output);
         output = patchVoxyNodeStore(output);
@@ -277,6 +280,8 @@ public final class RoxyBytecodeRemapper {
         output = patchVoxyRenderSystemWorkDrain(output);
         output = patchVoxyRenderDistanceBatchRate(output);
         output = patchVoxyChunkBoundReset(output);
+        output = patchVoxyVisibleChunkBounds(output);
+        output = patchVoxyDepthClearState(output);
         output = patchVoxyLevelRendererLifecycle(output);
         output = patchVoxyCommandsReload(output);
         output = patchVoxyRenderSystemViewport(output);
@@ -415,6 +420,128 @@ public final class RoxyBytecodeRemapper {
         return writer.toByteArray();
     }
 
+    private static byte[] patchVoxyMissingStates(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals("me/cortex/voxy/common/world/other/Mapper")) return input;
+        var node = new org.objectweb.asm.tree.ClassNode();
+        reader.accept(node, ClassReader.EXPAND_FRAMES);
+        var method = node.methods.stream().filter(m -> m.name.equals("loadFromStorage") && m.desc.equals("()V"))
+                .findFirst().orElseThrow(() -> new IllegalStateException("Unsupported Voxy mapping loader"));
+        org.objectweb.asm.tree.AbstractInsnNode start = null;
+        for (var instruction : method.instructions) {
+            if (instruction instanceof org.objectweb.asm.tree.TypeInsnNode type && type.getOpcode() == Opcodes.NEW && type.desc.equals("java/util/Random")) {
+                if (start != null) throw new IllegalStateException("Ambiguous Voxy missing-state recovery");
+                start = instruction;
+            }
+        }
+        if (start == null) throw new IllegalStateException("Unsupported Voxy missing-state recovery");
+        org.objectweb.asm.tree.LabelNode end = null;
+        int missingLocal = -1;
+        for (var instruction = start.getPrevious(); instruction != null; instruction = instruction.getPrevious()) {
+            if (instruction instanceof org.objectweb.asm.tree.JumpInsnNode jump) {
+                if (jump.getOpcode() != Opcodes.IFNE || !(jump.getPrevious() instanceof org.objectweb.asm.tree.MethodInsnNode call)
+                        || !call.owner.equals("java/util/List") || !call.name.equals("isEmpty"))
+                    throw new IllegalStateException("Unsupported Voxy missing-state branch");
+                end = jump.label;
+                if (!(call.getPrevious() instanceof org.objectweb.asm.tree.VarInsnNode local) || local.getOpcode() != Opcodes.ALOAD)
+                    throw new IllegalStateException("Unsupported Voxy missing-state list");
+                missingLocal = local.var;
+                break;
+            }
+        }
+        if (end == null || method.instructions.indexOf(end) <= method.instructions.indexOf(start))
+            throw new IllegalStateException("Unsupported Voxy missing-state branch target");
+        var continuation = end.getNext();
+        while (continuation != null && continuation.getOpcode() < 0) continuation = continuation.getNext();
+        if (!(continuation instanceof org.objectweb.asm.tree.VarInsnNode entries) || entries.getOpcode() != Opcodes.ALOAD
+                || !(entries.getNext() instanceof org.objectweb.asm.tree.MethodInsnNode stream)
+                || !stream.owner.equals("java/util/List") || !stream.name.equals("stream"))
+            throw new IllegalStateException("Unsupported Voxy indexed-state list");
+        var replacement = new org.objectweb.asm.tree.InsnList();
+        replacement.add(new org.objectweb.asm.tree.VarInsnNode(Opcodes.ALOAD, missingLocal));
+        replacement.add(new org.objectweb.asm.tree.VarInsnNode(Opcodes.ALOAD, entries.var));
+        replacement.add(new org.objectweb.asm.tree.MethodInsnNode(Opcodes.INVOKESTATIC,
+                "net/rasanovum/roxy/bridge/RoxyMissingStateBridge", "retainMissingIds", "(Ljava/util/List;Ljava/util/List;)V", false));
+        method.instructions.insertBefore(start, replacement);
+        while (start != end) {
+            var next = start.getNext();
+            method.instructions.remove(start);
+            start = next;
+        }
+        method.localVariables = null;
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+        node.accept(writer);
+        return writer.toByteArray();
+    }
+
+    private static byte[] patchVoxyTextureTintUpload(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals(VOXY_MODEL_FACTORY)) return input;
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+        int[] matches = {0};
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                MethodVisitor method = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (!name.equals("processTextureBakeResult")) return method;
+                return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override public void visitMethodInsn(int opcode, String owner, String called, String desc, boolean itf) {
+                        if (opcode == Opcodes.INVOKESTATIC && owner.equals("me/cortex/voxy/client/core/model/MipGen") && called.equals("putTextures")) {
+                            super.visitVarInsn(Opcodes.ALOAD, 6);
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxy/bridge/RoxyTextureTintBridge", "putTextures",
+                                    "(Z[Ljava/lang/Object;Ljava/lang/Object;Ljava/lang/Object;)V", false);
+                            matches[0]++;
+                        } else super.visitMethodInsn(opcode, owner, called, desc, itf);
+                    }
+                };
+            }
+        }, 0);
+        if (matches[0] != 1) throw new IllegalStateException("Unsupported Voxy texture upload");
+        return writer.toByteArray();
+    }
+
+    private static byte[] patchVoxyNormalFog(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals("me/cortex/voxy/client/core/NormalRenderPipeline")) return input;
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+        int[] matches = new int[3];
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                MethodVisitor method = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (name.equals("<init>")) return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override public void visitFieldInsn(int opcode, String owner, String field, String desc) {
+                        super.visitFieldInsn(opcode, owner, field, desc);
+                        if (opcode == Opcodes.GETFIELD && owner.equals(VOXY_CONFIG) && field.equals("useEnvironmentalFog") && desc.equals("Z")) {
+                            super.visitInsn(Opcodes.POP);
+                            super.visitInsn(Opcodes.ICONST_1);
+                            matches[0]++;
+                        }
+                    }
+                };
+                if (!name.equals("finish")) return method;
+                return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override public void visitMethodInsn(int opcode, String owner, String called, String desc, boolean itf) {
+                        if (owner.equals(SODIUM_FOG_PARAMETERS) && called.equals("environmentalEnd") && matches[1] == 0) {
+                            called = "cullingEnd";
+                            matches[1]++;
+                        }
+                        if (owner.startsWith("org/lwjgl/opengl/") && called.equals("glUniform4f") && matches[2] == 0) {
+                            super.visitInsn(Opcodes.SWAP);
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxy/patch/RoxyVoxyFogPatch", "opacityLimit", "(F)F", false);
+                            super.visitInsn(Opcodes.SWAP);
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxy/patch/RoxyVoxyFogPatch", "shaderMode", "(F)F", false);
+                            matches[2]++;
+                        }
+                        super.visitMethodInsn(opcode, owner, called, desc, itf);
+                    }
+                };
+            }
+        }, 0);
+        if (matches[0] != 1 || matches[1] != 1 || matches[2] != 1)
+            throw new IllegalStateException("Unsupported Voxy normal fog pipeline");
+        return writer.toByteArray();
+    }
+
     private static byte[] patchVoxyConfigDefaults(byte[] input) {
         ClassReader reader = new ClassReader(input);
         if (!reader.getClassName().equals(VOXY_CONFIG)) return input;
@@ -456,11 +583,27 @@ public final class RoxyBytecodeRemapper {
         }), 0);
 
         reader = new ClassReader(remappedWriter.toByteArray());
-        ClassWriter writer = new ClassWriter(reader, 0);
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
         reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
             @Override
             public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
                 MethodVisitor delegate = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (name.equals("registerConfigLate") && descriptor.equals("(Lnet/caffeinemc/mods/sodium/api/config/structure/ConfigBuilder;)V")) {
+                    return new MethodVisitor(Opcodes.ASM9, delegate) {
+                        private boolean registered;
+                        @Override public void visitMethodInsn(int opcode, String owner, String called, String desc, boolean itf) {
+                            if (owner.equals("net/caffeinemc/mods/sodium/api/config/structure/ConfigBuilder") && called.equals("registerModOptions")) registered = true;
+                            super.visitMethodInsn(opcode, owner, called, desc, itf);
+                        }
+                        @Override public void visitInsn(int opcode) {
+                            if (opcode == Opcodes.RETURN && registered) {
+                                super.visitVarInsn(Opcodes.ALOAD, 1);
+                                super.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxyhost/RoxyFogOptions", "register", "(Ljava/lang/Object;)V", false);
+                            }
+                            super.visitInsn(opcode);
+                        }
+                    };
+                }
                 if (!name.equals("lambda$registerConfigLate$26")
                         || !descriptor.endsWith(")Z")) return delegate;
                 delegate.visitCode();
@@ -2023,6 +2166,81 @@ public final class RoxyBytecodeRemapper {
         if (patched[0] != 1 || renderEntries[0] != 1) {
             throw new IllegalStateException("Unsupported Voxy render-system work drain");
         }
+        return writer.toByteArray();
+    }
+
+
+
+    private static byte[] patchVoxyDepthClearState(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals("me/cortex/voxy/client/core/AbstractRenderPipeline")) return input;
+        int[] matches = {0};
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                MethodVisitor method = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (!name.equals("initDepthStencil") || !descriptor.equals("(IIIIII)V")) return method;
+                matches[0]++;
+                return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override public void visitCode() {
+                        super.visitCode();
+                        super.visitInsn(Opcodes.ICONST_1);
+                        super.visitMethodInsn(Opcodes.INVOKESTATIC, "org/lwjgl/opengl/GL11C", "glDepthMask", "(Z)V", false);
+                        super.visitIntInsn(Opcodes.SIPUSH, 255);
+                        super.visitMethodInsn(Opcodes.INVOKESTATIC, "org/lwjgl/opengl/GL11C", "glStencilMask", "(I)V", false);
+                    }
+                };
+            }
+        }, 0);
+        if (matches[0] != 1) throw new IllegalStateException("Unsupported Voxy depth/stencil initialization");
+        return writer.toByteArray();
+    }
+
+    private static byte[] patchVoxyVisibleChunkBounds(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals(VOXY_CHUNK_BOUND_RENDERER)) return input;
+        String helper = "net/rasanovum/roxyhost/RoxyChunkBoundaryMask";
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+        int[] matches = new int[2];
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                MethodVisitor method = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (name.equals("<init>")) return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override public void visitInsn(int opcode) {
+                        if (opcode == Opcodes.RETURN) {
+                            super.visitVarInsn(Opcodes.ALOAD, 0);
+                            super.visitTypeInsn(Opcodes.NEW, helper);
+                            super.visitInsn(Opcodes.DUP);
+                            super.visitVarInsn(Opcodes.ALOAD, 0);
+                            super.visitMethodInsn(Opcodes.INVOKESPECIAL, helper, "<init>", "(Ljava/lang/Object;)V", false);
+                            super.visitFieldInsn(Opcodes.PUTFIELD, VOXY_CHUNK_BOUND_RENDERER, "roxy$visibleMask", "L" + helper + ";");
+                            matches[0]++;
+                        }
+                        super.visitInsn(opcode);
+                    }
+                };
+                if (name.equals("render") && descriptor.equals("(L" + VOXY_VIEWPORT + ";)V")) return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override public void visitCode() {
+                        super.visitCode();
+                        super.visitInsn(Opcodes.ICONST_1);
+                        super.visitMethodInsn(Opcodes.INVOKESTATIC, "org/lwjgl/opengl/GL11C", "glDepthMask", "(Z)V", false);
+                        super.visitVarInsn(Opcodes.ALOAD, 0);
+                        super.visitFieldInsn(Opcodes.GETFIELD, VOXY_CHUNK_BOUND_RENDERER, "roxy$visibleMask", "L" + helper + ";");
+                        super.visitVarInsn(Opcodes.ALOAD, 1);
+                        super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, helper, "sync", "(Ljava/lang/Object;)V", false);
+                        matches[1]++;
+                    }
+                };
+                return method;
+            }
+            @Override public void visitEnd() {
+                super.visitField(Opcodes.ACC_PRIVATE | Opcodes.ACC_FINAL, "roxy$visibleMask", "L" + helper + ";", null, null).visitEnd();
+                super.visitEnd();
+            }
+        }, 0);
+        if (matches[0] != 1 || matches[1] != 1) throw new IllegalStateException("Unsupported Voxy chunk boundary renderer");
         return writer.toByteArray();
     }
 

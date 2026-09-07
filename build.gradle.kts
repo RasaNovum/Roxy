@@ -12,7 +12,7 @@ plugins {
 }
 
 group = "net.rasanovum"
-version = "0.3.0-d-1"
+version = "0.3.1"
 
 prism {
     metadata {
@@ -81,6 +81,18 @@ project(":1.21.11") {
 }
 
 project(":1.21.1") {
+    val sodiumCompileApi by configurations.creating
+    dependencies {
+        add(sodiumCompileApi.name, "maven.modrinth:sodium:mc1.21.1-0.8.12-neoforge")
+    }
+    val sodiumApiDirectory = layout.buildDirectory.dir("roxy-sodium-api")
+    val extractSodiumCompileApi = tasks.register<Copy>("extractSodiumCompileApi") {
+        from({ sodiumCompileApi.files.map { zipTree(it) } })
+        include("META-INF/jarjar/net.caffeinemc.sodium-*-mod.jar")
+        eachFile { path = "sodium-api.jar" }
+        includeEmptyDirs = false
+        into(sodiumApiDirectory)
+    }
     repositories {
         maven { url = uri("https://maven.fabricmc.net/") }
     }
@@ -109,11 +121,22 @@ project(":1.21.1") {
                 into("roxy/embedded")
                 rename { "RoxyPalettedContainerFactory.bin" }
             }
+            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyChunkBoundaryMask.class")) {
+                into("roxy/embedded")
+                rename { "RoxyChunkBoundaryMask.bin" }
+            }
+            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyFogOptions.class")) {
+                into("roxy/embedded")
+                rename { "RoxyFogOptions.bin" }
+            }
             from(layout.buildDirectory.dir("classes/java/main/net/rasanovum/roxy/client")) {
                 include("RoxyClientWarnings*.class", "RoxyWarningScreen.class")
                 into("roxy/embedded")
                 rename { it.replace(".class", ".bin") }
             }
+        }
+        dependencies {
+            add("compileOnly", files(sodiumApiDirectory.map { it.file("sodium-api.jar") }).builtBy(extractSodiumCompileApi))
         }
         tasks.named<JavaExec>("runClient") {
             doFirst {

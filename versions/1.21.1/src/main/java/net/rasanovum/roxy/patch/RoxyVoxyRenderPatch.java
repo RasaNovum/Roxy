@@ -247,7 +247,7 @@ public final class RoxyVoxyRenderPatch {
                 LATEST_EPOCHS.put(positionKey, RESULT_EPOCH.incrementAndGet());
                 long count = DEFERRED_TASK_COUNT.incrementAndGet();
                 if (count <= 8 || count % 100 == 0) {
-                    LOGGER.info("Deferred a Voxy replacement while its render task was in flight at {} ({} total)", position, count);
+                    LOGGER.debug("Deferred a Voxy replacement while its render task was in flight at {} ({} total)", position, count);
                 }
             }
             return true;
@@ -372,7 +372,7 @@ public final class RoxyVoxyRenderPatch {
                     } else if (enqueued) {
                         long count = REPLACED_TASK_REQUEUE_COUNT.incrementAndGet();
                         if (count <= 8 || count % 100 == 0) {
-                            LOGGER.info(
+                            LOGGER.debug(
                                     "Requeued render task on the active Voxy renderer at {} ({} total)",
                                     position,
                                     count
@@ -398,9 +398,9 @@ public final class RoxyVoxyRenderPatch {
                     long count = STALE_RESULT_COUNT.incrementAndGet();
                     if (count <= 8 || count % 100 == 0) {
                         if (taskStamp == null) {
-                            LOGGER.info("Discarded an untracked Voxy render result ({} total)", count);
+                            LOGGER.debug("Discarded an untracked Voxy render result ({} total)", count);
                         } else {
-                            LOGGER.info(
+                            LOGGER.debug(
                                     "Discarded stale Voxy render result at {} (task epoch {}, latest epoch {}, {} total)",
                                     taskStamp.position,
                                     taskStamp.epoch,
@@ -759,7 +759,7 @@ public final class RoxyVoxyRenderPatch {
             }
             long count = DIRTY_TASK_REQUEUE_COUNT.incrementAndGet();
             if (count <= 8 || count % 100 == 0) {
-                LOGGER.info(
+                LOGGER.debug(
                         "Requeued Voxy render task after an in-flight update at {} ({} total)",
                         taskStamp.position,
                         count

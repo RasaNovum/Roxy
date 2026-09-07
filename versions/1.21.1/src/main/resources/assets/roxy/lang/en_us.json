@@ -1,0 +1,12 @@
+{
+  "roxy.fog.page": "LoD Fog",
+  "roxy.fog.automatic": "Dynamic Weather Fog",
+  "roxy.fog.automatic.tooltip": "Bring fog into nearby terrain during rain and thunderstorms, following Minecraft's weather fade.",
+  "roxy.fog.start": "Fog start",
+  "roxy.fog.start.tooltip": "Clear-weather distance in chunks where fog begins, with voxy's current render distance as the endpoint.",
+  "roxy.fog.weather_roll_in": "Weather Fog Roll In",
+  "roxy.fog.weather_roll_in.tooltip": "How strongly weather brings fog into nearby terrain. The higher the value the closer fog rolls in.",
+  "roxy.fog.requires_mod": "Requires a supported fog mod: Fog or No Man's Land.",
+  "roxy.fog.chunks": "%s chunks",
+  "roxy.fog.percent": "%s%%"
+}

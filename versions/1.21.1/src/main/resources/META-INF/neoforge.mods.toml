@@ -12,7 +12,7 @@ logoFile = "assets/roxy/icon.png"
 [[dependencies.${mod_id}]]
 modId = "neoforge"
 type = "required"
-versionRange = "[${neoforge_version},)"
+versionRange = "[21.1.224,)"
 ordering = "NONE"
 side = "BOTH"
 

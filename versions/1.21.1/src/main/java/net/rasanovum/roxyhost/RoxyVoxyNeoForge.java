@@ -44,6 +44,7 @@ public final class RoxyVoxyNeoForge {
         }
     }
 
+
     private void onRenderLevelStage(RenderLevelStageEvent event) {
         RoxyPowerGridCompat.render(event);
     }
