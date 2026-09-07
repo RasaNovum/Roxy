@@ -12,6 +12,10 @@ public final class RoxyWeatherFog {
         return Math.max(unit(rain), unit(thunder));
     }
 
+    public static float colorProgress(float rain, float thunder) {
+        return 0.5F * (unit(rain) + unit(thunder));
+    }
+
     public RoxyFogRange apply(RoxyFogRange baseline, Object level, double tick, float weatherProgress, int percent) {
         return apply(baseline, level, tick, weatherProgress, percent, Float.POSITIVE_INFINITY);
     }

@@ -9,6 +9,7 @@
         "RoxyShaderResourceMixin",
         "RoxySoftwareRasterizerMixin",
         "RoxyFogRendererMixin",
+        "RoxyFogWeatherMixin",
         "RoxyGameRendererMixin",
         "RoxyIrisRenderTargetMixin",
         "RoxyIrisLevelRendererMixin"

@@ -1,8 +1,9 @@
 <h1 align="center">Roxy<br>
-<a href="https://www.curseforge.com/minecraft/mc-mods/roxy"><img src="https://img.shields.io/badge/CurseForge-1.21.1-orange"></a>
-<a href="https://modrinth.com/mod/roxy"><img src="https://img.shields.io/badge/Modrinth-1.21.1-green"></a>
-<a href="https://twitter.com/Rasa_Novum"><img src="https://img.shields.io/badge/Socials-Xitter-black"></a>
-<a href="https://discord.gg/WGh4mq6W5U"><img src="https://img.shields.io/badge/Socials-Discord-5865F2"></a>
+<a href="https://www.curseforge.com/minecraft/mc-mods/roxy"><img src="https://img.shields.io/badge/CurseForge-1.21.1-orange?style=for-the-badge"></a>
+<a href="https://modrinth.com/mod/roxy"><img src="https://img.shields.io/badge/Modrinth-1.21.1-green?style=for-the-badge"></a>
+<a href="https://twitter.com/Rasa_Novum"><img src="https://img.shields.io/badge/Xitter-black?style=for-the-badge"></a>
+<a href="https://discord.gg/TxpknJHMBT"><img src="https://img.shields.io/badge/Discord-5865F2?style=for-the-badge"></a>
+<a href=""><img src="https://img.shields.io/badge/Made_In_Canada-d52b1e?style=for-the-badge"></a>
 </h1>
 
 **Voxy** is a Fabric exclusive LoD rendering mod. **Roxy** provides a translation layer between Voxy and NeoForge, allowing an original Voxy jar to function not only on NeoForge, but also on a version that Voxy did not release for.

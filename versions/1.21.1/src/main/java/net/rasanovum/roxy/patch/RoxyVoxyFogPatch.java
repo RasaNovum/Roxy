@@ -129,6 +129,18 @@ public final class RoxyVoxyFogPatch {
         }
     }
 
+    public static boolean synchronizeWeatherColor() {
+        if (!RoxyFogModCompat.fogActive() || !optionsEnabled() || !RoxyFogConfig.get().automatic) return false;
+        try {
+            Accessors current = getAccessors();
+            Object renderer = current.getNullable.invoke(null);
+            Object pipeline = renderer == null ? null : current.pipeline.get(renderer);
+            return pipeline != null && pipeline.getClass().getName().equals("me.cortex.voxy.client.core.NormalRenderPipeline");
+        } catch (ReflectiveOperationException | RuntimeException exception) {
+            return false;
+        }
+    }
+
     public static float opacityLimit(float original) {
         return hasExtendedFog() ? 1.0F : original;
     }
