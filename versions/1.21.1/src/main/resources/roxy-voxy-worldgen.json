@@ -9,6 +9,9 @@
     "RoxyChunksmithVoxyTargetMixin",
     "RoxyMinecraftLevelMixin"
   ],
+  "client": [
+    "RoxyVoxyWorldgenSectionMixin"
+  ],
   "injectors": {
     "defaultRequire": 1
   }

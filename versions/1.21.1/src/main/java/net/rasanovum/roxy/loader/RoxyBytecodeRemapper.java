@@ -159,6 +159,7 @@ public final class RoxyBytecodeRemapper {
     private static final String GSON_STRICTNESS = "com/google/gson/Strictness";
     private static final String VOXY_VERTEX_CONSUMER = "me/cortex/voxy/client/core/model/bakery/ReuseVertexConsumer";
     private static final String VOXY_VERTEX_CONSUMER_COMPAT = "net/rasanovum/roxy/bridge/RoxyBakedQuadBridge";
+    private static final String VOXY_ICE_MODEL_COMPAT = "net/rasanovum/roxy/bridge/RoxyIceModelBridge";
     private static final String BAKED_MODEL = "net/minecraft/client/resources/model/BakedModel";
     private static final String BAKED_QUAD = "net/minecraft/client/renderer/block/model/BakedQuad";
     private static final String TEXTURE_ATLAS_SPRITE = "net/minecraft/client/renderer/texture/TextureAtlasSprite";
@@ -290,6 +291,7 @@ public final class RoxyBytecodeRemapper {
         output = patchVoxyBakedModel(output);
         output = patchVoxyModelTinting(output);
         output = patchVoxyModelFactory(output);
+        output = patchVoxyIceModelFlags(output);
         output = patchVoxyFluidClassification(output);
         output = patchVoxyMetaFromLayer(output);
         output = patchVoxyVertexConsumer(output);
@@ -1932,6 +1934,118 @@ public final class RoxyBytecodeRemapper {
             }
         }, 0);
         return writer.toByteArray();
+    }
+
+    private static byte[] patchVoxyIceModelFlags(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals(VOXY_MODEL_FACTORY)) return input;
+
+        String textureData = "[Lme/cortex/voxy/client/core/model/ColourDepthTextureData;";
+        String result = "L" + VOXY_MODEL_FACTORY + "$ModelBakeResultUpload;";
+        String descriptor = "(IL" + BLOCK_STATE + ";" + textureData + "ZZL" + RENDER_TYPE + ";)" + result;
+        var node = new org.objectweb.asm.tree.ClassNode();
+        reader.accept(node, ClassReader.EXPAND_FRAMES);
+        var method = node.methods.stream()
+                .filter(candidate -> candidate.name.equals("processTextureBakeResult")
+                        && candidate.desc.equals(descriptor))
+                .findFirst()
+                .orElseThrow(() -> new IllegalStateException("Unsupported Voxy model flag method"));
+
+        org.objectweb.asm.tree.MethodInsnNode target = null;
+        int matches = 0;
+        for (var instruction : method.instructions) {
+            if (!(instruction instanceof org.objectweb.asm.tree.MethodInsnNode call)
+                    || call.getOpcode() != Opcodes.INVOKESTATIC
+                    || !call.owner.equals("org/lwjgl/system/MemoryUtil")
+                    || !call.name.equals("memPutInt")
+                    || !call.desc.equals("(JI)V")) continue;
+
+            var flags = previousRealInstruction(call);
+            var pointer = flags == null ? null : previousRealInstruction(flags);
+            if (flags instanceof org.objectweb.asm.tree.VarInsnNode flagsLoad
+                    && flagsLoad.getOpcode() == Opcodes.ILOAD
+                    && pointer instanceof org.objectweb.asm.tree.VarInsnNode pointerLoad
+                    && pointerLoad.getOpcode() == Opcodes.LLOAD
+                    && isModelFlagsWriteSite(flagsLoad, pointerLoad)) {
+                target = call;
+                matches++;
+            }
+        }
+        if (matches != 1 || target == null) {
+            throw new IllegalStateException("Unsupported Voxy model flag write site");
+        }
+
+        var patch = new org.objectweb.asm.tree.InsnList();
+        patch.add(new org.objectweb.asm.tree.VarInsnNode(Opcodes.ALOAD, 2));
+        patch.add(new org.objectweb.asm.tree.InsnNode(Opcodes.SWAP));
+        patch.add(new org.objectweb.asm.tree.MethodInsnNode(
+                Opcodes.INVOKESTATIC,
+                VOXY_ICE_MODEL_COMPAT,
+                "addIceBackfaceFlag",
+                "(Ljava/lang/Object;I)I",
+                false
+        ));
+        method.instructions.insertBefore(target, patch);
+
+        ClassWriter writer = new RoxyClassWriter(reader, ClassWriter.COMPUTE_FRAMES);
+        node.accept(writer);
+        return writer.toByteArray();
+    }
+
+    private static boolean isModelFlagsWriteSite(
+            org.objectweb.asm.tree.VarInsnNode flagsLoad,
+            org.objectweb.asm.tree.VarInsnNode pointerLoad
+    ) {
+        if (flagsLoad.var != 24 || pointerLoad.var != 15) return false;
+        org.objectweb.asm.tree.AbstractInsnNode instruction = previousRealInstruction(flagsLoad);
+        int flagWrites = 0;
+        boolean initialized = false;
+        while (instruction != null) {
+            if (instruction instanceof org.objectweb.asm.tree.VarInsnNode store
+                    && store.getOpcode() == Opcodes.ISTORE
+                    && store.var == flagsLoad.var) {
+                org.objectweb.asm.tree.AbstractInsnNode producer = previousRealInstruction(store);
+                if (producer == null) return false;
+                if (producer.getOpcode() == Opcodes.ICONST_0) {
+                    if (initialized || flagWrites != 4) return false;
+                    initialized = true;
+                } else if (producer.getOpcode() == Opcodes.IOR && !initialized && flagWrites < 4) {
+                    var zero = previousRealInstruction(producer);
+                    var jump = previousRealInstruction(zero);
+                    var bit = previousRealInstruction(jump);
+                    int expectedBit = 8 >> flagWrites;
+                    int actualBit = bit instanceof org.objectweb.asm.tree.IntInsnNode push && push.getOpcode() == Opcodes.BIPUSH
+                            ? push.operand : bit == null ? -1 : bit.getOpcode() - Opcodes.ICONST_0;
+                    if (zero == null || zero.getOpcode() != Opcodes.ICONST_0
+                            || jump == null || jump.getOpcode() != Opcodes.GOTO || actualBit != expectedBit) return false;
+                    flagWrites++;
+                } else {
+                    return false;
+                }
+            } else if (instruction instanceof org.objectweb.asm.tree.VarInsnNode pointerStore
+                    && pointerStore.getOpcode() == Opcodes.LSTORE && pointerStore.var == pointerLoad.var) {
+                var add = previousRealInstruction(pointerStore);
+                var amount = previousRealInstruction(add);
+                var pointer = previousRealInstruction(amount);
+                // Only native bits 0..3 may be present before reserving bit 4 for ice.
+                return initialized && flagWrites == 4 && add != null && add.getOpcode() == Opcodes.LADD
+                        && amount instanceof org.objectweb.asm.tree.LdcInsnNode constant
+                        && constant.cst instanceof Long value && value == 24L
+                        && pointer instanceof org.objectweb.asm.tree.VarInsnNode pointerAdvance
+                        && pointerAdvance.getOpcode() == Opcodes.LLOAD && pointerAdvance.var == pointerLoad.var;
+            }
+            instruction = instruction.getPrevious();
+        }
+        return false;
+    }
+
+    private static org.objectweb.asm.tree.AbstractInsnNode previousRealInstruction(
+            org.objectweb.asm.tree.AbstractInsnNode instruction
+    ) {
+        if (instruction == null) return null;
+        org.objectweb.asm.tree.AbstractInsnNode previous = instruction.getPrevious();
+        while (previous != null && previous.getOpcode() < 0) previous = previous.getPrevious();
+        return previous;
     }
 
     private static byte[] patchVoxyVertexConsumer(byte[] input) {
