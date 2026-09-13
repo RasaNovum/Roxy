@@ -8,6 +8,8 @@ import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.FormattedText;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
+import net.minecraft.util.Mth;
+import org.lwjgl.glfw.GLFW;
 
 import java.util.List;
 
@@ -18,6 +20,12 @@ public final class RoxyWarningScreen extends Screen {
     private Checkbox dismiss;
     private Button quit;
     private Button proceed;
+    private double scrollOffset;
+    private int contentX;
+    private int contentWidth;
+    private int contentTop;
+    private int contentBottom;
+    private int contentHeight;
 
     public RoxyWarningScreen(Screen parent, List<RoxyClientWarnings.Warning> warnings, String version) {
         super(Component.literal("Potential Roxy Issues Detected"));
@@ -42,6 +50,13 @@ public final class RoxyWarningScreen extends Screen {
                 .build();
         addRenderableWidget(quit);
         addRenderableWidget(proceed);
+        updateContentLayout();
+    }
+
+    @Override
+    public void resize(Minecraft minecraft, int width, int height) {
+        super.resize(minecraft, width, height);
+        updateContentLayout();
     }
 
     @Override
@@ -65,15 +80,98 @@ public final class RoxyWarningScreen extends Screen {
                 0xFFFF7777
         );
 
-        int textWidth = Math.min(720, this.width - 48);
-        int x = (this.width - textWidth) / 2;
-        int y = 66;
+        scrollOffset = Mth.clamp(scrollOffset, 0.0, (double) maxScroll());
+        graphics.enableScissor(contentX, contentTop, contentX + contentWidth, contentBottom);
+        try {
+            int y = contentTop - (int) Math.round(scrollOffset);
+            for (RoxyClientWarnings.Warning warning : warnings) {
+                y = drawWrapped(graphics, warning.title(), contentX, y, contentWidth, 0xFFFFFFFF);
+                y += 2;
+                y = drawWrapped(graphics, warning.tooltip(), contentX, y, contentWidth, 0xFFB8B8B8);
+                y += 14;
+            }
+        } finally {
+            graphics.disableScissor();
+        }
+        renderScrollbar(graphics);
+    }
+
+    @Override
+    public boolean mouseScrolled(double mouseX, double mouseY, double scrollX, double scrollY) {
+        if (mouseX >= contentX && mouseX < Math.min(this.width, contentX + contentWidth + 12)
+                && mouseY >= contentTop && mouseY < contentBottom && maxScroll() > 0) {
+            scrollOffset = Mth.clamp(scrollOffset - scrollY * 12.0, 0.0, (double) maxScroll());
+            return true;
+        }
+        return super.mouseScrolled(mouseX, mouseY, scrollX, scrollY);
+    }
+
+    @Override
+    public boolean keyPressed(int keyCode, int scanCode, int modifiers) {
+        if (maxScroll() > 0) {
+            int page = contentBottom - contentTop;
+            if (keyCode == GLFW.GLFW_KEY_PAGE_UP) {
+                scrollOffset = Math.max(0.0, scrollOffset - page);
+                return true;
+            }
+            if (keyCode == GLFW.GLFW_KEY_PAGE_DOWN) {
+                scrollOffset = Math.min(maxScroll(), scrollOffset + page);
+                return true;
+            }
+            if (keyCode == GLFW.GLFW_KEY_HOME) {
+                scrollOffset = 0.0;
+                return true;
+            }
+            if (keyCode == GLFW.GLFW_KEY_END) {
+                scrollOffset = maxScroll();
+                return true;
+            }
+        }
+        return super.keyPressed(keyCode, scanCode, modifiers);
+    }
+
+    private void updateContentLayout() {
+        contentTop = 66;
+        contentBottom = Math.max(contentTop + 1, this.height - 82);
+        contentWidth = Math.min(720, Math.max(1, this.width - 64));
+        contentX = (this.width - contentWidth) / 2;
+        contentHeight = warningContentHeight(contentWidth);
+        scrollOffset = Mth.clamp(scrollOffset, 0.0, (double) maxScroll());
+    }
+
+    private void renderScrollbar(GuiGraphics graphics) {
+        int maximumScroll = maxScroll();
+        if (maximumScroll <= 0 || contentBottom <= contentTop + 2) return;
+
+        int trackX = Math.min(this.width - 3, contentX + contentWidth + 4);
+        int trackTop = contentTop + 1;
+        int trackBottom = contentBottom - 1;
+        int trackHeight = trackBottom - trackTop;
+        if (trackHeight <= 0) return;
+        int thumbHeight = Math.min(trackHeight, Math.max(8, trackHeight * (contentBottom - contentTop) / contentHeight));
+        int thumbTravel = trackHeight - thumbHeight;
+        int thumbY = trackTop + (int) Math.round(thumbTravel * scrollOffset / maximumScroll);
+        graphics.fill(trackX, trackTop, trackX + 2, trackBottom, 0x664A1B1B);
+        graphics.fill(trackX, thumbY, trackX + 2, thumbY + thumbHeight, 0xFFB8B8B8);
+    }
+
+    private int warningContentHeight(int width) {
+        int y = 0;
         for (RoxyClientWarnings.Warning warning : warnings) {
-            y = drawWrapped(graphics, warning.title(), x, y, textWidth, 0xFFFFFFFF);
+            y += wrappedHeight(warning.title(), width);
             y += 2;
-            y = drawWrapped(graphics, warning.tooltip(), x, y, textWidth, 0xFFB8B8B8);
+            y += wrappedHeight(warning.tooltip(), width);
             y += 14;
         }
+        return y;
+    }
+
+    private int wrappedHeight(FormattedText text, int width) {
+        return this.font.split(text, width).size() * (this.font.lineHeight + 1);
+    }
+
+    private int maxScroll() {
+        return Math.max(0, contentHeight - (contentBottom - contentTop));
     }
 
     private int drawWrapped(GuiGraphics graphics, FormattedText text, int x, int y, int width, int color) {

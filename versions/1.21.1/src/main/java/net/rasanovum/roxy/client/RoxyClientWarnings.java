@@ -61,17 +61,64 @@ public final class RoxyClientWarnings {
                             .append(Component.literal(" in config or in the Sodium video settings. Certain fog mods may allow you to re-enable this."))
             ));
         }
-        if (amdGpuDetected() && !amdNoHyperZEnabled()) {
+        boolean amdGpu = amdGpuDetected();
+        if (amdGpu && !amdNoHyperZEnabled()) {
             warnings.add(new Warning(
                     Component.literal("AMD GPU detected but no ").withStyle(ChatFormatting.WHITE)
                             .append(Component.literal("AMD_DEBUG=nohyperz").withStyle(ChatFormatting.GOLD))
                             .append(Component.literal(" environment variable found!").withStyle(ChatFormatting.WHITE)),
-                    Component.literal("AMD users, especially on older GPUs, will likely experience graphical issues with LoD rendering. Add the environment variable ")
+                    Component.literal("AMD users, especially on older GPUs, will likely experience graphical issues with LOD rendering. Add the environment variable ")
                             .append(Component.literal("AMD_DEBUG=nohyperz").withStyle(ChatFormatting.GOLD))
                             .append(Component.literal(" to resolve many of these issues."))
             ));
         }
+        boolean createOrFlywheelPresent = ModList.get().isLoaded("create") || ModList.get().isLoaded("flywheel");
+        String backendId = amdGpu && createOrFlywheelPresent ? flywheelBackendId() : null;
+        if (shouldWarnAboutFlywheel(amdGpu, createOrFlywheelPresent, backendId)) {
+            boolean indirectBackend = isIndirectBackend(backendId);
+            warnings.add(new Warning(
+                    indirectBackend
+                            ? Component.literal("AMD GPU").withStyle(ChatFormatting.GOLD)
+                                    .append(Component.literal(" detected with Flywheel's ").withStyle(ChatFormatting.WHITE))
+                                    .append(Component.literal("Indirect").withStyle(ChatFormatting.YELLOW))
+                                    .append(Component.literal(" backend!").withStyle(ChatFormatting.WHITE))
+                            : Component.literal("AMD GPU & Flywheel compatibility warning").withStyle(ChatFormatting.YELLOW),
+                    Component.literal("Users with AMD GPUs may encounter Flywheel rendering issues when using the ").withStyle(ChatFormatting.WHITE)
+                            .append(Component.literal("Indirect").withStyle(ChatFormatting.YELLOW))
+                            .append(Component.literal(" backend alongside Roxy. Use the ").withStyle(ChatFormatting.WHITE))
+                            .append(Component.literal("Instancing").withStyle(ChatFormatting.GOLD))
+                            .append(Component.literal(" backend instead to avoid these issues.").withStyle(ChatFormatting.WHITE))
+            ));
+        }
         return warnings;
+    }
+
+    static boolean shouldWarnAboutFlywheel(boolean amdGpu, boolean createOrFlywheelPresent, String backendId) {
+        if (!amdGpu || !createOrFlywheelPresent) return false;
+        return backendId == null || backendId.isBlank() || isIndirectBackend(backendId);
+    }
+
+    private static boolean isIndirectBackend(String backendId) {
+        if (backendId == null || backendId.isBlank()) return false;
+        String normalized = backendId.trim().toLowerCase(Locale.ROOT);
+        return normalized.equals("indirect") || normalized.endsWith(":indirect");
+    }
+
+    private static String flywheelBackendId() {
+        try {
+            Class<?> configClass = Class.forName("dev.engine_room.flywheel.impl.FlwConfig");
+            Object config = configClass.getField("INSTANCE").get(null);
+            Object backend = configClass.getMethod("backend").invoke(config);
+            if (backend == null) return null;
+
+            Class<?> backendClass = Class.forName("dev.engine_room.flywheel.api.backend.Backend");
+            Object registry = backendClass.getField("REGISTRY").get(null);
+            Class<?> registryClass = Class.forName("dev.engine_room.flywheel.api.registry.IdRegistry");
+            Object id = registryClass.getMethod("getId", Object.class).invoke(registry, backend);
+            return id == null ? null : id.toString();
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
+            return null;
+        }
     }
 
     private static boolean environmentalFogEnabled() {
