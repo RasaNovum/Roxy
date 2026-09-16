@@ -279,7 +279,6 @@ public final class RoxyBytecodeRemapper {
         output = patchVoxyRenderSystemCallback(output);
         output = patchVoxyRenderSystemShutdown(output);
         output = patchVoxyRenderSystemWorkDrain(output);
-        output = patchVoxyRenderDistanceBatchRate(output);
         output = patchVoxyChunkBoundReset(output);
         output = patchVoxyVisibleChunkBounds(output);
         output = patchVoxyDepthClearState(output);
@@ -2477,85 +2476,6 @@ public final class RoxyBytecodeRemapper {
         }, 0);
         if (methodMatches[0] != 1 || queueClears[0] != 1 || removeMatches[0] != 1) {
             throw new IllegalStateException("Unsupported Voxy chunk-bound reset");
-        }
-        return writer.toByteArray();
-    }
-
-    private static byte[] patchVoxyRenderDistanceBatchRate(byte[] input) {
-        ClassReader reader = new ClassReader(input);
-        if (!reader.getClassName().equals(VOXY_RENDER_SYSTEM)) return input;
-
-        String tracker = "me/cortex/voxy/client/core/rendering/RenderDistanceTracker";
-        int[] ratePatched = new int[1];
-        int[] constructorMatched = new int[1];
-        ClassWriter writer = new RoxyClassWriter(reader, ClassWriter.COMPUTE_FRAMES);
-        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
-            @Override
-            public MethodVisitor visitMethod(
-                    int access,
-                    String name,
-                    String descriptor,
-                    String signature,
-                    String[] exceptions
-            ) {
-                MethodVisitor method = super.visitMethod(access, name, descriptor, signature, exceptions);
-                if (!name.equals("<init>")) return method;
-                return new MethodVisitor(Opcodes.ASM9, method) {
-                    private boolean trackerNew;
-                    private boolean trackerDup;
-                    private boolean rateReplaced;
-
-                    @Override
-                    public void visitTypeInsn(int opcode, String type) {
-                        trackerNew = opcode == Opcodes.NEW && type.equals(tracker);
-                        trackerDup = false;
-                        rateReplaced = false;
-                        super.visitTypeInsn(opcode, type);
-                    }
-
-                    @Override
-                    public void visitInsn(int opcode) {
-                        if (trackerNew && opcode == Opcodes.DUP) trackerDup = true;
-                        super.visitInsn(opcode);
-                    }
-
-                    @Override
-                    public void visitIntInsn(int opcode, int operand) {
-                        if (trackerDup && !rateReplaced && opcode == Opcodes.BIPUSH && operand == 40) {
-                            super.visitInsn(Opcodes.ICONST_4);
-                            ratePatched[0]++;
-                            rateReplaced = true;
-                            return;
-                        }
-                        super.visitIntInsn(opcode, operand);
-                    }
-
-                    @Override
-                    public void visitMethodInsn(
-                            int opcode,
-                            String owner,
-                            String methodName,
-                            String methodDescriptor,
-                            boolean isInterface
-                    ) {
-                        if (trackerDup
-                                && rateReplaced
-                                && opcode == Opcodes.INVOKESPECIAL
-                                && owner.equals(tracker)
-                                && methodName.equals("<init>")
-                                && methodDescriptor.equals(
-                                "(IIILjava/util/function/LongConsumer;Ljava/util/function/LongConsumer;)V")) {
-                            constructorMatched[0]++;
-                            trackerNew = false;
-                            trackerDup = false;
-                        }
-                        super.visitMethodInsn(opcode, owner, methodName, methodDescriptor, isInterface);
-                    }
-                };
-            }
-        }, 0);
-        if (ratePatched[0] != 1 || constructorMatched[0] != 1) {
-            throw new IllegalStateException("Unsupported Voxy render-distance batching");
         }
         return writer.toByteArray();
     }
