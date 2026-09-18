@@ -83,11 +83,11 @@ public final class RoxyClientWarnings {
                                     .append(Component.literal("Indirect").withStyle(ChatFormatting.YELLOW))
                                     .append(Component.literal(" backend!").withStyle(ChatFormatting.WHITE))
                             : Component.literal("AMD GPU & Flywheel compatibility warning").withStyle(ChatFormatting.YELLOW),
-                    Component.literal("Users with AMD GPUs may encounter Flywheel rendering issues when using the ").withStyle(ChatFormatting.WHITE)
+                    Component.literal("Users with AMD GPUs may encounter Flywheel rendering issues when using the ")
                             .append(Component.literal("Indirect").withStyle(ChatFormatting.YELLOW))
-                            .append(Component.literal(" backend alongside Roxy. Use the ").withStyle(ChatFormatting.WHITE))
+                            .append(Component.literal(" backend alongside Roxy. Use the "))
                             .append(Component.literal("Instancing").withStyle(ChatFormatting.GOLD))
-                            .append(Component.literal(" backend instead to avoid these issues.").withStyle(ChatFormatting.WHITE))
+                            .append(Component.literal(" backend instead to avoid these issues."))
             ));
         }
         return warnings;
