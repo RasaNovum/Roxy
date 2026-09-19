@@ -300,7 +300,7 @@ public final class RoxyBytecodeRemapper {
         output = patchVoxyIrisSamplers(output);
         output = patchVoxyIrisSamplerHolder(output);
         output = patchVoxyGsonCompatibility(output);
-        output = patchVoxyClientWorldPath(output);
+        output = patchVoxyIntegratedServerWorldPath(output);
         output = patchVoxyPalettedContainerFactory(output);
         output = patchVoxyWorldImporterDefaultBiomeProvider(output);
         output = patchVoxyStoredStateDataFix(output);
@@ -618,9 +618,10 @@ public final class RoxyBytecodeRemapper {
         return writer.toByteArray();
     }
 
-    private static byte[] patchVoxyClientWorldPath(byte[] input) {
+    private static byte[] patchVoxyIntegratedServerWorldPath(byte[] input) {
         ClassReader reader = new ClassReader(input);
-        if (!reader.getClassName().equals(VOXY_CLIENT_INSTANCE)) return input;
+        if (!reader.getClassName().equals(VOXY_CLIENT_INSTANCE)
+                && !reader.getClassName().equals(VOXY_COMMANDS)) return input;
 
         ClassWriter writer = new ClassWriter(reader, 0);
         reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
