@@ -22,3 +22,5 @@ run/
 /tools/audittemp/META-INF/jarjar/net.caffeinemc.sodium-neoforge-0.8.12+mc1.21.1-mod.jar
 /tools/
 /logs/
+/documentation/
+/verification/
