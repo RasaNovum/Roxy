@@ -190,6 +190,7 @@ public final class RoxyBytecodeRemapper {
     private static final String RENDER_TYPE = "net/minecraft/client/renderer/RenderType";
     private static final String ITEM_BLOCK_RENDER_TYPES = "net/minecraft/client/renderer/ItemBlockRenderTypes";
     private static final String RENDER_TYPE_COMPAT = "net/rasanovum/roxy/bridge/RoxyRenderTypeBridge";
+    private static final String DYNAMIC_TREES_COMPAT = "net/rasanovum/roxy/bridge/RoxyDynamicTreesBridge";
     private static final String VOXY_SETUP_VIEWPORT_1_21_1 =
             "(L" + SODIUM_CHUNK_RENDER_MATRICES + ";DDD)L" + VOXY_VIEWPORT + ";";
 
@@ -1911,6 +1912,16 @@ public final class RoxyBytecodeRemapper {
                 method.visitInsn(Opcodes.POP);
 
                 method.visitLabel(enqueueCurrent);
+                method.visitVarInsn(Opcodes.ALOAD, 2);
+                method.visitMethodInsn(
+                        Opcodes.INVOKESTATIC,
+                        DYNAMIC_TREES_COMPAT,
+                        "usePrimitiveLog",
+                        "(Ljava/lang/Object;)Ljava/lang/Object;",
+                        false
+                );
+                method.visitTypeInsn(Opcodes.CHECKCAST, BLOCK_STATE);
+                method.visitVarInsn(Opcodes.ASTORE, 2);
                 method.visitVarInsn(Opcodes.ALOAD, 0);
                 method.visitFieldInsn(Opcodes.GETFIELD, VOXY_MODEL_FACTORY, "bakeQueue", queue);
                 method.visitTypeInsn(Opcodes.NEW, blockBake);
