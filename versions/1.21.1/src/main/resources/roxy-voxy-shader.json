@@ -5,8 +5,11 @@
   "compatibilityLevel": "JAVA_21",
     "client": [
         "RoxyIrisReloadMixin",
+        "RoxyIrisSodiumProgramsMixin",
         "RoxyClientLevelEntityMixin",
+        "RoxyDefaultChunkRendererMixin",
         "RoxyShaderResourceMixin",
+        "RoxySodiumShaderResourceMixin",
         "RoxySoftwareRasterizerMixin",
         "RoxyFogRendererMixin",
         "RoxyFogWeatherMixin",

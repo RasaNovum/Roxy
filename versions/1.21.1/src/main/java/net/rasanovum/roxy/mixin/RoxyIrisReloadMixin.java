@@ -1,5 +1,6 @@
 package net.rasanovum.roxy.mixin;
 
+import net.rasanovum.roxy.blend.RoxyBlendUniforms;
 import net.rasanovum.roxy.compat.RoxyVoxyRendererReloadCompat;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -10,6 +11,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class RoxyIrisReloadMixin {
     @Inject(method = "reload", at = @At("HEAD"), require = 0)
     private static void roxy$beginReload(CallbackInfo callbackInfo) {
+        RoxyBlendUniforms.invalidate();
         RoxyVoxyRendererReloadCompat.beginIrisReload();
     }
 
