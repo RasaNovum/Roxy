@@ -13,7 +13,6 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 import java.util.function.BiConsumer;
 
-/** Adds dynamic samplers after Iris has created an ExtendedShader's sampler holder. */
 @Pseudo
 @Mixin(targets = "net.irisshaders.iris.pipeline.programs.ExtendedShader", remap = false)
 public abstract class RoxyLodIrisExtendedShaderMixin {

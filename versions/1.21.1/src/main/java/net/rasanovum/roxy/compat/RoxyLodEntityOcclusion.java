@@ -19,13 +19,6 @@ import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntSupplier;
 
-/**
- * Supplies a read-only Voxy depth/stencil view to entity and block-entity shader programs.
- *
- * The vanilla depth buffer is deliberately left untouched.  The stencil marker is used to
- * distinguish a real Voxy LOD pixel from the depth values that Voxy may copy into a vanilla
- * target for other shader-pack paths.
- */
 public final class RoxyLodEntityOcclusion {
     public static final String DEPTH_SAMPLER = "roxyVoxyLodDepth";
     public static final String STENCIL_SAMPLER = "roxyVoxyLodStencil";
@@ -70,11 +63,11 @@ public final class RoxyLodEntityOcclusion {
     private static Frame frame;
     private static boolean frameOpen;
     private static boolean warned;
+    private static boolean captureLogged, registrationLogged;
 
     private RoxyLodEntityOcclusion() {
     }
 
-    /** Starts the main world-render frame.  A shadow pass never starts this frame. */
     public static void beginFrame() {
         synchronized (LOCK) {
             frameOpen = true;
@@ -82,7 +75,6 @@ public final class RoxyLodEntityOcclusion {
         }
     }
 
-    /** Invalidates the current frame while retaining the texture view for reuse. */
     public static void invalidateFrame() {
         synchronized (LOCK) {
             frame = null;
@@ -90,7 +82,6 @@ public final class RoxyLodEntityOcclusion {
         }
     }
 
-    /** Releases the cached texture view on a renderer/shader reload. */
     public static void reset() {
         synchronized (LOCK) {
             frame = null;
@@ -99,7 +90,6 @@ public final class RoxyLodEntityOcclusion {
                 try {
                     GL43C.glDeleteTextures(stencilView);
                 } catch (RuntimeException ignored) {
-                    // A reset can run after the GL context has already gone away.
                 }
             }
             stencilView = 0;
@@ -109,13 +99,9 @@ public final class RoxyLodEntityOcclusion {
         }
     }
 
-    /**
-     * Captures the Voxy depth/stencil texture after Voxy has rendered its opaque pass.  This
-     * method intentionally uses reflection because Voxy is an external, optional dependency.
-     */
     public static void capture(Object pipeline, Object viewport) {
         synchronized (LOCK) {
-            if (!frameOpen || pipeline == null || viewport == null || shadowPassActive()) {
+            if (!frameOpen || pipeline == null || viewport == null || shadowPassActive(pipeline.getClass().getClassLoader())) {
                 return;
             }
             try {
@@ -166,15 +152,16 @@ public final class RoxyLodEntityOcclusion {
                 transform.get(values);
                 for (float value : values) if (!Float.isFinite(value)) return;
                 frame = new Frame(depthId, stencil, width, height, reverseZ, zeroOne, values);
+                if (!captureLogged) {
+                    captureLogged = true;
+                    LOGGER.info("Create LOD occlusion captured Voxy depth at {}x{}", width, height);
+                }
             } catch (ReflectiveOperationException | RuntimeException ignored) {
-                // Optional Voxy internals and GL context state can change across releases.
-                // Ordinary rendering remains enabled when capture is unavailable.
                 warnOnce("Voxy LOD depth capture is unavailable", ignored);
             }
         }
     }
 
-    /** Registers samplers only for a program whose fragment source declares both names. */
     public static boolean registerSamplers(Object program, Object holder) {
         if (program == null || holder == null || !declaresSampler(holder, DEPTH_SAMPLER)
                 || !declaresSampler(holder, STENCIL_SAMPLER)) {
@@ -203,6 +190,10 @@ public final class RoxyLodEntityOcclusion {
                         new String[]{STENCIL_SAMPLER});
                 ProgramBindings bindings = new ProgramBindings(depthAdded && stencilAdded);
                 PROGRAMS.put(program, bindings);
+                if (bindings.registered && !registrationLogged) {
+                    registrationLogged = true;
+                    LOGGER.info("Create LOD occlusion registered shader samplers");
+                }
                 return bindings.registered;
             } catch (ReflectiveOperationException | RuntimeException ignored) {
                 PROGRAMS.put(program, new ProgramBindings(false));
@@ -212,7 +203,6 @@ public final class RoxyLodEntityOcclusion {
         }
     }
 
-    /** Updates uniforms while the target shader program is bound. */
     public static void applyUniforms(Object program) {
         if (program == null) {
             return;
@@ -297,14 +287,12 @@ public final class RoxyLodEntityOcclusion {
         } catch (ReflectiveOperationException | RuntimeException ignored) {
             return false;
         }
-        // Do not reserve texture units when a future Iris builder no longer exposes its
-        // declaration query; an unknown builder is safer than stealing ordinary samplers.
         return false;
     }
 
-    private static boolean shadowPassActive() {
+    private static boolean shadowPassActive(ClassLoader loader) {
         try {
-            Class<?> irisUtil = Class.forName("me.cortex.voxy.client.core.util.IrisUtil");
+            Class<?> irisUtil = Class.forName("me.cortex.voxy.client.core.util.IrisUtil", false, loader);
             Method active = irisUtil.getMethod("irisShadowActive");
             return Boolean.TRUE.equals(active.invoke(null));
         } catch (ReflectiveOperationException | RuntimeException ignored) {

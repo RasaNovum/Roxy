@@ -17,9 +17,14 @@ import java.util.EnumSet;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.zip.ZipFile;
+import net.neoforged.fml.loading.LoadingModList;
+import net.neoforged.fml.loading.moddiscovery.ModFileInfo;
+import net.minecraft.SharedConstants;
+import net.minecraft.server.Bootstrap;
 
 /** Read-only artifact and API fixture for the optional Create/LOD shader bindings. */
 public final class VerifyCreateLodBindings {
@@ -32,6 +37,9 @@ public final class VerifyCreateLodBindings {
     }
 
     public static void main(String[] args) throws Exception {
+        SharedConstants.tryDetectVersion();
+        LoadingModList.of(List.of(), List.of(), List.of(), List.of(), java.util.Map.of());
+        Bootstrap.bootStrap();
         Path root = Path.of(args.length > 0 ? args[0] : ".").toAbsolutePath().normalize();
         Path iris = Path.of(args.length > 1 ? args[1] : IRIS);
         Path colorwheel = Path.of(args.length > 2 ? args[2] : COLORWHEEL);
@@ -117,9 +125,15 @@ public final class VerifyCreateLodBindings {
     }
 
     private static void verifyShaderRoles(Path iris, Path classes, Path create) throws Exception {
-        Path marker = Files.createTempDirectory("roxy-create-marker-");
-        writeMarker(marker);
-        try (URLClassLoader loader = childLoader(marker, classes, create)) {
+        Map<String, ModFileInfo> files = modFiles();
+        ModFileInfo marker = marker();
+        files.put("create", marker);
+        try (URLClassLoader gameLoader = new URLClassLoader(new URL[]{create.toUri().toURL()}, VerifyCreateLodBindings.class.getClassLoader());
+             URLClassLoader loader = childLoader(classes)) {
+            require(Class.forName("com.simibubi.create.Create", false, gameLoader) != null,
+                    "isolated game loader could not resolve Create");
+            require(!canLoad("com.simibubi.create.Create", loader),
+                    "Roxy helper loader unexpectedly sees the game Create class");
             Class<?> helper = Class.forName(SHADER_HELPER, true, loader);
             Method irisRole = helper.getMethod("isIrisRole", String.class);
             Set<String> names = enumNames(entry(iris, "net/irisshaders/iris/pipeline/programs/ShaderKey.class"));
@@ -146,17 +160,43 @@ public final class VerifyCreateLodBindings {
             require(renamedEntry.contains("roxy_lod_entity_occlusion()")
                             && renamedEntry.contains("void _clrwl_shader_main"),
                     "Colorwheel renamed fragment entry point was not patched");
+        } finally {
+            files.remove("create");
         }
         try (URLClassLoader absent = childLoader(classes)) {
             Class<?> helper = Class.forName(SHADER_HELPER, true, absent);
             require(!(Boolean) helper.getMethod("isIrisRole", String.class).invoke(null, "entities_solid"),
-                    "Create marker absence did not disable Iris patching");
+                    "Create mod absence did not disable Iris patching");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, ModFileInfo> modFiles() throws Exception {
+        var field = LoadingModList.class.getDeclaredField("fileById");
+        field.setAccessible(true);
+        return (Map<String, ModFileInfo>) field.get(LoadingModList.get());
+    }
+
+    private static ModFileInfo marker() throws Exception {
+        var field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        field.setAccessible(true);
+        return (ModFileInfo) ((sun.misc.Unsafe) field.get(null)).allocateInstance(ModFileInfo.class);
+    }
+
+    private static boolean canLoad(String name, ClassLoader loader) {
+        try {
+            Class.forName(name, false, loader);
+            return true;
+        } catch (ClassNotFoundException | LinkageError ignored) {
+            return false;
         }
     }
 
     private static void verifyColorwheelRecordPatch(Path classes, Path iris, Path colorwheel, Path create) throws Exception {
         Path marker = Files.createTempDirectory("roxy-create-record-marker-");
         writeMarker(marker);
+        Map<String, ModFileInfo> files = modFiles();
+        files.put("create", marker());
         try (URLClassLoader loader = childLoader(marker, classes, iris, colorwheel, create)) {
             Class<?> helper = Class.forName(SHADER_HELPER, true, loader);
             Class<?> outputType = Class.forName("dev.djefrey.colorwheel.compile.transform.ClrwlTransformOutput", true, loader);
@@ -176,6 +216,8 @@ public final class VerifyCreateLodBindings {
                     "Colorwheel record vertex changed");
             require(patched.getClass().getMethod("drawBuffers").invoke(patched) != null,
                     "Colorwheel record draw buffers were lost");
+        } finally {
+            files.remove("create");
         }
     }
 

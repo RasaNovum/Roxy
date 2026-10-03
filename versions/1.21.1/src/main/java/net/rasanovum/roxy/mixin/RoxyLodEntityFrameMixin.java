@@ -12,7 +12,6 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/** Opens the capture window before the main world pass; shadow rendering cannot overwrite it. */
 @Mixin(LevelRenderer.class)
 public abstract class RoxyLodEntityFrameMixin {
     @Inject(method = "renderLevel", at = @At("HEAD"), require = 0)

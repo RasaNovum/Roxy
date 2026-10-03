@@ -9,11 +9,13 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 import net.rasanovum.roxy.compat.RoxyLodEntityOcclusion;
+import net.neoforged.fml.loading.LoadingModList;
+import org.slf4j.LoggerFactory;
 
-/** Source-level patch for entity and block-entity fragment programs. */
 public final class RoxyLodEntityShader {
     private static final String MARKER = "roxy_lod_entity_occlusion";
     private static final Pattern MAIN = Pattern.compile("(?m)(^[ \\t]*void\\s+(?:main|_clrwl_shader_main)\\s*\\(\\s*\\)\\s*\\{)");
+    private static boolean irisLogged, colorwheelLogged;
     private static final Set<String> IRIS_ROLES = Set.of(
             "entities_alpha", "entities_solid", "entities_solid_diffuse", "entities_solid_bright",
             "entities_cutout", "entities_cutout_diffuse", "entities_translucent",
@@ -47,17 +49,25 @@ public final class RoxyLodEntityShader {
     }
 
     public static String patchIris(String name, String source) {
-        return isIrisRole(name) ? patch(source) : source;
+        if (!isIrisRole(name)) return source;
+        String result = patch(source);
+        if (!irisLogged && !java.util.Objects.equals(result, source)) {
+            irisLogged = true;
+            LoggerFactory.getLogger("Roxy").info("Create LOD occlusion patched Iris shader {}", name);
+        }
+        return result;
     }
 
     public static String patchColorwheel(String name, String source) {
-        return isColorwheelRole(name) ? patch(source) : source;
+        if (!isColorwheelRole(name)) return source;
+        String result = patch(source);
+        if (!colorwheelLogged && !java.util.Objects.equals(result, source)) {
+            colorwheelLogged = true;
+            LoggerFactory.getLogger("Roxy").info("Create LOD occlusion patched Colorwheel shader {}", name);
+        }
+        return result;
     }
 
-    /**
-     * Patches Colorwheel's small record graph without linking the optional Colorwheel classes.
-     * Returning the original graph on an unknown release keeps Colorwheel's normal path intact.
-     */
     public static Object patchColorwheelResult(Object result, Object programId) {
         if (result == null || (programId != null && !isColorwheelRole(programId))) {
             return result;
@@ -83,9 +93,9 @@ public final class RoxyLodEntityShader {
 
     private static boolean createPresent() {
         try {
-            Class.forName("com.simibubi.create.Create", false, RoxyLodEntityShader.class.getClassLoader());
-            return true;
-        } catch (ClassNotFoundException ignored) {
+            LoadingModList mods = LoadingModList.get();
+            return mods != null && mods.getModFileById("create") != null;
+        } catch (RuntimeException | LinkageError ignored) {
             return false;
         }
     }
@@ -94,8 +104,7 @@ public final class RoxyLodEntityShader {
         if (source == null || source.contains(MARKER)) {
             return source;
         }
-        String declarations = "// " + MARKER + "\n"
-                + "uniform sampler2D " + RoxyLodEntityOcclusion.DEPTH_SAMPLER + ";\n"
+        String declarations = "uniform sampler2D " + RoxyLodEntityOcclusion.DEPTH_SAMPLER + ";\n"
                 + "uniform usampler2D " + RoxyLodEntityOcclusion.STENCIL_SAMPLER + ";\n"
                 + "uniform int " + RoxyLodEntityOcclusion.ENABLED_UNIFORM + ";\n"
                 + "uniform mat4 " + RoxyLodEntityOcclusion.TRANSFORM_UNIFORM + ";\n"

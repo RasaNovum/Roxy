@@ -11,7 +11,6 @@ import org.spongepowered.asm.mixin.injection.At;
 
 import java.util.Map;
 
-/** Optional Iris hooks. Every target is resolved only when Iris is present. */
 @Pseudo
 @Mixin(targets = "net.irisshaders.iris.pipeline.programs.ShaderCreator", remap = false)
 public abstract class RoxyLodIrisShaderMixin {

@@ -8,7 +8,6 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
-/** Patches only Colorwheel's non-shadow G-buffer fragment record. */
 @Pseudo
 @Mixin(targets = "dev.djefrey.colorwheel.compile.ClrwlProgramSources", remap = false)
 public abstract class RoxyLodColorwheelSourcesMixin {

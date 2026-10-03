@@ -12,9 +12,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.logging.Level;
+import net.neoforged.fml.loading.LoadingModList;
 import java.util.logging.Logger;
 
-/** Optional Create model additions for Voxy's static block-model baker. */
 public final class RoxyCreateStaticModelCompat {
     private static final Logger LOGGER = Logger.getLogger("Roxy");
     private static final String CREATE = "com.simibubi.create";
@@ -30,7 +30,6 @@ public final class RoxyCreateStaticModelCompat {
     private RoxyCreateStaticModelCompat() {
     }
 
-    /** Called while Voxy selects a baked model; unrelated integrations are delegated unchanged. */
     public static Object wrap(Object state, Object model) {
         if (state == null || model == null || !isCreateLoaded() || !isBelt(state)) return model;
         synchronized (RoxyCreateStaticModelCompat.class) {
@@ -59,11 +58,9 @@ public final class RoxyCreateStaticModelCompat {
             synchronized (RoxyCreateStaticModelCompat.class) {
                 if (!checked) {
                     try {
-                        Class<?> mods = Class.forName("net.neoforged.fml.ModList", false,
-                                RoxyCreateStaticModelCompat.class.getClassLoader());
-                        Object list = mods.getMethod("get").invoke(null);
-                        installed = (Boolean) list.getClass().getMethod("isLoaded", String.class).invoke(list, "create");
-                    } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
+                        LoadingModList mods = LoadingModList.get();
+                        installed = mods != null && mods.getModFileById("create") != null;
+                    } catch (RuntimeException | LinkageError ignored) {
                         installed = false;
                     }
                     checked = true;

@@ -10,7 +10,6 @@ import org.spongepowered.asm.mixin.injection.Coerce;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-/** Registers the same dynamic samplers for Colorwheel's Flywheel programs. */
 @Pseudo
 @Mixin(targets = "dev.djefrey.colorwheel.compile.ClrwlProgram", remap = false)
 public abstract class RoxyLodColorwheelProgramMixin {

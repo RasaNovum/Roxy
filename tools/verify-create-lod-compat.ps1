@@ -22,9 +22,9 @@ try {
         Where-Object { $_ -notmatch 'natives-.*(arm64|x86|linux|macos)' }) -join ';'
     $output = Join-Path $repo ('build/create-lod-' + [guid]::NewGuid().ToString('N'))
     New-Item -ItemType Directory -Path $output | Out-Null
-    $sources = @('VerifyCreateStaticCompat.java', 'VerifyCreateLodBindings.java', 'VerifyLodEntityOcclusion.java',
+    $sources = @('VerifyCreateStaticCompat.java', 'VerifyCreateLodBindings.java', 'VerifyLodEntityOcclusion.java', 'VerifyLodSamplerRegistration.java',
         'com/simibubi/create/content/kinetics/belt/BeltBlock.java') | ForEach-Object { Join-Path $PSScriptRoot $_ }
-    & "$JavaHome/bin/javac.exe" -proc:none -cp $classpath -d $output @sources
+    & "$JavaHome/bin/javac.exe" -proc:none -cp "$classpath;$iris" -d $output @sources
     if ($LASTEXITCODE -ne 0) { throw 'Create LOD verification compilation failed' }
     & "$JavaHome/bin/java.exe" -ea -cp "$output;$classpath" VerifyCreateStaticCompat $create
     if ($LASTEXITCODE -ne 0) { throw 'Static Create geometry verification failed' }
@@ -32,6 +32,8 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Iris/Colorwheel artifact verification failed' }
     & "$JavaHome/bin/java.exe" -ea -cp "$output;$classpath" VerifyLodEntityOcclusion
     if ($LASTEXITCODE -ne 0) { throw 'LOD entity occlusion GPU verification failed' }
+    & "$JavaHome/bin/java.exe" -ea -cp "$output;$classpath;$iris" VerifyLodSamplerRegistration
+    if ($LASTEXITCODE -ne 0) { throw 'Real Iris sampler registration verification failed' }
 } finally {
     Pop-Location
 }
