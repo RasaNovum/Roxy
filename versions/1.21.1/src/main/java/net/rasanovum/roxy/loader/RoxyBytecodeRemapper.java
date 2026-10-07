@@ -413,6 +413,11 @@ public final class RoxyBytecodeRemapper {
 
                 delegate.visitLabel(done);
                 delegate.visitFrame(Opcodes.F_SAME, 0, null, 0, null);
+                delegate.visitVarInsn(Opcodes.ALOAD, 0);
+                delegate.visitVarInsn(Opcodes.ALOAD, 1);
+                delegate.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        "net/rasanovum/roxy/compat/RoxyLodEntityOcclusion", "capture",
+                        "(Ljava/lang/Object;Ljava/lang/Object;)V", false);
                 delegate.visitInsn(Opcodes.ICONST_1);
                 delegate.visitInsn(Opcodes.ICONST_1);
                 delegate.visitInsn(Opcodes.ICONST_1);
@@ -1574,6 +1579,11 @@ public final class RoxyBytecodeRemapper {
                         "(L" + BLOCK_STATE + ";)L" + BAKED_MODEL + ";",
                         false
                 );
+                method.visitVarInsn(Opcodes.ALOAD, 1);
+                method.visitInsn(Opcodes.SWAP);
+                method.visitMethodInsn(Opcodes.INVOKESTATIC,
+                        "net/rasanovum/roxy/compat/RoxyCreateStaticModelCompat", "wrap",
+                        "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", false);
                 method.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxy/tfc/TfcVoxyBridge",
                         "bakedModel", "(Ljava/lang/Object;)Ljava/lang/Object;", false);
                 method.visitTypeInsn(Opcodes.CHECKCAST, BAKED_MODEL);
@@ -2180,6 +2190,8 @@ public final class RoxyBytecodeRemapper {
                     @Override
                     public void visitCode() {
                         super.visitCode();
+                        super.visitMethodInsn(Opcodes.INVOKESTATIC,
+                                "net/rasanovum/roxy/compat/RoxyLodEntityOcclusion", "reset", "()V", false);
                         super.visitVarInsn(Opcodes.ALOAD, 0);
                         super.visitMethodInsn(
                                 Opcodes.INVOKESTATIC,
