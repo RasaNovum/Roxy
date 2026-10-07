@@ -3,6 +3,7 @@ package net.rasanovum.roxy.fog;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import net.rasanovum.roxy.compat.RoxyFogModCompat;
+import net.rasanovum.roxy.compat.RoxyBetterFogCompat;
 import java.lang.ref.WeakReference;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -43,6 +44,8 @@ public final class RoxyVoxyFogPatch {
         if (!"FOG_TERRAIN".equals(String.valueOf(fogMode))) return;
         extendedFogMode = 0;
         if (!noFluid) return;
+        // Better Fog owns its Voxy LOD profile, including opt-outs and its authored fog color.
+        if (RoxyBetterFogCompat.available()) return;
 
         Accessors current = getAccessors();
         if (current == null) return;
@@ -123,6 +126,17 @@ public final class RoxyVoxyFogPatch {
                     && !current.environmentalFog.getBoolean(config);
         } catch (ReflectiveOperationException | RuntimeException exception) {
             return false;
+        }
+    }
+
+    public static float lodDistanceBlocks() {
+        Accessors current = getAccessors();
+        if (current == null) return 0.0F;
+        try {
+            Object config = current.config.get(null);
+            return config == null ? 0.0F : current.renderDistance.getFloat(config) * 512.0F;
+        } catch (ReflectiveOperationException | RuntimeException exception) {
+            return 0.0F;
         }
     }
 

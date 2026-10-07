@@ -17,6 +17,14 @@ public final class RoxyFogModCompat {
         return loaded("fog") || loaded("nomansland");
     }
 
+    public static boolean betterFogPresent() {
+        return loaded("betterfog");
+    }
+
+    public static boolean betterFogUniformsEnabled() {
+        return betterFogPresent() && !loaded("distantfog");
+    }
+
     public static boolean fogHorizonActive() {
         return !loaded("nomansland") && fogActive();
     }

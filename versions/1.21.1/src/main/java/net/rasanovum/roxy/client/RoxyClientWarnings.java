@@ -5,6 +5,7 @@ import com.google.gson.JsonParser;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
+import net.rasanovum.roxy.compat.RoxyBetterFogCompat;
 import net.neoforged.fml.ModList;
 import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforge.client.event.ScreenEvent;
@@ -50,7 +51,7 @@ public final class RoxyClientWarnings {
 
     private static List<Warning> detectWarnings() {
         List<Warning> warnings = new ArrayList<>();
-        if (environmentalFogEnabled()) {
+        if (environmentalFogEnabled() && !RoxyBetterFogCompat.available()) {
             warnings.add(new Warning(
                     Component.literal("use_environmental_fog").withStyle(ChatFormatting.YELLOW)
                             .append(Component.literal(" set to ").withStyle(ChatFormatting.WHITE))

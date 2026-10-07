@@ -1,12 +1,12 @@
 {
-  "roxy.tfc.day_cycle": "Day cycle LOD updates",
-  "roxy.tfc.day_cycle.tooltip": "Update TFC terrain LoDs when the in-game day cycle changes.",
+  "roxy.tfc.day_cycle": "Day cycle updates",
+  "roxy.tfc.day_cycle.tooltip": "Apply updates from TFC to LOD terrain in the background, once per in-game day.",
   "roxy.tfc.requires_mod": "Requires TerraFirmaCraft.",
   "roxy.tfc.progress": "TFC leaf refresh: %s / %s sampled chunks ready",
   "roxy.tfc.progress.reads": " | %s climate reads queued",
   "roxy.tfc.progress.meshes": " | %s meshes pending",
   "roxy.tfc.progress.missing": " | %s need climate",
-  "roxy.fog.page": "LoD Fog",
+  "roxy.fog.page": "Distant Fog",
   "roxy.fog.automatic": "Dynamic Weather Fog",
   "roxy.fog.automatic.tooltip": "Bring fog into nearby terrain during rain and thunderstorms.",
   "roxy.fog.start": "Fog start",
@@ -14,6 +14,7 @@
   "roxy.fog.weather_roll_in": "Weather Fog Roll In",
   "roxy.fog.weather_roll_in.tooltip": "How strongly weather brings fog into nearby terrain. The higher the value the closer fog rolls in.",
   "roxy.fog.requires_mod": "Requires a supported fog mod: Fog or No Man's Land.",
+  "roxy.fog.betterfog_settings": "Better Fog controls its own fog distances and weather. Configure these in Better Fog's settings.",
   "roxy.fog.chunks": "%s chunks",
   "roxy.fog.percent": "%s%%"
 }

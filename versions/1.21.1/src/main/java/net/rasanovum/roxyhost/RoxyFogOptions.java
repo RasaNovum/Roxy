@@ -7,6 +7,7 @@ import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.rasanovum.roxy.fog.RoxyFogConfig;
 import net.rasanovum.roxy.compat.RoxyFogModCompat;
+import net.rasanovum.roxy.compat.RoxyBetterFogCompat;
 import net.rasanovum.roxy.tfc.TfcCompatConfig;
 import net.rasanovum.roxy.fog.RoxyVoxyFogPatch;
 
@@ -85,6 +86,9 @@ public final class RoxyFogOptions {
 
     private static Component tooltip(String key) {
         Component description = text(key);
+        if (RoxyBetterFogCompat.available()) {
+            return text("betterfog_settings").copy().append("\n\n").append(description);
+        }
         return RoxyFogModCompat.supportedModPresent() ? description
                 : text("requires_mod").copy().append("\n\n").append(description);
     }
@@ -100,7 +104,7 @@ public final class RoxyFogOptions {
     }
 
     private static boolean enabled(ConfigState state, boolean voxyOptionsAvailable) {
-        if (!RoxyFogModCompat.supportedModPresent() || shadersActive()) return false;
+        if (RoxyBetterFogCompat.available() || !RoxyFogModCompat.supportedModPresent() || shadersActive()) return false;
         if (!voxyOptionsAvailable) return RoxyVoxyFogPatch.optionsEnabled();
         return state.readBooleanOption(VOXY_ENABLED)
                 && state.readBooleanOption(VOXY_RENDERING)

@@ -29,9 +29,12 @@ Roxy is compatible with the following usual suspects:
 - Voxy Worldgen v2
 - LOD Server Support
 - Chunksmith
+- Better Fog (NeoForge 1.21.1)
 - and many more!
 
 Roxy *should* also be compatible with Sinytra Connector and Connector-loaded Fabric mods as of v0.1.6+.
+
+Better Fog's native LOD fog is supported with its NeoForge 1.21.1 builds (2.3.0 and 2.6.0). Enable **Environmental Fog** in Voxy and **Voxy Fog** in Better Fog, then configure the fog in Better Fog's settings. Roxy adapts the external Voxy renderer to Better Fog's existing fog engine, retaining its biome, weather, cave, colour, and strength settings. Roxy's Distant Fog controls remain for Fog and No Man's Land. With an Iris shader pack active, the shader pack controls LOD fog.
 
 Many major incompatibilities that are present with Voxy natively on Fabric will also remain so on NeoForge when using Roxy. Please be aware of this when reporting issues.
 
