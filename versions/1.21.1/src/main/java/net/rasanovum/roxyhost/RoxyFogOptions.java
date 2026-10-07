@@ -25,10 +25,6 @@ public final class RoxyFogOptions {
         addOptions(builder, RoxyFogConfig.get(), RoxyFogConfig::save, !shadersActive());
     }
 
-    private static void addOptions(ConfigBuilder builder, RoxyFogConfig.Settings settings, StorageEventHandler storage) {
-        addOptions(builder, settings, storage, true);
-    }
-
     private static void addOptions(ConfigBuilder builder, RoxyFogConfig.Settings settings,
                                    StorageEventHandler storage, boolean includeFogOptions) {
         int maxChunks = 512;

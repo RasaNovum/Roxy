@@ -1,7 +1,6 @@
 package net.rasanovum.roxy.mixin;
 
 import net.rasanovum.roxy.loader.RoxyGpuCompat;
-import com.mojang.blaze3d.opengl.GlDevice;
 import com.mojang.blaze3d.pipeline.RenderTarget;
 import com.mojang.blaze3d.systems.GpuDevice;
 import com.mojang.blaze3d.systems.RenderSystem;

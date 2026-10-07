@@ -3,7 +3,6 @@ package net.rasanovum.roxy.mixin;
 import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
 import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import com.llamalad7.mixinextras.sugar.Local;
-import net.rasanovum.roxy.compat.RoxyLodEntityOcclusion;
 import net.rasanovum.roxy.shader.RoxyLodEntityShader;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Pseudo;

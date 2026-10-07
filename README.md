@@ -33,7 +33,7 @@ Roxy is compatible with the following usual suspects:
 
 Roxy *should* also be compatible with Sinytra Connector and Connector-loaded Fabric mods as of v0.1.6+.
 
-Many major incompatibilites that are present with Voxy natively on Fabric will also remain so on NeoForge when using Roxy. Please be aware of this when reporting issues.
+Many major incompatibilities that are present with Voxy natively on Fabric will also remain so on NeoForge when using Roxy. Please be aware of this when reporting issues.
 
 AMD GPUs using Mesa on Linux may show terrain-shaped gaps in shader-rendered water because of Mesa's Hyper-Z depth compression. Add `AMD_DEBUG=nohyperz` to the launcher's instance environment variables and restart the game.
 
