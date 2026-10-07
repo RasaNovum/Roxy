@@ -29,8 +29,10 @@ public final class RoxyFogOptions {
     private static void addOptions(ConfigBuilder builder, RoxyFogConfig.Settings settings,
                                    StorageEventHandler storage, boolean includeFogOptions) {
         int maxChunks = 512;
-        var page = builder.createOptionPage().setName(text("page"));
+        var modOptions = builder.registerModOptions("roxy")
+                .setNonTintedIcon(ResourceLocation.fromNamespaceAndPath("roxy", "icon.png"));
         if (includeFogOptions) {
+            var page = builder.createOptionPage().setName(text("page"));
             ResourceLocation automaticId = ResourceLocation.fromNamespaceAndPath("roxy", "fog_automatic");
             boolean voxyOptionsAvailable = voxyOptionsAvailable();
             ResourceLocation[] enabledDependencies = voxyOptionsAvailable
@@ -65,7 +67,10 @@ public final class RoxyFogOptions {
                     .setEnabledProvider(state -> enabled(state, voxyOptionsAvailable) && state.readBooleanOption(automaticId),
                             rollInDependencies);
             page.addOption(automatic).addOption(start).addOption(rollIn);
+            modOptions.addPage(page);
         }
+
+        var lodUpdatesPage = builder.createOptionPage().setName(tfcText("page"));
         var tfc = builder.createBooleanOption(TFC_DAY_CYCLE)
                 .setName(tfcText("day_cycle"))
                 .setTooltip(tfcTooltip())
@@ -74,10 +79,17 @@ public final class RoxyFogOptions {
                 .setControlHiddenWhenDisabled(false)
                 .setEnabledProvider(state -> TfcCompatConfig.installed(),
                         ConfigState.UPDATE_ON_APPLY, ConfigState.UPDATE_ON_REBUILD);
-        page.addOption(tfc);
-        builder.registerModOptions("roxy")
-                .setNonTintedIcon(ResourceLocation.fromNamespaceAndPath("roxy", "icon.png"))
-                .addPage(page);
+        var showProgress = builder.createBooleanOption(
+                        ResourceLocation.fromNamespaceAndPath("roxy", "tfc_show_progress"))
+                .setName(tfcText("show_progress"))
+                .setTooltip(tfcText("show_progress.tooltip"))
+                .setDefaultValue(true).setStorageHandler(TfcCompatConfig::save)
+                .setBinding(TfcCompatConfig::setShowProgress, TfcCompatConfig::showProgress)
+                .setControlHiddenWhenDisabled(true)
+                .setEnabledProvider(state -> TfcCompatConfig.installed() && state.readBooleanOption(TFC_DAY_CYCLE),
+                        TFC_DAY_CYCLE, ConfigState.UPDATE_ON_APPLY, ConfigState.UPDATE_ON_REBUILD);
+        lodUpdatesPage.addOption(tfc).addOption(showProgress);
+        modOptions.addPage(lodUpdatesPage);
     }
 
     private static Component text(String key) {

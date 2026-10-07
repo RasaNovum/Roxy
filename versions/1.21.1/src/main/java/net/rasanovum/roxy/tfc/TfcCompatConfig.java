@@ -36,8 +36,16 @@ public final class TfcCompatConfig {
         return installed() && get().enabled;
     }
 
+    public static boolean showProgress() {
+        return get().showProgress;
+    }
+
     public static void setEnabled(boolean enabled) {
         get().enabled = enabled;
+    }
+
+    public static void setShowProgress(boolean showProgress) {
+        get().showProgress = showProgress;
     }
 
     public static synchronized void save() {
@@ -78,5 +86,6 @@ public final class TfcCompatConfig {
 
     public static final class Settings {
         public volatile boolean enabled;
+        public volatile boolean showProgress = true;
     }
 }

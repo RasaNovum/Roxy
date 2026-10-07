@@ -1,6 +1,9 @@
 {
-  "roxy.tfc.day_cycle": "Day cycle updates",
+  "roxy.tfc.page": "LOD Updates",
+  "roxy.tfc.day_cycle": "TerraFirmaCraft compatibility",
   "roxy.tfc.day_cycle.tooltip": "Apply updates from TFC to LOD terrain in the background, once per in-game day.",
+  "roxy.tfc.show_progress": "Show update progress",
+  "roxy.tfc.show_progress.tooltip": "Show the LOD update progress bar for debug purposes.",
   "roxy.tfc.requires_mod": "Requires TerraFirmaCraft.",
   "roxy.tfc.progress": "TFC leaf refresh: %s / %s sampled chunks ready",
   "roxy.tfc.progress.reads": " | %s climate reads queued",

@@ -19,7 +19,7 @@ public final class TfcVoxyBridge {
     private static final ThreadLocal<MeshStamp> MESH_STAMP = new ThreadLocal<>();
     private static int cameraX,cameraZ;
     private static long progressStarted;
-    private static long[] progress=new long[7];
+    private static long[] progress=new long[8];
     private static Iterator<Map.Entry<Long,Set<Entry>>> progressScan;
     private static long progressDone;
     private static long progressEpoch=Long.MIN_VALUE;
@@ -74,7 +74,7 @@ public final class TfcVoxyBridge {
             REFRESH.reset();
             forceMeshes=false;progressWasWorking=false;
             progressEpoch=Long.MIN_VALUE;progressScan=null;progressChunks.clear();progressDone=0;
-            progress=new long[7];progressStarted=System.nanoTime();
+            progress=new long[8];progressStarted=System.nanoTime();
             sweep=null;
             sweepNext=null;dirtyEntries=null;dirtyNext=null;pruning=null;
             LOG.info("TFC seasonal LoD prototype enabled: chunk climate, daily updates, {} appearance slots",MAX_VARIANTS);
@@ -291,7 +291,7 @@ public final class TfcVoxyBridge {
         sweepNext=null;dirtyEntries=null;dirtyNext=null;pruning=null;dirtyOverflow.set(false);
         dirtyChunks.clear();REFRESH.reset();
         forceMeshes=false;progressWasWorking=false;
-        progressScan=null;progress=new long[7];progressChunks.clear();progressEpoch=Long.MIN_VALUE;progressStarted=System.nanoTime();
+        progressScan=null;progress=new long[8];progressChunks.clear();progressEpoch=Long.MIN_VALUE;progressStarted=System.nanoTime();
         climateArrived.set(false);
     }
 
@@ -497,7 +497,8 @@ public final class TfcVoxyBridge {
         if(!progressScan.hasNext())progressScan=null;
         int pending=REFRESH.pendingCount();
         boolean working=forceMeshes||sweep!=null||dirtyNext!=null||!dirtyChunks.isEmpty()||!factory.queue.isEmpty()||!factory.fallbackQueue.isEmpty()||!factory.waiting.isEmpty()||pending>0||progressDone<progressChunks.size();
-        progress=new long[]{revision,progressDone,progressChunks.size(),factory.unknown.size(),working?1:0,(System.nanoTime()-progressStarted)/1_000_000,pending};
+        progress=new long[]{revision,progressDone,progressChunks.size(),factory.unknown.size(),working?1:0,(System.nanoTime()-progressStarted)/1_000_000,pending,
+                progressScan==null?1:0};
         if(progressWasWorking&&!working)LOG.debug("TFC LoD refresh queues drained: revision={}, sampled chunks={}/{}, unavailable climate={}, submitted={}, accepted={}, changed={}, unchanged={}",
                 revision,progressDone,progressChunks.size(),factory.unknown.size(),REFRESH.submittedCount(),REFRESH.acceptedCount(),factory.changed,factory.unchanged);
         progressWasWorking=working;
@@ -632,7 +633,7 @@ public final class TfcVoxyBridge {
             factory.fallbackSweep=null;factory.unknownScan=null;
             factory.waiting.clear();
         }
-        progress=new long[7];progressScan=null;progressChunks.clear();progressDone=0;
+        progress=new long[8];progressScan=null;progressChunks.clear();progressDone=0;
         forceMeshes=false;sweep=null;sweepNext=null;dirtyEntries=null;dirtyNext=null;pruning=null;
         dirtyChunks.clear();dirtyOverflow.set(false);climateArrived.set(false);
         if(adapter!=null)try{adapter.tickClimate.invoke(null);}catch(ReflectiveOperationException|RuntimeException ignored){}

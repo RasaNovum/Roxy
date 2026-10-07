@@ -36,6 +36,7 @@ public final class RoxyFabricModReader implements IModFileReader {
     private static final Map<String, String> EMBEDDED_HOST_CLASSES = Map.ofEntries(
             Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcBackfill.class", "roxy/embedded/RoxyTfcBackfill.bin"),
             Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcProgress.class", "roxy/embedded/RoxyTfcProgress.bin"),
+            Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcProgress$Visibility.class", "roxy/embedded/RoxyTfcProgress$Visibility.bin"),
             Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcAdapter.class", "roxy/embedded/RoxyTfcAdapter.bin"),
             Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcImport.class", "roxy/embedded/RoxyTfcImport.bin"),
             Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcImport$ChunkCapture.class", "roxy/embedded/RoxyTfcImport$ChunkCapture.bin"),

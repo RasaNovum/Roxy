@@ -141,6 +141,10 @@ project(":1.21.1") {
                 into("roxy/embedded")
                 rename { "RoxyTfcProgress.bin" }
             }
+            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/tfc/RoxyTfcProgress\$Visibility.class")) {
+                into("roxy/embedded")
+                rename { "RoxyTfcProgress\$Visibility.bin" }
+            }
             from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/tfc/RoxyTfcBackfill.class")) {
                 into("roxy/embedded")
                 rename { "RoxyTfcBackfill.bin" }
