@@ -21,7 +21,6 @@
         "RoxySoftwareRasterizerMixin",
         "RoxyFogRendererMixin",
         "RoxyBetterFogVoxyBridgeMixin",
-        "RoxyBetterFogNormalRenderPipelineMixin",
         "RoxyFogWeatherMixin",
         "RoxyFogDawnMixin",
         "RoxyFogHorizonMixin",

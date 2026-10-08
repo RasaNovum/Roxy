@@ -1,5 +1,7 @@
 package net.rasanovum.roxy.compat;
 
+import org.lwjgl.opengl.GL33C;
+
 import java.lang.reflect.Method;
 
 public final class RoxyBetterFogCompat {
@@ -7,6 +9,15 @@ public final class RoxyBetterFogCompat {
     private static volatile boolean lookupAttempted;
 
     private RoxyBetterFogCompat() {}
+
+    public static void glUniform4f(int location, float x, float y, float z, float w) {
+        float[] values = uniform(location);
+        if (values != null && values.length >= 4) {
+            GL33C.glUniform4f(location, values[0], values[1], values[2], values[3]);
+            return;
+        }
+        GL33C.glUniform4f(location, x, y, z, w);
+    }
 
     public static float[] uniform(int location) {
         if (location != 4 && location != 5) return null;

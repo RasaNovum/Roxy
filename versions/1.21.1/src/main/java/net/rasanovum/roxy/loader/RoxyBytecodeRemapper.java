@@ -530,26 +530,33 @@ public final class RoxyBytecodeRemapper {
                         }
                     }
                 };
-                if (!name.equals("finish")) return method;
+                if (!name.equals("finish")
+                        || !descriptor.equals("(Lme/cortex/voxy/client/core/rendering/Viewport;III)V")) return method;
                 return new MethodVisitor(Opcodes.ASM9, method) {
                     @Override public void visitMethodInsn(int opcode, String owner, String called, String desc, boolean itf) {
                         if (owner.equals(SODIUM_FOG_PARAMETERS) && called.equals("environmentalEnd") && matches[1] == 0) {
                             called = "cullingEnd";
                             matches[1]++;
                         }
-                        if (owner.startsWith("org/lwjgl/opengl/") && called.equals("glUniform4f") && matches[2] == 0) {
-                            super.visitInsn(Opcodes.SWAP);
-                            super.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxy/fog/RoxyVoxyFogPatch", "opacityLimit", "(F)F", false);
-                            super.visitInsn(Opcodes.SWAP);
-                            super.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxy/fog/RoxyVoxyFogPatch", "shaderMode", "(F)F", false);
+                        if (opcode == Opcodes.INVOKESTATIC && owner.equals("org/lwjgl/opengl/GL33C") && called.equals("glUniform4f")
+                                && desc.equals("(IFFFF)V")) {
+                            if (matches[2] == 0) {
+                                super.visitInsn(Opcodes.SWAP);
+                                super.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxy/fog/RoxyVoxyFogPatch", "opacityLimit", "(F)F", false);
+                                super.visitInsn(Opcodes.SWAP);
+                                super.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxy/fog/RoxyVoxyFogPatch", "shaderMode", "(F)F", false);
+                            }
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC,
+                                    "net/rasanovum/roxy/compat/RoxyBetterFogCompat", "glUniform4f", "(IFFFF)V", false);
                             matches[2]++;
+                            return;
                         }
                         super.visitMethodInsn(opcode, owner, called, desc, itf);
                     }
                 };
             }
         }, 0);
-        if (matches[0] != 1 || matches[1] != 1 || matches[2] != 1)
+        if (matches[0] != 1 || matches[1] != 1 || matches[2] != 4)
             throw new IllegalStateException("Unsupported Voxy normal fog pipeline");
         return writer.toByteArray();
     }
