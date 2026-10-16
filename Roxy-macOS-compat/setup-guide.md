@@ -40,6 +40,8 @@ Launch the fresh instance and wait for Prism's console to report that the graphi
 
 If Minecraft fails to start, first confirm the instance uses ARM64 Java 21 and that its `mods` folder contains the required files. For a normal Apple OpenGL launch without the experimental runtime, disable or clear the Prism wrapper for that instance. A Mac-enabled Roxy build disables Voxy rendering on stock Apple OpenGL while allowing Minecraft and Sodium to continue.
 
+On Apple Silicon, Roxy shows a startup warning when the graphics context cannot support Voxy or Voxy fails its startup checks. The message displays the detected renderer and OpenGL version, with a **Setup Guide** button. Configure the wrapper with the complete path to `bin/roxy-macos-launch.sh`, including the script filename, and restart Minecraft. If Zink is active but Voxy still cannot initialize, check `logs/latest.log` for the reason. A working graphics setup does not trigger this warning when you deliberately turn Voxy off in its settings.
+
 ### Modrinth setup
 
 The same runtime wrapper can be used with Modrinth App. Create a separate Minecraft **1.21.1** instance with NeoForge **21.1.241**, then add the same three mod jars listed above. In that instance's settings, select native ARM64 Java 21 in **Java and memory**. Open **Hooks** and set **Wrapper** to the same `/bin/bash "/.../path/.../bin/roxy-macos-launch.sh"` command used for Prism.

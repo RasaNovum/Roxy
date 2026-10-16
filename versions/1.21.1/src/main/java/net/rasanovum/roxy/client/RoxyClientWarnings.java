@@ -2,10 +2,12 @@ package net.rasanovum.roxy.client;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonArray;
 import net.minecraft.client.gui.screens.TitleScreen;
 import net.minecraft.ChatFormatting;
 import net.minecraft.network.chat.Component;
 import net.rasanovum.roxy.compat.RoxyBetterFogCompat;
+import net.rasanovum.roxy.loader.RoxyMacOSGraphics;
 import net.neoforged.fml.ModList;
 import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforge.client.event.ScreenEvent;
@@ -20,9 +22,13 @@ import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.HashSet;
+import java.util.Set;
 
 public final class RoxyClientWarnings {
-    private static final Path STATE_FILE = FMLPaths.CONFIGDIR.get().resolve("roxy-warning-screen.json");
+    static final String MACOS_GUIDE_URL =
+            "https://github.com/RasaNovum/Roxy/blob/macOS/Roxy-macOS-compat/setup-guide.md";
+    private static final Set<String> LEGACY_WARNING_IDS = Set.of("environmental-fog", "amd-hyperz", "amd-flywheel");
     private static boolean shownThisSession;
 
     private RoxyClientWarnings() {
@@ -34,25 +40,36 @@ public final class RoxyClientWarnings {
         if (warnings.isEmpty()) return;
 
         String version = currentVersion();
-        if (isDismissed(version)) return;
+        Set<String> dismissed = dismissedWarningIds(version);
+        warnings.removeIf(warning -> dismissed.contains(warning.id()));
+        if (warnings.isEmpty()) return;
         shownThisSession = true;
         event.setNewScreen(new RoxyWarningScreen(titleScreen, warnings, version));
     }
 
-    static void dismiss(String version) {
+    static void dismiss(String version, List<Warning> warnings) {
         try {
-            Files.createDirectories(STATE_FILE.getParent());
+            Path stateFile = stateFile();
+            Files.createDirectories(stateFile.getParent());
             JsonObject json = new JsonObject();
             json.addProperty("dismissed_version", version);
-            Files.writeString(STATE_FILE, json.toString(), StandardCharsets.UTF_8);
+            Set<String> ids = new HashSet<>(dismissedWarningIds(version));
+            warnings.forEach(warning -> ids.add(warning.id()));
+            JsonArray dismissed = new JsonArray();
+            ids.stream().sorted().forEach(dismissed::add);
+            json.add("dismissed_warning_ids", dismissed);
+            Files.writeString(stateFile, json.toString(), StandardCharsets.UTF_8);
         } catch (IOException ignored) {
         }
     }
 
     private static List<Warning> detectWarnings() {
         List<Warning> warnings = new ArrayList<>();
+        Warning macWarning = macOSWarning(RoxyMacOSGraphics.startupStatus());
+        if (macWarning != null) warnings.add(macWarning);
         if (environmentalFogEnabled() && !RoxyBetterFogCompat.available()) {
             warnings.add(new Warning(
+                    "environmental-fog",
                     Component.literal("use_environmental_fog").withStyle(ChatFormatting.YELLOW)
                             .append(Component.literal(" set to ").withStyle(ChatFormatting.WHITE))
                             .append(Component.literal("true").withStyle(ChatFormatting.GOLD))
@@ -65,6 +82,7 @@ public final class RoxyClientWarnings {
         boolean amdGpu = amdGpuDetected();
         if (amdGpu && !amdNoHyperZEnabled()) {
             warnings.add(new Warning(
+                    "amd-hyperz",
                     Component.literal("AMD GPU detected but no ").withStyle(ChatFormatting.WHITE)
                             .append(Component.literal("AMD_DEBUG=nohyperz").withStyle(ChatFormatting.GOLD))
                             .append(Component.literal(" environment variable found!").withStyle(ChatFormatting.WHITE)),
@@ -78,6 +96,7 @@ public final class RoxyClientWarnings {
         if (shouldWarnAboutFlywheel(amdGpu, createOrFlywheelPresent, backendId)) {
             boolean indirectBackend = isIndirectBackend(backendId);
             warnings.add(new Warning(
+                    "amd-flywheel",
                     indirectBackend
                             ? Component.literal("AMD GPU").withStyle(ChatFormatting.GOLD)
                                     .append(Component.literal(" detected with Flywheel's ").withStyle(ChatFormatting.WHITE))
@@ -92,6 +111,31 @@ public final class RoxyClientWarnings {
             ));
         }
         return warnings;
+    }
+
+    private static Warning macOSWarning(RoxyMacOSGraphics.StartupStatus status) {
+        String id = status.warningId();
+        if (id == null) return null;
+        String reason = switch (id) {
+            case "macos-java-architecture" -> "This launch uses " + status.architecture()
+                    + " Java. The macOS compatibility bundle requires native ARM64 Java 21.";
+            case "macos-unsupported-graphics" -> "The active graphics context does not support Voxy LODs. "
+                    + "Apple's built-in OpenGL 4.1 needs the macOS compatibility patch.";
+            case "macos-voxy-unavailable" -> "Voxy did not enable LOD rendering after its startup checks. "
+                    + "Check logs/latest.log for the reason.";
+            default -> "Roxy could not verify Voxy's completed startup checks. "
+                    + "Check logs/latest.log for the startup failure.";
+        };
+        return new Warning(id,
+                Component.literal(id.equals("macos-startup-unverified")
+                        ? "macOS LOD startup could not be verified" : "macOS LOD rendering is unavailable")
+                        .withStyle(ChatFormatting.YELLOW),
+                Component.literal(reason + "\nDetected: " + status.renderer()
+                        + " / OpenGL " + status.openGlVersion() + ". ")
+                        .append("\n\nUse ")
+                        .append(Component.literal("Setup Guide ").withStyle(ChatFormatting.GOLD))
+                        .append("to install the bundle and configure this instance's Wrapper command. Select ARM64 Java 21 and include the full script path ending in bin/roxy-macos-launch.sh.")
+        );
     }
 
     static boolean shouldWarnAboutFlywheel(boolean amdGpu, boolean createOrFlywheelPresent, String backendId) {
@@ -176,16 +220,35 @@ public final class RoxyClientWarnings {
                 .orElse("development");
     }
 
-    private static boolean isDismissed(String version) {
-        if (!Files.isRegularFile(STATE_FILE)) return false;
-        try (Reader reader = Files.newBufferedReader(STATE_FILE, StandardCharsets.UTF_8)) {
+    private static Path stateFile() {
+        return FMLPaths.CONFIGDIR.get().resolve("roxy-warning-screen.json");
+    }
+
+    private static Set<String> dismissedWarningIds(String version) {
+        Path stateFile = stateFile();
+        if (!Files.isRegularFile(stateFile)) return Set.of();
+        try (Reader reader = Files.newBufferedReader(stateFile, StandardCharsets.UTF_8)) {
             JsonObject json = JsonParser.parseReader(reader).getAsJsonObject();
-            return json.has("dismissed_version") && version.equals(json.get("dismissed_version").getAsString());
+            return dismissedWarningIds(json, version);
         } catch (Exception ignored) {
-            return false;
+            return Set.of();
         }
     }
 
-    public record Warning(Component title, Component tooltip) {
+    private static Set<String> dismissedWarningIds(JsonObject json, String version) {
+        if (!json.has("dismissed_version") || !version.equals(json.get("dismissed_version").getAsString())) {
+            return Set.of();
+        }
+        // An old version-wide dismissal must not hide the new macOS setup warning.
+        if (!json.has("dismissed_warning_ids")) return LEGACY_WARNING_IDS;
+        Set<String> ids = new HashSet<>();
+        json.getAsJsonArray("dismissed_warning_ids").forEach(id -> ids.add(id.getAsString()));
+        return Set.copyOf(ids);
+    }
+
+    public record Warning(String id, Component title, Component tooltip) {
+        public boolean macOSSetup() {
+            return id.startsWith("macos-");
+        }
     }
 }

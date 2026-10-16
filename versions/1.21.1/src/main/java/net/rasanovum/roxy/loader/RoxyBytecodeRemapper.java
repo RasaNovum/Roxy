@@ -377,6 +377,13 @@ public final class RoxyBytecodeRemapper {
         var method = node.methods.stream()
                 .filter(m -> m.name.equals("initVoxyClient") && m.desc.equals("()V"))
                 .findFirst().orElseThrow(() -> new IllegalStateException("Unsupported Voxy client initialization"));
+        for (var instruction : method.instructions.toArray()) {
+            if (instruction.getOpcode() == Opcodes.RETURN) {
+                method.instructions.insertBefore(instruction, new org.objectweb.asm.tree.MethodInsnNode(
+                        Opcodes.INVOKESTATIC, "net/rasanovum/roxy/loader/RoxyMacOSGraphics",
+                        "onVoxyInitialized", "()V", false));
+            }
+        }
         var continuation = new org.objectweb.asm.tree.LabelNode();
         var guard = new org.objectweb.asm.tree.InsnList();
         guard.add(new org.objectweb.asm.tree.MethodInsnNode(Opcodes.INVOKESTATIC,
