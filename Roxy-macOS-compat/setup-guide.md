@@ -8,7 +8,7 @@ The tested machine was an M1 Pro MacBook Pro. Other Apple Silicon Macs and later
 
 Install Prism Launcher using its [official macOS download](https://prismlauncher.org/download/macos/), or Modrinth from the [official website](https://modrinth.com/app).
 
-Download and extract `Roxy-macOS-compat.zip` to a location that will stay in place, such as `~/Applications/Roxy-macOS-compat`. Keep the extracted folder together. It should contain `bin/roxy-macos-launch.sh`, `runtime/`, `natives/`, and `probe/`.
+Download and extract `Roxy-macOS-compat.zip` to a location that will stay in place, such as `~/Applications/Roxy-macOS-compat`.
 
 The package includes the prepared Apple Silicon graphics runtime, native libraries, and a graphics probe. Players do not need to build Mesa or GLFW, install the Vulkan SDK, or install Xcode command line tools. The package is ad-hoc signed and is not notarized.
 
