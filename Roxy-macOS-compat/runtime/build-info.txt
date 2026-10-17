@@ -1,0 +1,10 @@
+Architecture: arm64
+Mesa repository: https://github.com/lucamignatti/mesa
+Mesa revision: 919e1d923bd967154b87ebe01ba5ba88cc693c3d
+GLFW repository: https://github.com/lucamignatti/glfw
+GLFW revision: 36a5994bc5f5a575fd0248aaf7f99a79671c202b
+Vulkan SDK: 1.4.363.0
+Vulkan SDK archive SHA-256: 163431e0203c8215286a17cf393643ce6b951f77d1b4f74ab30821a1f0beb09b
+Mesa configuration: macOS, Zink, EGL, native arm64, LLVM disabled
+Local Mesa patches: mesa-macos-zink.patch
+Local GLFW patches: glfw-cocoa-stable-metal-layer.patch

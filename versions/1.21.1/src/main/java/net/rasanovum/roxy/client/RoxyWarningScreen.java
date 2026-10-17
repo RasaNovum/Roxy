@@ -5,6 +5,7 @@ import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.components.Checkbox;
 import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.gui.screens.ConfirmLinkScreen;
 import net.minecraft.network.chat.FormattedText;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
@@ -20,6 +21,7 @@ public final class RoxyWarningScreen extends Screen {
     private Checkbox dismiss;
     private Button quit;
     private Button proceed;
+    private Button setupGuide;
     private double scrollOffset;
     private int contentX;
     private int contentWidth;
@@ -42,14 +44,25 @@ public final class RoxyWarningScreen extends Screen {
                 .selected(false)
                 .build();
         addRenderableWidget(dismiss);
+        boolean showSetupGuide = warnings.stream().anyMatch(RoxyClientWarnings.Warning::macOSSetup);
+        int buttonWidth = showSetupGuide ? 98 : 150;
         quit = Button.builder(Component.literal("Quit Game"), ignored -> quitGame())
-                .bounds(this.width / 2 - 154, buttonsY, 150, 20)
+                .bounds(this.width / 2 - 154, buttonsY, buttonWidth, 20)
                 .build();
         proceed = Button.builder(Component.literal("Continue"), ignored -> continueToMenu())
-                .bounds(this.width / 2 + 4, buttonsY, 150, 20)
+                .bounds(this.width / 2 + (showSetupGuide ? 56 : 4), buttonsY, buttonWidth, 20)
                 .build();
         addRenderableWidget(quit);
         addRenderableWidget(proceed);
+        if (showSetupGuide) {
+            setupGuide = Button.builder(Component.literal("Setup Guide"),
+                            ConfirmLinkScreen.confirmLink(this, RoxyClientWarnings.MACOS_GUIDE_URL))
+                    .bounds(this.width / 2 - 52, buttonsY, 104, 20)
+                    .build();
+            addRenderableWidget(setupGuide);
+        } else {
+            setupGuide = null;
+        }
         updateContentLayout();
     }
 
@@ -70,6 +83,7 @@ public final class RoxyWarningScreen extends Screen {
         dismiss.render(graphics, mouseX, mouseY, partialTick);
         quit.render(graphics, mouseX, mouseY, partialTick);
         proceed.render(graphics, mouseX, mouseY, partialTick);
+        if (setupGuide != null) setupGuide.render(graphics, mouseX, mouseY, partialTick);
 
         graphics.drawCenteredString(this.font, this.title, this.width / 2, 15, 0xFFFF5555);
         graphics.drawCenteredString(
@@ -198,6 +212,6 @@ public final class RoxyWarningScreen extends Screen {
     }
 
     private void saveDismissal() {
-        if (dismiss != null && dismiss.selected()) RoxyClientWarnings.dismiss(version);
+        if (dismiss != null && dismiss.selected()) RoxyClientWarnings.dismiss(version, warnings);
     }
 }
