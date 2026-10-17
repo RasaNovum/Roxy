@@ -8,18 +8,25 @@ import org.objectweb.asm.tree.*;
 
 final class RoxyTfcBytecodePatch implements Opcodes {
     private static final String BRIDGE = "net/rasanovum/roxy/tfc/TfcVoxyBridge";
+    private static final String LIGHTING = "net/rasanovum/roxy/tfc/TfcModelLighting";
     private static final String MODEL = "me/cortex/voxy/client/core/model/ModelFactory";
+    private static final String UPLOADER = MODEL + "$ModelBakeResultUpload";
+    private static final String RESULT_UPLOADER = MODEL + "$ResultUploader";
+    private static final String MODEL_STORE = "me/cortex/voxy/client/core/model/ModelStore";
+    private static final String GL_BUFFER = "me/cortex/voxy/client/core/gl/GlBuffer";
+    private static final String GL_TEXTURE = "me/cortex/voxy/client/core/gl/GlTexture";
     private static final String MESH = "me/cortex/voxy/client/core/rendering/building/RenderDataFactory";
     private static final String BAKERY = "me/cortex/voxy/client/core/model/ModelBakerySubsystem";
 
     static byte[] patch(byte[] bytes) {
         ClassReader reader = new ClassReader(bytes);
         if (!reader.getClassName().equals(MODEL) && !reader.getClassName().equals(MESH)
-                && !reader.getClassName().equals(BAKERY)) return bytes;
+                && !reader.getClassName().equals(BAKERY) && !reader.getClassName().equals(UPLOADER)) return bytes;
         ClassNode node = new ClassNode();
         reader.accept(node, ClassReader.EXPAND_FRAMES);
         if (node.name.equals(MODEL)) patchModel(node);
         else if (node.name.equals(MESH)) patchMesh(node);
+        else if (node.name.equals(UPLOADER)) patchUploader(node);
         else {
             for (MethodNode method : node.methods) {
                 if (!method.name.equals("<init>")) continue;
@@ -39,21 +46,48 @@ final class RoxyTfcBytecodePatch implements Opcodes {
 
     private static void patchModel(ClassNode node) {
         int initialized = 0, resolved = 0, scoped = 0, uploading = 0, committed = 0;
-        int lightingKeys = 0, lightingFlags = 0;
+        int lightingKeys = 0, lightingFlags = 0, tintValues = 0, variantUploads = 0;
         MethodNode bake = null;
         for (MethodNode method : node.methods) {
+            LabelNode pollAgain = null;
             if (method.name.equals("processUploads")) {
                 InsnList hook = new InsnList();
                 hook.add(new VarInsnNode(ALOAD, 0));
                 hook.add(call("uploadsStarted", "(Ljava/lang/Object;)V"));
                 method.instructions.insert(hook);
+                int polls = 0;
+                for (AbstractInsnNode instruction : method.instructions.toArray()) {
+                    if (!(instruction instanceof MethodInsnNode invocation)
+                            || !invocation.owner.equals("java/util/concurrent/ConcurrentLinkedDeque")
+                            || !invocation.name.equals("poll") || !invocation.desc.equals("()Ljava/lang/Object;")) continue;
+                    if (++polls != 2) continue;
+                    AbstractInsnNode queue = previousRealInstruction(instruction);
+                    AbstractInsnNode queueThis = previousRealInstruction(queue);
+                    if (!(queue instanceof FieldInsnNode field) || field.getOpcode() != GETFIELD
+                            || !field.owner.equals(MODEL) || !field.name.equals("uploadResults")
+                            || !field.desc.equals("Ljava/util/concurrent/ConcurrentLinkedDeque;")
+                            || !(queueThis instanceof VarInsnNode load) || load.getOpcode() != ALOAD || load.var != 0) {
+                        throw new IllegalStateException("Unsupported Voxy uploader poll loop");
+                    }
+                    pollAgain = new LabelNode();
+                    method.instructions.insertBefore(queueThis, pollAgain);
+                    method.instructions.insert(pollAgain,
+                            new FrameNode(F_NEW, 1, new Object[]{node.name}, 0, new Object[]{}));
+                }
+                if (polls != 2 || pollAgain == null) throw new IllegalStateException("Unsupported Voxy uploader poll count");
             }
             for (AbstractInsnNode insn : method.instructions.toArray()) {
                 if (method.name.equals("processTextureBakeResult") && insn instanceof MethodInsnNode invocation) {
                     if (invocation.owner.equals(MODEL + "$ModelEntry") && invocation.name.equals("<init>")) {
                         method.instructions.insertBefore(insn, new MethodInsnNode(INVOKESTATIC,
-                                "net/rasanovum/roxy/tfc/TfcModelLighting", "modelKey", "(I)I", false));
+                                LIGHTING, "modelKey", "(I)I", false));
                         lightingKeys++;
+                    }
+                    if (invocation.owner.equals("org/lwjgl/system/MemoryUtil") && invocation.name.equals("memPutInt")
+                            && invocation.desc.equals("(JI)V") && isModelTintWrite(insn)) {
+                        method.instructions.insertBefore(insn, new MethodInsnNode(INVOKESTATIC,
+                                LIGHTING, "modelTint", "(I)I", false));
+                        tintValues++;
                     }
                     if (invocation.owner.equals("org/lwjgl/system/MemoryUtil") && invocation.name.equals("memPutInt")
                             && invocation.desc.equals("(JI)V") && isModelFlagsWrite(insn)) {
@@ -64,11 +98,32 @@ final class RoxyTfcBytecodePatch implements Opcodes {
                 }
                 if (method.name.equals("processUploads") && insn instanceof MethodInsnNode invocation) {
                     if (invocation.owner.equals(MODEL + "$ResultUploader") && invocation.name.equals("upload")) {
+                        AbstractInsnNode storage = previousRealInstruction(insn);
+                        AbstractInsnNode thisLoad = previousRealInstruction(storage);
+                        AbstractInsnNode uploaderLoad = previousRealInstruction(thisLoad);
+                        if (!(uploaderLoad instanceof VarInsnNode loadUploader) || loadUploader.getOpcode() != ALOAD
+                                || loadUploader.var != 1 || !(thisLoad instanceof VarInsnNode loadThis)
+                                || loadThis.getOpcode() != ALOAD || loadThis.var != 0
+                                || !(storage instanceof FieldInsnNode field) || field.getOpcode() != GETFIELD
+                                || !field.owner.equals(MODEL) || !field.name.equals("storage")
+                                || !field.desc.equals("L" + MODEL_STORE + ";")) {
+                            throw new IllegalStateException("Unsupported Voxy uploader invocation layout");
+                        }
+                        LabelNode normalUpload = new LabelNode();
                         InsnList hook = new InsnList();
                         hook.add(new VarInsnNode(ALOAD, 0));
                         hook.add(new VarInsnNode(ALOAD, 1));
-                        hook.add(call("modelUploading", "(Ljava/lang/Object;Ljava/lang/Object;)V"));
-                        method.instructions.insertBefore(insn, hook);
+                        hook.add(call("modelUploading", "(Ljava/lang/Object;Ljava/lang/Object;)I"));
+                        hook.add(new InsnNode(ICONST_2));
+                        hook.add(new JumpInsnNode(IF_ICMPNE, normalUpload));
+                        hook.add(new VarInsnNode(ALOAD, 1));
+                        hook.add(new MethodInsnNode(INVOKEINTERFACE, RESULT_UPLOADER, "free", "()V", true));
+                        if (pollAgain == null) throw new IllegalStateException("Missing Voxy uploader poll target");
+                        hook.add(new JumpInsnNode(GOTO, pollAgain));
+                        hook.add(normalUpload);
+                        hook.add(new FrameNode(F_NEW, 2,
+                                new Object[]{node.name, RESULT_UPLOADER}, 0, new Object[]{}));
+                        method.instructions.insertBefore(uploaderLoad, hook);
                         uploading++;
                     }
                     if (invocation.owner.equals("me/cortex/voxy/client/core/rendering/util/UploadStream")
@@ -110,11 +165,53 @@ final class RoxyTfcBytecodePatch implements Opcodes {
                     scoped++;
                     bake = method;
                 }
+                if (method.name.equals("processModelResult") && insn instanceof MethodInsnNode invocation
+                        && invocation.owner.equals(MODEL) && invocation.name.equals("processTextureBakeResult")) {
+                    AbstractInsnNode store = nextRealInstruction(insn);
+                    AbstractInsnNode load = nextRealInstruction(store);
+                    AbstractInsnNode nullCheck = nextRealInstruction(load);
+                    if (!(store instanceof VarInsnNode uploaderStore) || uploaderStore.getOpcode() != ASTORE
+                            || uploaderStore.var != 7 || !(load instanceof VarInsnNode uploaderReload)
+                            || uploaderReload.getOpcode() != ALOAD || uploaderReload.var != 7
+                            || !(nullCheck instanceof JumpInsnNode nullJump) || nullCheck.getOpcode() != IFNULL) {
+                        throw new IllegalStateException("Unsupported Voxy model result enqueue layout");
+                    }
+                    LabelNode queued = nullJump.label;
+                    FrameNode queuedFrame = frameForLabel(method, queued);
+                    if (queuedFrame == null) throw new IllegalStateException("Missing Voxy model enqueue frame");
+                    LabelNode accepted = new LabelNode();
+                    InsnList hook = new InsnList();
+                    hook.add(new VarInsnNode(ALOAD, 0));
+                    hook.add(new VarInsnNode(ALOAD, 1));
+                    hook.add(new FieldInsnNode(GETFIELD, MODEL + "$BlockBake", "blockId", "I"));
+                    hook.add(new VarInsnNode(ALOAD, 7));
+                    hook.add(call("variantBakeReady", "(Ljava/lang/Object;ILjava/lang/Object;)I"));
+                    hook.add(new JumpInsnNode(IFEQ, accepted));
+                    hook.add(new VarInsnNode(ALOAD, 7));
+                    hook.add(new JumpInsnNode(IFNULL, queued));
+                    hook.add(new VarInsnNode(ALOAD, 7));
+                    hook.add(new MethodInsnNode(INVOKEINTERFACE, RESULT_UPLOADER, "free", "()V", true));
+                    hook.add(new JumpInsnNode(GOTO, queued));
+                    method.instructions.insert(store, hook);
+                    method.instructions.insertBefore(load, accepted);
+                    method.instructions.insert(accepted, cloneFrame(queuedFrame));
+                    variantUploads++;
+                }
             }
         }
         require(initialized == 1 && resolved == 1 && scoped == 1 && uploading == 1 && committed == 1, "model factory");
-        require(lightingKeys == 1 && lightingFlags == 1, "TFC ambient occlusion metadata");
+        require(lightingKeys == 1 && lightingFlags == 1 && tintValues == 1, "TFC model metadata");
+        require(variantUploads == 1, "TFC variant uploader registration");
         wrapScope(node, bake, "endBake", false);
+    }
+
+    private static boolean isModelTintWrite(AbstractInsnNode write) {
+        AbstractInsnNode value = previousRealInstruction(write);
+        AbstractInsnNode modelEntry = previousRealInstruction(value);
+        return value instanceof FieldInsnNode field && field.getOpcode() == GETFIELD
+                && field.owner.equals(MODEL + "$ModelEntry") && field.name.equals("tintingColour")
+                && field.desc.equals("I") && modelEntry instanceof VarInsnNode load
+                && load.getOpcode() == ALOAD && load.var == 12;
     }
 
     private static boolean isModelFlagsWrite(AbstractInsnNode write) {
@@ -138,6 +235,68 @@ final class RoxyTfcBytecodePatch implements Opcodes {
         AbstractInsnNode previous = instruction.getPrevious();
         while (previous != null && previous.getOpcode() < 0) previous = previous.getPrevious();
         return previous;
+    }
+
+    private static AbstractInsnNode previousRealInstruction(AbstractInsnNode instruction) {
+        if (instruction == null) return null;
+        AbstractInsnNode previous = instruction.getPrevious();
+        while (previous != null && previous.getOpcode() < 0) previous = previous.getPrevious();
+        return previous;
+    }
+
+    private static AbstractInsnNode nextRealInstruction(AbstractInsnNode instruction) {
+        if (instruction == null) return null;
+        AbstractInsnNode next = instruction.getNext();
+        while (next != null && next.getOpcode() < 0) next = next.getNext();
+        return next;
+    }
+
+    private static FrameNode frameForLabel(MethodNode method, LabelNode label) {
+        boolean found = false;
+        for (AbstractInsnNode instruction : method.instructions) {
+            if (instruction == label) found = true;
+            else if (found && instruction instanceof FrameNode frame) return frame;
+            else if (found && instruction.getOpcode() >= 0) return null;
+        }
+        return null;
+    }
+
+    private static FrameNode cloneFrame(FrameNode frame) {
+        Object[] locals = frame.local == null ? new Object[0] : frame.local.toArray();
+        Object[] stack = frame.stack == null ? new Object[0] : frame.stack.toArray();
+        return new FrameNode(F_NEW, locals.length, locals, stack.length, stack);
+    }
+
+    private static void patchUploader(ClassNode node) {
+        int patched = 0;
+        String uploadDescriptor = "(L" + GL_BUFFER + ";L" + GL_BUFFER + ";L" + GL_TEXTURE + ";)V";
+        for (MethodNode method : node.methods) {
+            if (!method.name.equals("upload") || !method.desc.equals(uploadDescriptor)) continue;
+            LabelNode atlasStart = null;
+            int checks = 0;
+            for (AbstractInsnNode instruction : method.instructions.toArray()) {
+                if (!(instruction instanceof FieldInsnNode field) || field.getOpcode() != GETFIELD
+                        || !field.owner.equals(UPLOADER) || !field.name.equals("biomeUploadIndex")
+                        || !field.desc.equals("I")) continue;
+                AbstractInsnNode minusOne = nextRealInstruction(field);
+                AbstractInsnNode branch = nextRealInstruction(minusOne);
+                if (minusOne == null || minusOne.getOpcode() != ICONST_M1
+                        || !(branch instanceof JumpInsnNode jump) || branch.getOpcode() != IF_ICMPEQ) continue;
+                atlasStart = jump.label;
+                checks++;
+            }
+            if (checks != 1 || atlasStart == null) {
+                throw new IllegalStateException("Unsupported Voxy model uploader layout");
+            }
+            InsnList hook = new InsnList();
+            hook.add(new VarInsnNode(ALOAD, 0));
+            hook.add(new MethodInsnNode(INVOKESTATIC, "net/rasanovum/roxy/tfc/TfcVoxyUploadPatch",
+                    "atlasOnly", "(Ljava/lang/Object;)Z", false));
+            hook.add(new JumpInsnNode(IFNE, atlasStart));
+            method.instructions.insert(hook);
+            patched++;
+        }
+        require(patched == 1, "TFC texture-only upload");
     }
 
     private static void patchMesh(ClassNode node) {

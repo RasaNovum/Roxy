@@ -11,16 +11,55 @@ public final class RoxyIrisFullDepth {
     private final boolean[] ready = new boolean[2];
     private int width, height, format;
     private int swappedFramebuffer, selectedDepth, activePass = -1;
+    private long frameGeneration = Long.MIN_VALUE;
+    private int frameWidth, frameHeight;
+    private boolean translucentAttempted;
+
+    public void beginFrame(long generation, int outputWidth, int outputHeight) {
+        end(false);
+        ready[0] = ready[1] = false;
+        frameGeneration = generation;
+        frameWidth = outputWidth;
+        frameHeight = outputHeight;
+        translucentAttempted = false;
+    }
+
+    public void invalidate() {
+        end(false);
+        ready[0] = ready[1] = false;
+        frameGeneration = Long.MIN_VALUE;
+        frameWidth = frameHeight = 0;
+        translucentAttempted = false;
+    }
+
+    public boolean readyForFrame(long generation, int outputWidth, int outputHeight) {
+        return generation != Long.MIN_VALUE && frameGeneration == generation
+                && frameWidth == outputWidth && frameHeight == outputHeight
+                && ready[0] && (!translucentAttempted || ready[1]);
+    }
+
+    public int effectsTranslucent(long generation, int outputWidth, int outputHeight) {
+        if (!readyForFrame(generation, outputWidth, outputHeight)) return 0;
+        return translucentAttempted ? textures[1] : textures[0];
+    }
 
     public void begin(int framebuffer, int selectedTexture, boolean translucent, int outputWidth, int outputHeight) {
         if (activePass != -1) throw new IllegalStateException("Nested Iris effect depth pass");
+        if (frameGeneration == Long.MIN_VALUE || frameWidth != outputWidth || frameHeight != outputHeight) {
+            throw new IllegalStateException("Iris effect depth pass does not match the current frame");
+        }
         int sourceFormat = glGetTextureLevelParameteri(selectedTexture, 0, GL_TEXTURE_INTERNAL_FORMAT);
         if (sourceFormat != GL_DEPTH24_STENCIL8 && sourceFormat != GL_DEPTH32F_STENCIL8) {
             throw new IllegalStateException("Unsupported Iris effect depth format " + sourceFormat);
         }
         ensure(outputWidth, outputHeight, sourceFormat);
         int pass = translucent ? 1 : 0;
-        if (!translucent) ready[0] = ready[1] = false;
+        if (!translucent) {
+            ready[0] = ready[1] = false;
+            translucentAttempted = false;
+        } else {
+            translucentAttempted = true;
+        }
         if (translucent && !ready[0]) throw new IllegalStateException("Missing opaque effect depth");
         boolean scissor = glIsEnabled(GL_SCISSOR_TEST);
         boolean depthWrite = glGetBoolean(GL_DEPTH_WRITEMASK);
@@ -60,7 +99,12 @@ public final class RoxyIrisFullDepth {
 
     private void ensure(int newWidth, int newHeight, int newFormat) {
         if (width == newWidth && height == newHeight && format == newFormat && textures[0] != 0) return;
+        long currentGeneration = frameGeneration;
+        int currentFrameWidth = frameWidth, currentFrameHeight = frameHeight;
         free();
+        frameGeneration = currentGeneration;
+        frameWidth = currentFrameWidth;
+        frameHeight = currentFrameHeight;
         if (newWidth < 1 || newHeight < 1) throw new IllegalArgumentException("Invalid effect depth dimensions");
         width = newWidth;
         height = newHeight;
@@ -92,5 +136,8 @@ public final class RoxyIrisFullDepth {
             ready[pass] = false;
         }
         width = height = format = 0;
+        frameGeneration = Long.MIN_VALUE;
+        frameWidth = frameHeight = 0;
+        translucentAttempted = false;
     }
 }

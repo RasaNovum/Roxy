@@ -12,7 +12,7 @@ plugins {
 }
 
 group = "net.rasanovum"
-version = "0.4.1-d-6"
+version = "0.4.1-d-8"
 
 prism {
     metadata {
@@ -148,6 +148,10 @@ project(":1.21.1") {
             from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/tfc/RoxyTfcBackfill.class")) {
                 into("roxy/embedded")
                 rename { "RoxyTfcBackfill.bin" }
+            }
+            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/tfc/RoxyTfcTerrainRefresh.class")) {
+                into("roxy/embedded")
+                rename { "RoxyTfcTerrainRefresh.bin" }
             }
             from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/tfc/RoxyTfcImport\$ChunkCapture.class")) {
                 into("roxy/embedded")

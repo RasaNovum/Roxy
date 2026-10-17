@@ -4,8 +4,10 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import net.minecraft.client.Minecraft;
+import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.ChunkPos;
+import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.block.state.properties.BooleanProperty;
 import net.minecraft.world.level.block.state.properties.IntegerProperty;
@@ -13,13 +15,13 @@ import net.rasanovum.roxy.tfc.TfcCompatConfig;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** The optional TFC API boundary. Evaluations run on the client/render thread. */
 public final class RoxyTfcAdapter {
     private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
     private static final ThreadLocal<Object> CLIMATE = new ThreadLocal<>();
     private static final ThreadLocal<long[]> CALENDAR = new ThreadLocal<>();
     private static boolean attempted;
     private static boolean available;
+    private static boolean colourProviderAttempted;
     private static boolean warned;
     private static Class<?> leafClass;
     private static IntegerProperty leafDistance;
@@ -29,6 +31,7 @@ public final class RoxyTfcAdapter {
     private static Constructor<?> layerConstructor;
     private static Method updatePacket;
     private static Method selectModel;
+    private static Method colourProvider;
     private static Field denseModel;
     private static Method day;
     private static Method calendarTicks;
@@ -47,51 +50,65 @@ public final class RoxyTfcAdapter {
     private RoxyTfcAdapter() {}
 
     public static synchronized boolean available() {
+        return available(null);
+    }
+
+    public static synchronized boolean available(ClassLoader voxyLoader) {
         if (!TfcCompatConfig.enabled()) return false;
-        if (attempted) return available;
-        attempted = true;
-        try {
-            ClassLoader loader = RoxyTfcAdapter.class.getClassLoader();
-            leafClass = Class.forName("net.dries007.tfc.common.blocks.wood.TFCLeavesBlock", false, loader);
-            leafDistance = (IntegerProperty) leafClass.getField("DISTANCE").get(null);
-            leafPersistent = (BooleanProperty) leafClass.getField("PERSISTENT").get(null);
-            climateModel = Class.forName("net.dries007.tfc.util.climate.Climate", false, loader)
-                    .getMethod("get", net.minecraft.world.level.Level.class);
-            overworldClimate = Class.forName("net.dries007.tfc.util.climate.OverworldClimateModel", false, loader);
-            modelClass = Class.forName("net.dries007.tfc.client.model.LeavesBlockModel", false, loader);
-            Class<?> chunk = Class.forName("net.dries007.tfc.world.chunkdata.ChunkData", true, loader);
-            Class<?> layer = Class.forName("net.dries007.tfc.world.chunkdata.LerpFloatLayer", false, loader);
-            Class<?> forestClass = Class.forName("net.dries007.tfc.world.chunkdata.ForestType", false, loader);
-            chunkConstructor = chunk.getConstructor(ChunkPos.class);
-            layerConstructor = layer.getConstructor(float.class, float.class, float.class, float.class);
-            updatePacket = chunk.getMethod("onUpdatePacket", layer, layer, layer, layer, forestClass);
-            forest = forestClass.getEnumConstants()[0];
-            selectModel = modelClass.getDeclaredMethod("getModelFromBlockState", BlockState.class, BlockPos.class);
-            selectModel.setAccessible(true);
-            denseModel = modelClass.getDeclaredField("denseLeavesBakedModel");
-            denseModel.setAccessible(true);
-            Class<?> calendars = Class.forName("net.dries007.tfc.util.calendar.Calendars", true, loader);
-            calendar = calendars.getField("CLIENT").get(null);
-            Class<?> calendarApi = Class.forName("net.dries007.tfc.util.calendar.ICalendar", false, loader);
-            day = calendarApi.getMethod("getTotalCalendarDays");
-            calendarTicks = calendarApi.getMethod("getCalendarTicks");
-            monthDays = calendarApi.getMethod("getCalendarDaysInMonth");
-            layers = new Field[4];
-            String[] names = {"rainfallLayer", "rainVarianceLayer", "baseGroundwaterLayer", "temperatureLayer"};
-            for (int i = 0; i < 4; i++) {
-                layers[i] = chunk.getDeclaredField(names[i]);
-                layers[i].setAccessible(true);
+        if (!attempted) {
+            attempted = true;
+            try {
+                ClassLoader loader = RoxyTfcAdapter.class.getClassLoader();
+                leafClass = Class.forName("net.dries007.tfc.common.blocks.wood.TFCLeavesBlock", false, loader);
+                leafDistance = (IntegerProperty) leafClass.getField("DISTANCE").get(null);
+                leafPersistent = (BooleanProperty) leafClass.getField("PERSISTENT").get(null);
+                climateModel = Class.forName("net.dries007.tfc.util.climate.Climate", false, loader)
+                        .getMethod("get", net.minecraft.world.level.Level.class);
+                overworldClimate = Class.forName("net.dries007.tfc.util.climate.OverworldClimateModel", false, loader);
+                modelClass = Class.forName("net.dries007.tfc.client.model.LeavesBlockModel", false, loader);
+                Class<?> chunk = Class.forName("net.dries007.tfc.world.chunkdata.ChunkData", true, loader);
+                Class<?> layer = Class.forName("net.dries007.tfc.world.chunkdata.LerpFloatLayer", false, loader);
+                Class<?> forestClass = Class.forName("net.dries007.tfc.world.chunkdata.ForestType", false, loader);
+                chunkConstructor = chunk.getConstructor(ChunkPos.class);
+                layerConstructor = layer.getConstructor(float.class, float.class, float.class, float.class);
+                updatePacket = chunk.getMethod("onUpdatePacket", layer, layer, layer, layer, forestClass);
+                forest = forestClass.getEnumConstants()[0];
+                selectModel = modelClass.getDeclaredMethod("getModelFromBlockState", BlockState.class, BlockPos.class);
+                selectModel.setAccessible(true);
+                denseModel = modelClass.getDeclaredField("denseLeavesBakedModel");
+                denseModel.setAccessible(true);
+                Class<?> calendars = Class.forName("net.dries007.tfc.util.calendar.Calendars", true, loader);
+                calendar = calendars.getField("CLIENT").get(null);
+                Class<?> calendarApi = Class.forName("net.dries007.tfc.util.calendar.ICalendar", false, loader);
+                day = calendarApi.getMethod("getTotalCalendarDays");
+                calendarTicks = calendarApi.getMethod("getCalendarTicks");
+                monthDays = calendarApi.getMethod("getCalendarDaysInMonth");
+                layers = new Field[4];
+                String[] names = {"rainfallLayer", "rainVarianceLayer", "baseGroundwaterLayer", "temperatureLayer"};
+                for (int i = 0; i < 4; i++) {
+                    layers[i] = chunk.getDeclaredField(names[i]);
+                    layers[i].setAccessible(true);
+                }
+                corners = new Method[]{layer.getMethod("value00"), layer.getMethod("value01"),
+                        layer.getMethod("value10"), layer.getMethod("value11")};
+                chunkPosition = chunk.getMethod("getPos");
+                capture = Class.forName("net.rasanovum.roxy.tfc.TfcVoxyBridge", true, loader)
+                        .getMethod("capture", Object.class, int.class, int.class, float[].class);
+                available = true;
+            } catch (ClassNotFoundException absent) {
+            } catch (ReflectiveOperationException | LinkageError failure) {
+                warn(failure);
             }
-            corners = new Method[]{layer.getMethod("value00"), layer.getMethod("value01"),
-                    layer.getMethod("value10"), layer.getMethod("value11")};
-            chunkPosition = chunk.getMethod("getPos");
-            capture = Class.forName("net.rasanovum.roxy.tfc.TfcVoxyBridge", true, loader)
-                    .getMethod("capture", Object.class, int.class, int.class, float[].class);
-            available = true;
-        } catch (ClassNotFoundException absent) {
-            // TFC is optional.
-        } catch (ReflectiveOperationException | LinkageError failure) {
-            warn(failure);
+        }
+        if (available && voxyLoader != null && !colourProviderAttempted) {
+            colourProviderAttempted = true;
+            try {
+                Class<?> modelFactory = Class.forName("me.cortex.voxy.client.core.model.ModelFactory", false, voxyLoader);
+                colourProvider = modelFactory.getDeclaredMethod("getColourProvider", Block.class);
+                colourProvider.setAccessible(true);
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
+                colourProvider = null;
+            }
         }
         return available;
     }
@@ -99,6 +116,20 @@ public final class RoxyTfcAdapter {
     public static boolean isLeaf(Object state) {
         return TfcCompatConfig.enabled() && available()
                 && state instanceof BlockState blockState && leafClass.isInstance(blockState.getBlock());
+    }
+
+    public static boolean supports(Object state) {
+        if (!TfcCompatConfig.enabled() || !available() || !(state instanceof BlockState blockState)
+                || !blockState.getFluidState().isEmpty()) return false;
+        Block block = blockState.getBlock();
+        if (leafClass.isInstance(block)) return true;
+        if (colourProvider == null || !"tfc".equals(BuiltInRegistries.BLOCK.getKey(block).getNamespace())) return false;
+        try {
+            return colourProvider.invoke(null, block) != null;
+        } catch (ReflectiveOperationException | RuntimeException failure) {
+            warn(failure);
+            return false;
+        }
     }
 
     public static Object normalize(Object state) {
@@ -128,8 +159,14 @@ public final class RoxyTfcAdapter {
         if (TfcCompatConfig.enabled()) RoxyTfcBackfill.request(level, x, z);
     }
     public static void tickClimate() {
-        if (TfcCompatConfig.enabled()) RoxyTfcBackfill.tick();
-        else RoxyTfcBackfill.disable();
+        if (TfcCompatConfig.enabled()) {
+            RoxyTfcBackfill.tick();
+            long[] time = calendarSnapshot();
+            if (time != null) RoxyTfcTerrainRefresh.tick(clientLevel(), time[0], time[1]);
+        } else {
+            RoxyTfcBackfill.disable();
+            RoxyTfcTerrainRefresh.disable();
+        }
     }
     public static int pendingClimate() {
         return TfcCompatConfig.enabled() ? RoxyTfcBackfill.pendingCount() : 0;
@@ -141,7 +178,8 @@ public final class RoxyTfcAdapter {
     }
 
     public static Object[] evaluate(Object state, int x, int y, int z, Object climateSnapshot, Object calendarSnapshot) {
-        if (!TfcCompatConfig.enabled() || !isLeaf(state)) return null;
+        if (!supports(state)) return null;
+        boolean leaf = isLeaf(state);
         long[] time = calendarSnapshot instanceof long[] values && values.length == 2
                 && values[1] > 0 && values[1] <= Integer.MAX_VALUE ? values : null;
         float[] snapshot = snapshotHookInstalled && calendarHookInstalled && time != null
@@ -150,15 +188,17 @@ public final class RoxyTfcAdapter {
         if (minecraft.level == null || !minecraft.isSameThread()) return null;
         BlockState blockState = (BlockState) state;
         Object sourceModel = minecraft.getBlockRenderer().getBlockModel(blockState);
-        if (!modelClass.isInstance(sourceModel)) return null;
+        if (leaf && !modelClass.isInstance(sourceModel)) return null;
+        if (sourceModel == null) return null;
         Object previous = CLIMATE.get();
         long[] previousCalendar = CALENDAR.get();
         try {
             if (snapshot != null && climateModel.invoke(null, minecraft.level).getClass() != overworldClimate) snapshot = null;
             if (snapshot == null) {
-                Object selected = denseModel.get(sourceModel);
-                int tint = minecraft.getBlockColors().getColor(blockState, null, null, 0);
-                return selected == null ? null : new Object[]{selected, tint};
+                Object selected = leaf ? denseModel.get(sourceModel) : sourceModel;
+                int tint0 = minecraft.getBlockColors().getColor(blockState, null, null, 0);
+                int tint1 = leaf ? -1 : minecraft.getBlockColors().getColor(blockState, null, null, 1);
+                return selected == null ? null : new Object[]{selected, tint0, tint1};
             }
             Object chunk = chunkConstructor.newInstance(new ChunkPos(x >> 4, z >> 4));
             CLIMATE.set(chunk);
@@ -172,9 +212,10 @@ public final class RoxyTfcAdapter {
             values[4] = forest;
             updatePacket.invoke(chunk, values);
             BlockPos position = new BlockPos(x, y, z);
-            Object selected = selectModel.invoke(sourceModel, blockState, position);
-            int tint = minecraft.getBlockColors().getColor(blockState, minecraft.level, position, 0);
-            return new Object[]{selected, tint};
+            Object selected = leaf ? selectModel.invoke(sourceModel, blockState, position) : sourceModel;
+            int tint0 = minecraft.getBlockColors().getColor(blockState, minecraft.level, position, 0);
+            int tint1 = leaf ? -1 : minecraft.getBlockColors().getColor(blockState, minecraft.level, position, 1);
+            return new Object[]{selected, tint0, tint1};
         } catch (ReflectiveOperationException | RuntimeException failure) {
             warn(failure);
             return null;

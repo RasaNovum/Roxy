@@ -35,6 +35,7 @@ public final class RoxyFabricModReader implements IModFileReader {
     private static final String SUPPLEMENTAL_WORLDGEN_MIXIN = "roxy-voxy-worldgen.json";
     private static final Map<String, String> EMBEDDED_HOST_CLASSES = Map.ofEntries(
             Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcBackfill.class", "roxy/embedded/RoxyTfcBackfill.bin"),
+            Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcTerrainRefresh.class", "roxy/embedded/RoxyTfcTerrainRefresh.bin"),
             Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcProgress.class", "roxy/embedded/RoxyTfcProgress.bin"),
             Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcProgress$Visibility.class", "roxy/embedded/RoxyTfcProgress$Visibility.bin"),
             Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcAdapter.class", "roxy/embedded/RoxyTfcAdapter.bin"),

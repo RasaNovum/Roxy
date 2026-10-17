@@ -37,6 +37,7 @@ public final class RoxyLodFade {
     private int opaqueLodDepth;
     private boolean translucentPass;
     private int fullDepthTextureUnit;
+    private long irisDepthGeneration = Long.MIN_VALUE;
     private int renderWidth, renderHeight;
     private int realDepth, depthFramebuffer, width, height, format;
 
@@ -172,10 +173,6 @@ public final class RoxyLodFade {
             int transDepth = depthIdField.getInt(framebufferDepth.invoke(translucentFramebufferField.get(pipeline)));
             RoxyIrisNativeTransFade.publish(true, start, end, inverse, inverseNativeProjection, inverseLodProjection,
                     opaqueLodDepth, transDepth, renderWidth, renderHeight);
-            if (!fullDepth.rendering() && fullDepth.opaque() != 0) {
-                int effectTrans = fullDepth.translucent() != 0 ? fullDepth.translucent() : fullDepth.opaque();
-                RoxyIrisEffectsDepth.publish(true, realDepth, fullDepth.opaque(), effectTrans, renderWidth, renderHeight);
-            }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
             disable(exception);
         }
@@ -257,13 +254,22 @@ public final class RoxyLodFade {
             int transDepth = depthIdField.getInt(framebufferDepth.invoke(translucentFramebufferField.get(pipeline)));
             RoxyIrisNativeTransFade.publish(true, start, end, inverse, inverseNativeProjection, inverseLodProjection,
                     lodDepth, transDepth, width, height);
-            RoxyIrisEffectsDepth.publish(true, realDepth, fullDepth.opaque(), fullDepth.translucent(), width, height);
+            if (width == renderWidth && height == renderHeight
+                    && fullDepth.readyForFrame(irisDepthGeneration, renderWidth, renderHeight)) {
+                RoxyIrisEffectsDepth.publish(irisDepthGeneration, true, realDepth, fullDepth.opaque(),
+                        fullDepth.effectsTranslucent(irisDepthGeneration, renderWidth, renderHeight),
+                        renderWidth, renderHeight);
+            }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
             disable(exception);
         }
     }
 
     public void captureDepth(int sourceFramebuffer, int sourceWidth, int sourceHeight) {
+        if (iris) {
+            fullDepth.invalidate();
+            irisDepthGeneration = RoxyIrisEffectsDepth.beginFrame();
+        }
         if (!enabled) return;
         try {
             int type = glGetNamedFramebufferAttachmentParameteri(sourceFramebuffer, GL_DEPTH_ATTACHMENT,
@@ -291,6 +297,7 @@ public final class RoxyLodFade {
                 enabled = false;
                 return;
             }
+            if (iris) fullDepth.beginFrame(irisDepthGeneration, renderWidth, renderHeight);
             if (realDepth == 0 || width != sourceWidth || height != sourceHeight || format != sourceFormat) {
                 releaseTexture();
                 realDepth = glCreateTextures(GL_TEXTURE_2D);

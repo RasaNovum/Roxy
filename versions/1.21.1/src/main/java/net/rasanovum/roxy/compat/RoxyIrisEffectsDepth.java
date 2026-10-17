@@ -30,6 +30,7 @@ public final class RoxyIrisEffectsDepth {
     private static final String NATIVE_SELECTED = "depthtex0";
     private static final String[] SELECTED_SAMPLERS = {OPAQUE_SELECTED, TRANSLUCENT_SELECTED, NATIVE_SELECTED};
     private static volatile Frame frame;
+    private static volatile long frameGeneration;
     private static volatile Object samplerPipeline;
     private static volatile ClassLoader irisManagerLoader;
     private static volatile Method irisGetPipelineManager;
@@ -40,9 +41,10 @@ public final class RoxyIrisEffectsDepth {
     private RoxyIrisEffectsDepth() {
     }
 
-    public static void beginFrame() {
+    public static long beginFrame() {
         frame = null;
         nativeDepthMerged = false;
+        return ++frameGeneration;
     }
 
     public static void reset() {
@@ -86,24 +88,29 @@ public final class RoxyIrisEffectsDepth {
         activatePipeline(voxyPipeline == null ? null : voxyPipeline.getClass().getClassLoader());
     }
 
-    public static void publish(boolean enabled, int realDepth, int fullOpaque, int fullTrans,
-                               int width, int height) {
+    public static boolean publish(long generation, boolean enabled, int realDepth, int fullOpaque, int fullTrans,
+                                  int width, int height) {
+        if (generation != frameGeneration) return false;
         if (!enabled || realDepth == 0 || fullOpaque == 0 || fullTrans == 0 || width < 1 || height < 1) {
             frame = null;
-            return;
+            return false;
         }
-        frame = new Frame(realDepth, fullOpaque, fullTrans, width, height);
+        frame = new Frame(generation, realDepth, fullOpaque, fullTrans, width, height);
+        return true;
     }
 
     public static String patchFragmentSource(String source) {
         if (source == null || source.contains(MARKER)) return source;
+        TaaPatch taaPatch = patchTaaDepth1(source);
+        ShadowPatch shadowPatch = patchLodShadowDepth(taaPatch.source);
+        source = shadowPatch.source;
 
         List<Replacement> replacements = new ArrayList<>();
         Set<Wrapper> wrappers = new HashSet<>();
         Map<String, Set<Integer>> samplerParameters = findSamplerParameters(source);
         List<Call> calls = findCalls(source);
-        boolean usesVoxySampler = false;
-        boolean usesNativeSampler = false;
+        boolean usesVoxySampler = taaPatch.enabled || shadowPatch.enabled;
+        boolean usesNativeSampler = shadowPatch.enabled;
 
         for (Call call : calls) {
             if (!call.declaration && samplerParameters.containsKey(call.name)) {
@@ -137,7 +144,7 @@ public final class RoxyIrisEffectsDepth {
                     source.substring(firstArgument.end + 1, call.end - 1)));
         }
 
-        if (replacements.isEmpty() || !usesVoxySampler) return source;
+        if (replacements.isEmpty() && !usesVoxySampler) return source;
         replacements.sort(Comparator.comparingInt(Replacement::start).reversed());
         StringBuilder patched = new StringBuilder(source);
         int previousStart = Integer.MAX_VALUE;
@@ -148,11 +155,129 @@ public final class RoxyIrisEffectsDepth {
         }
 
         String declarations = buildWrappers(wrappers, usesNativeSampler,
-                usesVoxySamplerDeclarationsAreGuarded(source));
+                usesVoxySamplerDeclarationsAreGuarded(source), taaPatch.enabled || shadowPatch.enabled);
         String result = patched.toString();
         int insertion = insertionAfterDepthDeclarations(result);
         if (insertion < 0) return source;
         return result.substring(0, insertion) + declarations + result.substring(insertion);
+    }
+
+    private static TaaPatch patchTaaDepth1(String source) {
+        Span neighborhood = functionSpan(source, "NeighbourhoodClamping");
+        Span main = functionSpan(source, "main");
+        if (neighborhood == null || main == null) return new TaaPatch(source, false);
+        String neighborhoodBody = source.substring(neighborhood.start, neighborhood.end);
+        String mainBody = source.substring(main.start, main.end);
+        String neighborRead = "float z1CheckLinear = GetLinearDepth(texelFetch(depthtex1, texelCoordM2, 0).r);";
+        String centerRead = "z1 = texelFetch(depthtex1, texelCoord, 0).r;";
+        boolean taaCall = mainBody.matches("(?s).*\\bDoTAA\\s*\\([^;]*\\bz1\\s*\\)\\s*;.*");
+        if (!neighborhoodBody.contains(neighborRead) || !mainBody.contains(centerRead)
+                || !taaCall) return new TaaPatch(source, false);
+        neighborhoodBody = neighborhoodBody.replace(neighborRead,
+                "float z1CheckLinear = GetLinearDepth(roxyEffectsTaaOpaqueDepth(texelCoordM2));");
+        mainBody = mainBody.replace(centerRead, "z1 = roxyEffectsTaaOpaqueDepth(texelCoord);");
+        String patched = source.substring(0, main.start) + mainBody + source.substring(main.end);
+        Span updatedNeighborhood = functionSpan(patched, "NeighbourhoodClamping");
+        if (updatedNeighborhood == null) return new TaaPatch(source, false);
+        return new TaaPatch(patched.substring(0, updatedNeighborhood.start) + neighborhoodBody
+                + patched.substring(updatedNeighborhood.end), true);
+    }
+
+    private static ShadowPatch patchLodShadowDepth(String source) {
+        List<Call> calls = findCalls(source);
+        boolean hasVoxyShadowCall = calls.stream().anyMatch(call -> !call.declaration
+                && call.name.equals("GetLODShadows") && call.arguments.size() > 2
+                && source.substring(call.arguments.get(2).start, call.arguments.get(2).end).trim()
+                .equals(TRANSLUCENT_SELECTED));
+        if (!hasVoxyShadowCall) return new ShadowPatch(source, false);
+        Span function = functionSpan(source, "GetLODShadows");
+        if (function == null) return new ShadowPatch(source, false);
+        String body = source.substring(function.start, function.end);
+        String nativeRead = "traceZ = texture2D(depthtex0, pos.xy).r;";
+        if (!body.contains(nativeRead)) return new ShadowPatch(source, false);
+        body = body.replace(nativeRead, "traceZ = roxyEffectsShadowNativeDepth(pos.xy);");
+        String patched = source.substring(0, function.start) + body + source.substring(function.end);
+        List<Replacement> replacements = new ArrayList<>();
+        for (Call call : findCalls(patched)) {
+            if (call.declaration || !call.name.equals("GetLODShadows") || call.arguments.size() <= 2) continue;
+            Span depthArgument = call.arguments.get(2);
+            if (patched.substring(depthArgument.start, depthArgument.end).trim().equals(TRANSLUCENT_SELECTED)) {
+                replacements.add(new Replacement(depthArgument.start, depthArgument.end, FULL_OPAQUE));
+            }
+        }
+        replacements.sort(Comparator.comparingInt(Replacement::start).reversed());
+        StringBuilder result = new StringBuilder(patched);
+        for (Replacement replacement : replacements) result.replace(replacement.start, replacement.end, replacement.text);
+        return new ShadowPatch(result.toString(), true);
+    }
+
+    private static Span functionSpan(String source, String name) {
+        List<Token> tokens = tokenize(source);
+        Map<Integer, Integer> matchingParen = matchParentheses(tokens);
+        for (int index = 0; index + 1 < tokens.size(); index++) {
+            if (!tokens.get(index).identifier || !tokens.get(index).text.equals(name)
+                    || !tokens.get(index + 1).text.equals("(")) continue;
+            Integer closeParen = matchingParen.get(index + 1);
+            if (closeParen == null || closeParen + 1 >= tokens.size()
+                    || !tokens.get(closeParen + 1).text.equals("{")) continue;
+            int depth = 0;
+            for (int body = closeParen + 1; body < tokens.size(); body++) {
+                String token = tokens.get(body).text;
+                if (token.equals("{")) depth++;
+                else if (token.equals("}") && --depth == 0) {
+                    return new Span(tokens.get(closeParen + 1).start, tokens.get(body).end);
+                }
+            }
+        }
+        return null;
+    }
+
+    private static String effectDepthHelpers() {
+        return """
+                float roxyEffectsShadowNativeDepth(vec2 uv) {
+                #ifdef VOXY
+                    if (@ENABLED == 0) return texture2D(depthtex0, uv).r;
+                    float nativeDepth = texture2D(@REAL_OPAQUE, uv).r;
+                    float lodDepth = texture2D(@FULL_OPAQUE, uv).r;
+                    if (lodDepth > 0.0 && lodDepth < 1.0) {
+                        vec4 lodView = vxProjInv * vec4(uv * 2.0 - 1.0, lodDepth * 2.0 - 1.0, 1.0);
+                        if (abs(lodView.w) > 1e-6) {
+                            float viewZ = lodView.z / lodView.w;
+                            vec4 nativeClip = gbufferProjection * vec4(0.0, 0.0, viewZ, 1.0);
+                            if (abs(nativeClip.w) > 1e-6) {
+                                float projectedLod = nativeClip.z / nativeClip.w * 0.5 + 0.5;
+                                if (projectedLod >= 0.0 && projectedLod < 1.0) nativeDepth = min(nativeDepth, projectedLod);
+                            }
+                        }
+                    }
+                    return nativeDepth;
+                #else
+                    return texture2D(depthtex0, uv).r;
+                #endif
+                }
+                float roxyEffectsTaaOpaqueDepth(ivec2 coord) {
+                #ifdef VOXY
+                    float nativeDepth = texelFetch(depthtex1, coord, 0).r;
+                    if (@ENABLED != 0) {
+                        float lodDepth = texelFetch(@FULL_OPAQUE, coord, 0).r;
+                        if (lodDepth > 0.0 && lodDepth < 1.0) {
+                            vec4 lodView = vxProjInv * vec4(0.0, 0.0, lodDepth * 2.0 - 1.0, 1.0);
+                            if (abs(lodView.w) > 1e-6) {
+                                float viewZ = lodView.z / lodView.w;
+                                vec4 nativeClip = gbufferProjection * vec4(0.0, 0.0, viewZ, 1.0);
+                                if (abs(nativeClip.w) > 1e-6) {
+                                    float projectedLod = nativeClip.z / nativeClip.w * 0.5 + 0.5;
+                                    if (projectedLod >= 0.0 && projectedLod < 1.0) nativeDepth = min(nativeDepth, projectedLod);
+                                }
+                            }
+                        }
+                        return nativeDepth;
+                    }
+                #endif
+                    return texelFetch(depthtex1, coord, 0).r;
+                }
+                """.replace("@ENABLED", ENABLED).replace("@FULL_OPAQUE", FULL_OPAQUE)
+                .replace("@REAL_OPAQUE", REAL_OPAQUE);
     }
 
     public static void registerSamplers(Object pipeline, Object holder) {
@@ -185,7 +310,7 @@ public final class RoxyIrisEffectsDepth {
         int enabledLocation = GL20C.glGetUniformLocation(program, ENABLED);
         if (enabledLocation < 0) return;
 
-        Frame current = frame;
+        Frame current = currentFrame();
         int[] viewport = new int[4];
         GL11C.glGetIntegerv(GL11C.GL_VIEWPORT, viewport);
         boolean active = current != null && viewport[2] > 0 && viewport[3] > 0;
@@ -199,7 +324,7 @@ public final class RoxyIrisEffectsDepth {
     }
 
     public static void mergeCurrentNativeDepth() {
-        Frame current = frame;
+        Frame current = currentFrame();
         if (current == null || nativeDepthMerged) return;
         nativeDepthMerged = true;
         int nativeDepth = vanillaDepthTexture(samplerPipeline);
@@ -229,7 +354,7 @@ public final class RoxyIrisEffectsDepth {
         GL13C.glActiveTexture(previousActiveTexture);
 
         int enabledLocation = GL20C.glGetUniformLocation(program, ENABLED);
-        Frame current = frame;
+        Frame current = currentFrame();
         GL20C.glUniform1i(enabledLocation, current == null ? 0 : 1);
         int viewportLocation = GL20C.glGetUniformLocation(program, VIEWPORT);
         if (viewportLocation >= 0) {
@@ -253,7 +378,7 @@ public final class RoxyIrisEffectsDepth {
     }
 
     private static int fullOpaqueTexture(Object owner) {
-        Frame current = frame;
+        Frame current = currentFrame();
         return current == null ? selectedVoxyDepth(owner, false) : current.fullOpaque;
     }
 
@@ -266,7 +391,7 @@ public final class RoxyIrisEffectsDepth {
     }
 
     private static int fullTransTexture(Object owner) {
-        Frame current = frame;
+        Frame current = currentFrame();
         return current == null ? selectedVoxyDepth(owner, true) : current.fullTrans;
     }
 
@@ -279,7 +404,7 @@ public final class RoxyIrisEffectsDepth {
     }
 
     private static int realDepthTexture(Object owner) {
-        Frame current = frame;
+        Frame current = currentFrame();
         return current == null ? vanillaDepthTexture(owner) : current.realDepth;
     }
 
@@ -370,12 +495,14 @@ public final class RoxyIrisEffectsDepth {
         return new Wrapper(function, sampler, method, "roxyEffects" + sampler + method);
     }
 
-    private static String buildWrappers(Set<Wrapper> wrappers, boolean usesNativeSampler, boolean guardVoxy) {
+    private static String buildWrappers(Set<Wrapper> wrappers, boolean usesNativeSampler, boolean guardVoxy,
+                                        boolean usesEffectDepth) {
         StringBuilder source = new StringBuilder("\n").append(MARKER).append('\n')
                 .append("uniform int ").append(ENABLED).append(";\n")
                 .append("uniform vec4 ").append(VIEWPORT).append(";\n");
         if (usesNativeSampler) source.append("uniform sampler2D ").append(REAL_OPAQUE).append(";\n");
-        boolean usesVoxyWrapper = wrappers.stream().anyMatch(wrapper -> !wrapper.sampler.equals("Native"));
+        boolean usesVoxyWrapper = usesEffectDepth
+                || wrappers.stream().anyMatch(wrapper -> !wrapper.sampler.equals("Native"));
         if (usesVoxyWrapper) {
             if (guardVoxy) source.append("#ifdef VOXY\n");
             source.append("uniform sampler2D ").append(FULL_OPAQUE).append(";\n")
@@ -396,10 +523,11 @@ public final class RoxyIrisEffectsDepth {
         }
         if (usesVoxyWrapper) {
             for (Wrapper wrapper : wrappers) {
-                if (!wrapper.sampler.equals("Native")) appendWrapper(source, wrapper);
+                if (wrapper.sampler.equals("Opaque") || wrapper.sampler.equals("Trans")) appendWrapper(source, wrapper);
             }
             if (guardVoxy) source.append("#endif\n");
         }
+        if (usesEffectDepth) source.append(effectDepthHelpers());
         source.append('\n');
         return source.toString();
     }
@@ -641,7 +769,8 @@ public final class RoxyIrisEffectsDepth {
 
     private static boolean isDepthSamplerDeclaration(String line) {
         return line.matches("(?s).*\\buniform\\s+sampler\\w*\\s+"
-                + "(?:vxDepthTexOpaque|vxDepthTexTrans|depthtex0)\\b.*");
+                + "(?:vxDepthTexOpaque|vxDepthTexTrans|depthtex0|depthtex1)\\b.*")
+                || line.matches("(?s).*\\buniform\\s+mat4\\s+(?:vxProjInv|gbufferProjection)\\b.*");
     }
 
     private static boolean usesVoxySamplerDeclarationsAreGuarded(String source) {
@@ -662,7 +791,18 @@ public final class RoxyIrisEffectsDepth {
         return foundDeclaration && everyDeclarationGuarded;
     }
 
-    private record Frame(int realDepth, int fullOpaque, int fullTrans, int width, int height) {
+    private static Frame currentFrame() {
+        Frame current = frame;
+        return current != null && current.generation == frameGeneration ? current : null;
+    }
+
+    private record Frame(long generation, int realDepth, int fullOpaque, int fullTrans, int width, int height) {
+    }
+
+    private record TaaPatch(String source, boolean enabled) {
+    }
+
+    private record ShadowPatch(String source, boolean enabled) {
     }
 
     private record Token(String text, int start, int end, boolean identifier) {
