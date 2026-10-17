@@ -4316,11 +4316,11 @@ public final class RoxyBytecodeRemapper {
 
         String processDescriptor = "(L" + VOXY_RENDER_DATA_FACTORY
                 + ";Lit/unimi/dsi/fastutil/ints/IntOpenHashSet;)V";
-        String consumerDescriptor = "(Ljava/lang/Object;)V";
         int[] enqueueMatched = new int[1];
         int[] liveHookInjected = new int[1];
         int[] computeMatched = new int[1];
         int[] creationHookInjected = new int[1];
+        int[] resultConsumerSetterMatched = new int[1];
         ClassWriter writer = new RoxyClassWriter(reader, ClassWriter.COMPUTE_FRAMES);
         reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
             @Override
@@ -4332,6 +4332,25 @@ public final class RoxyBytecodeRemapper {
                 String[] exceptions
             ) {
                 MethodVisitor method = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (name.equals("setResultConsumer")
+                        && descriptor.equals("(Ljava/util/function/Consumer;)V")) {
+                    resultConsumerSetterMatched[0]++;
+                    return new MethodVisitor(Opcodes.ASM9, method) {
+                        @Override
+                        public void visitCode() {
+                            super.visitCode();
+                            super.visitVarInsn(Opcodes.ALOAD, 1);
+                            super.visitMethodInsn(
+                                    Opcodes.INVOKESTATIC,
+                                    VOXY_RENDER_COMPAT,
+                                    "wrapResultConsumer",
+                                    "(Ljava/util/function/Consumer;)Ljava/util/function/Consumer;",
+                                    false
+                            );
+                            super.visitVarInsn(Opcodes.ASTORE, 1);
+                        }
+                    };
+                }
                 if (name.equals("enqueueTask") && descriptor.equals("(J)V")) {
                     enqueueMatched[0]++;
                     return new MethodVisitor(Opcodes.ASM9, method) {
@@ -4493,17 +4512,6 @@ public final class RoxyBytecodeRemapper {
                                 && methodDescriptor.equals("(Ljava/lang/Object;)Z")) {
                             super.visitMethodInsn(opcode, owner, methodName, methodDescriptor, isInterface);
                             retryQueueAddPending = true;
-                        } else if (opcode == Opcodes.INVOKEINTERFACE
-                                && owner.equals("java/util/function/Consumer")
-                                && methodName.equals("accept")
-                                && methodDescriptor.equals(consumerDescriptor)) {
-                            super.visitMethodInsn(
-                                    Opcodes.INVOKESTATIC,
-                                    VOXY_RENDER_COMPAT,
-                                    "acceptIfCurrent",
-                                    "(Ljava/util/function/Consumer;Ljava/lang/Object;)V",
-                                    false
-                            );
                         } else {
                             super.visitMethodInsn(opcode, owner, methodName, methodDescriptor, isInterface);
                         }
@@ -4514,6 +4522,7 @@ public final class RoxyBytecodeRemapper {
             }
         }, 0);
         if (enqueueMatched[0] != 1
+                || resultConsumerSetterMatched[0] != 1
                 || liveHookInjected[0] != 1
                 || computeMatched[0] != 1
                 || creationHookInjected[0] != 1) {

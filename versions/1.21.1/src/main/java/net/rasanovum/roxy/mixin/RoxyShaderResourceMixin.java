@@ -7,6 +7,9 @@ import net.rasanovum.roxy.shader.RoxyVoxyRequestShader;
 import net.rasanovum.roxy.shader.RoxyFogShader;
 import net.rasanovum.roxy.shader.RoxyIceFaceCullingShader;
 import net.rasanovum.roxy.shader.RoxyModelTintShader;
+import net.rasanovum.roxy.shader.RoxyLodFadeShader;
+import net.rasanovum.roxy.shader.RoxyIrisFadeShader;
+import net.rasanovum.roxy.shader.RoxyTranslucentBoundaryShader;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Redirect;
@@ -64,6 +67,9 @@ public final class RoxyShaderResourceMixin {
             source = RoxyAmdHiZShader.patch(path, source);
             source = RoxyVoxyRequestShader.patch(path, source);
             source = RoxyFogShader.patch(path, source);
+            source = RoxyLodFadeShader.patch(path, source);
+            source = RoxyIrisFadeShader.patch(path, source);
+            source = RoxyTranslucentBoundaryShader.patch(path, source);
             source = RoxyIceFaceCullingShader.patch(path, source);
             source = RoxyModelTintShader.patch(path, source);
             if (path.endsWith("/assets/voxy/shaders/lod/quad_util.glsl")) {

@@ -60,6 +60,25 @@ public final class RoxyFabricModReader implements IModFileReader {
 
     @Override
     public @Nullable IModFile read(JarContents jar, ModFileDiscoveryAttributes attributes) {
+        Path original = jar.getPrimaryPath();
+        try {
+            if (Files.isRegularFile(original)
+                    && RoxyJarContents.containsFile(jar, "META-INF/neoforge.mods.toml")
+                    && RoxyJarContents.containsFile(jar, "mobius/voxyseedgen/mixin/VoxyCullDistanceMixin.class")
+                    && SeedGenVoxyJarPatch.isTarget(original)) {
+                Path patched = SeedGenVoxyJarPatch.patch(original);
+                if (patched == null) return null;
+
+                try {
+                    return JarModsDotTomlModFileReader.createModFile(JarContents.of(patched), attributes);
+                } catch (RuntimeException exception) {
+                    throw new RuntimeException("Roxy: failed to load patched Voxy SeedGen jar", exception);
+                }
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Roxy: failed to patch Voxy SeedGen jar", e);
+        }
+
         if (!RoxyJarContents.containsFile(jar, "fabric.mod.json")
                 || RoxyJarContents.containsFile(jar, MODS_TOML)) {
             return null;
@@ -73,7 +92,6 @@ public final class RoxyFabricModReader implements IModFileReader {
             return null;
         }
 
-        Path original = jar.getPrimaryPath();
         RoxyCrashReportHeader.patching(original);
         try {
             Path patched = patchJar(original, fabricMetadata);

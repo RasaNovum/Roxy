@@ -446,6 +446,29 @@ public final class RoxyVoxyRenderPatch {
         }
     }
 
+    /**
+     * Wraps Voxy's stored result callback once so SeedGen's two original
+     * {@code Consumer.accept} call sites remain available to its mixin.
+     */
+    public static Consumer<?> wrapResultConsumer(Consumer<?> consumer) {
+        if (consumer == null || consumer instanceof GuardedResultConsumer) return consumer;
+        return new GuardedResultConsumer(consumer);
+    }
+
+    private static final class GuardedResultConsumer implements Consumer<Object> {
+        private final Consumer<Object> delegate;
+
+        @SuppressWarnings("unchecked")
+        private GuardedResultConsumer(Consumer<?> delegate) {
+            this.delegate = (Consumer<Object>) delegate;
+        }
+
+        @Override
+        public void accept(Object result) {
+            acceptIfCurrent(delegate, result);
+        }
+    }
+
     private static void clearTaskLocals() {
         TASK_STAMP.remove();
     }

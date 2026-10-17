@@ -12,7 +12,7 @@ plugins {
 }
 
 group = "net.rasanovum"
-version = "0.4.1-d-1"
+version = "0.4.1-d-6"
 
 prism {
     metadata {
