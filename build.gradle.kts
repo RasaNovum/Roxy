@@ -18,8 +18,6 @@ plugins {
 group = "net.rasanovum"
 version = "0.4.1-d-1"
 
-// The driver is selected before LWJGL or GLFW is initialized. It is prepared
-// explicitly by scripts/macos/build-runtime.sh, never downloaded by the mod.
 val roxyZink = providers.gradleProperty("roxyZink").map(String::toBoolean).orElse(false)
 val macRuntime = providers.gradleProperty("roxyMacOSRuntime")
     .map { file(it) }.orElse(layout.projectDirectory.dir(".roxy-macos/runtime").asFile)
@@ -43,20 +41,12 @@ fun JavaExec.useRoxyZink() {
     environment("VK_DRIVER_FILES", runtime.resolve("share/vulkan/icd.d/kosmickrisp_icd.json").absolutePath)
     environment("EGL_PLATFORM", "surfaceless")
     environment("MESA_LOADER_DRIVER_OVERRIDE", "zink")
-    // KosmicKrisp implements border-color emulation behind an experimental
-    // driver option; Zink requires it even for workloads without border colors.
     environment("MESA_KK_EXPERIMENTAL", "custom_border")
-    // This fork can deadlock its disk-cache queue during EGL teardown on macOS.
-    // Keep the prototype repeatable while retaining the driver's in-memory cache.
     environment("MESA_SHADER_CACHE_DISABLE", "true")
-    // Version/extension overrides can disguise missing functionality. Require
-    // the runtime's real capabilities and the executable probe instead.
     environment.remove("MESA_GL_VERSION_OVERRIDE")
     environment.remove("MESA_GLSL_VERSION_OVERRIDE")
     environment.remove("MESA_EXTENSION_OVERRIDE")
     if (providers.gradleProperty("roxyDiagnosticGL46").map(String::toBoolean).orElse(false).get()) {
-        // Diagnostic only: the Cocoa prototype can expose an otherwise capped
-        // GL profile. Success still requires every executable workload below.
         environment("MESA_GL_VERSION_OVERRIDE", "4.6")
         environment("MESA_GLSL_VERSION_OVERRIDE", "460")
     }
@@ -76,9 +66,6 @@ fun JavaExec.useRoxyZink() {
 fun JavaExec.useRoxyMacNatives() {
     if (System.getProperty("os.name").lowercase().contains("mac")) {
         jvmArgs("-XstartOnFirstThread", "--enable-native-access=ALL-UNNAMED")
-        // A stock-GL launch must remain usable before the optional native
-        // runtime has been prepared. Explicit/partially prepared paths still
-        // receive the locator's validation and clear failure diagnostics.
         if (providers.gradleProperty("roxyMacOSNatives").isPresent || macNatives.get().isDirectory) {
             jvmArgs("-Droxy.macos.nativePath=${macNatives.get()}")
         }
