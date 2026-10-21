@@ -24,3 +24,5 @@ run/
 /logs/
 /documentation/
 /verification/
+/.roxy-macos/
+/scripts/

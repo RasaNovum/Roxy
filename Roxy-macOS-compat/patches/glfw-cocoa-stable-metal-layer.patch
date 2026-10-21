@@ -1,0 +1,107 @@
+diff --git a/src/cocoa_init.m b/src/cocoa_init.m
+index 15dc4ec..9210af0 100644
+--- a/src/cocoa_init.m
++++ b/src/cocoa_init.m
+@@ -411,7 +411,8 @@ - (void)applicationDidChangeScreenParameters:(NSNotification *) notification
+ {
+     for (_GLFWwindow* window = _glfw.windowListHead;  window;  window = window->next)
+     {
+-        if (window->context.client != GLFW_NO_API)
++        if (window->context.client != GLFW_NO_API &&
++            window->context.source == GLFW_NATIVE_CONTEXT_API)
+             [window->context.nsgl.object update];
+     }
+ 
+@@ -692,4 +693,3 @@ void _glfwTerminateCocoa(void)
+ }
+ 
+ #endif // _GLFW_COCOA
+-
+diff --git a/src/cocoa_window.m b/src/cocoa_window.m
+index 79e1253..fe3b339 100644
+--- a/src/cocoa_window.m
++++ b/src/cocoa_window.m
+@@ -247,6 +247,12 @@ - (void)windowDidResize:(NSNotification *)notification
+     const NSRect contentRect = [window->ns.view frame];
+     const NSRect fbRect = [window->ns.view convertRectToBacking:contentRect];
+ 
++    if (window->ns.layer)
++    {
++        [window->ns.layer setFrame:[window->ns.view bounds]];
++        [window->ns.layer setDrawableSize:fbRect.size];
++    }
++
+     if (fbRect.size.width != window->ns.fbWidth ||
+         fbRect.size.height != window->ns.fbHeight)
+     {
+@@ -515,7 +521,10 @@ - (void)viewDidChangeBackingProperties
+     if (xscale != window->ns.xscale || yscale != window->ns.yscale)
+     {
+         if (window->ns.scaleFramebuffer && window->ns.layer)
++        {
+             [window->ns.layer setContentsScale:[window->ns.object backingScaleFactor]];
++            [window->ns.layer setDrawableSize:fbRect.size];
++        }
+ 
+         window->ns.xscale = xscale;
+         window->ns.yscale = yscale;
+@@ -938,10 +947,32 @@ GLFWbool _glfwCreateWindowCocoa(_GLFWwindow* window,
+         }
+         else if (ctxconfig->source == GLFW_EGL_CONTEXT_API || ctxconfig->source == GLFW_NATIVE_CONTEXT_API) /* PATCHED: Route NATIVE to EGL */
+         {
+-            // EGL implementation on macOS use CALayer* EGLNativeWindowType so we
+-            // need to get the layer for EGL window surface creation.
++            // EGL's macOS native window handle is a CALayer. Give the view a
++            // stable CAMetalLayer up front: Mesa's surfaceless Zink path needs
++            // this layer for Metal presentation and may replace AppKit's
++            // default NSViewBackingLayer while creating the EGL surface.
++            // Keeping the same layer in GLFW avoids a stale pointer during
++            // later display/backing-scale notifications.
+             [window->ns.view setWantsLayer:YES];
+-            window->ns.layer = [window->ns.view layer];
++            CAMetalLayer* layer = [CAMetalLayer layer];
++            if (!layer)
++            {
++                _glfwInputError(GLFW_PLATFORM_ERROR,
++                                "Cocoa: Failed to create layer for EGL window");
++                return GLFW_FALSE;
++            }
++
++            const NSRect bounds = [window->ns.view bounds];
++            [layer setFrame:bounds];
++            [layer setAutoresizingMask:kCALayerWidthSizable | kCALayerHeightSizable];
++            [layer setOpaque:YES];
++            const CGFloat scale = [window->ns.object backingScaleFactor];
++            if (window->ns.scaleFramebuffer)
++                [layer setContentsScale:scale];
++            [layer setDrawableSize:CGSizeMake(bounds.size.width * scale,
++                                              bounds.size.height * scale)];
++            [window->ns.view setLayer:layer];
++            window->ns.layer = layer;
+ 
+             if (!_glfwInitEGL())
+                 return GLFW_FALSE;
+@@ -2060,4 +2091,3 @@ GLFWAPI id glfwGetCocoaView(GLFWwindow* handle)
+ }
+ 
+ #endif // _GLFW_COCOA
+-
+diff --git a/src/window.c b/src/window.c
+index f131c20..21c5937 100644
+--- a/src/window.c
++++ b/src/window.c
+@@ -206,6 +206,14 @@ GLFWAPI GLFWwindow* glfwCreateWindow(int width, int height,
+     ctxconfig = _glfw.hints.context;
+     wndconfig = _glfw.hints.window;
+ 
++#if defined(_GLFW_COCOA)
++    // This fork routes Cocoa's native-context requests through EGL for Zink.
++    // Normalize the source before validation and window creation so the
++    // context reports its actual backend and skips NSGL-only callbacks.
++    if (ctxconfig.source == GLFW_NATIVE_CONTEXT_API)
++        ctxconfig.source = GLFW_EGL_CONTEXT_API;
++#endif
++
+     wndconfig.width   = width;
+     wndconfig.height  = height;
+     ctxconfig.share   = (_GLFWwindow*) share;

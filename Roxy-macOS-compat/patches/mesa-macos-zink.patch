@@ -1,0 +1,98 @@
+diff --git a/src/compiler/glsl/ast_to_hir.cpp b/src/compiler/glsl/ast_to_hir.cpp
+index a5739cf2648..27e59f80e91 100644
+--- a/src/compiler/glsl/ast_to_hir.cpp
++++ b/src/compiler/glsl/ast_to_hir.cpp
+@@ -3962,10 +3962,28 @@ apply_layout_qualifier_to_variable(const struct ast_type_qualifier *qual,
+       }
+    }
+ 
+-   if (qual->flags.q.out && qual->flags.q.xfb_buffer) {
+-      unsigned qual_xfb_buffer;
+-      if (process_qualifier_constant(state, loc, "xfb_buffer",
+-                                     qual->xfb_buffer, &qual_xfb_buffer) &&
++   /* Enhanced-layout parsing assigns the default xfb_buffer (zero) to
++    * ordinary output variables when ARB_transform_feedback3 is available.
++    * That default does not request transform feedback.  Only validate a
++    * buffer when the shader explicitly uses an xfb qualifier; this keeps
++    * shaders with normal location-qualified outputs valid on drivers that
++    * expose no transform-feedback buffers.
++    */
++   if (qual->flags.q.out &&
++       (qual->flags.q.explicit_xfb_buffer ||
++        qual->flags.q.explicit_xfb_offset ||
++        qual->flags.q.explicit_xfb_stride)) {
++      unsigned qual_xfb_buffer = 0;
++      bool valid_xfb_buffer = true;
++      if (qual->flags.q.xfb_buffer) {
++         valid_xfb_buffer = process_qualifier_constant(
++            state, loc, "xfb_buffer", qual->xfb_buffer, &qual_xfb_buffer);
++      } else if (state->out_qualifier->flags.q.xfb_buffer) {
++         valid_xfb_buffer = process_qualifier_constant(
++            state, loc, "xfb_buffer", state->out_qualifier->xfb_buffer,
++            &qual_xfb_buffer);
++      }
++      if (valid_xfb_buffer &&
+           validate_xfb_buffer_qualifier(loc, state, qual_xfb_buffer)) {
+          var->data.xfb_buffer = qual_xfb_buffer;
+          if (qual->flags.q.explicit_xfb_buffer)
+@@ -7787,7 +7805,7 @@ ast_process_struct_or_iface_block_members(ir_exec_list *instructions,
+       int xfb_buffer;
+       unsigned explicit_xfb_buffer = 0;
+       if (qual->flags.q.explicit_xfb_buffer) {
+-         unsigned qual_xfb_buffer;
++         unsigned qual_xfb_buffer = block_xfb_buffer;
+          if (process_qualifier_constant(state, &loc, "xfb_buffer",
+                                         qual->xfb_buffer, &qual_xfb_buffer)) {
+             explicit_xfb_buffer = 1;
+@@ -7804,6 +7822,12 @@ ast_process_struct_or_iface_block_members(ir_exec_list *instructions,
+          xfb_buffer = (int) block_xfb_buffer;
+       }
+ 
++      if (qual->flags.q.explicit_xfb_buffer ||
++          qual->flags.q.explicit_xfb_offset ||
++          qual->flags.q.explicit_xfb_stride) {
++         validate_xfb_buffer_qualifier(&loc, state, (unsigned) xfb_buffer);
++      }
++
+       int xfb_stride = -1;
+       if (qual->flags.q.explicit_xfb_stride) {
+          unsigned qual_xfb_stride;
+diff --git a/src/compiler/glsl/ast_type.cpp b/src/compiler/glsl/ast_type.cpp
+index 51fa331bf00..d6ab95a0b8a 100644
+--- a/src/compiler/glsl/ast_type.cpp
++++ b/src/compiler/glsl/ast_type.cpp
+@@ -882,6 +882,14 @@ ast_type_qualifier::push_to_global(YYLTYPE *loc,
+       unsigned buff_idx;
+       if (process_qualifier_constant(state, loc, "xfb_buffer",
+                                      this->xfb_buffer, &buff_idx)) {
++         if (buff_idx >= state->Const.MaxTransformFeedbackBuffers) {
++            _mesa_glsl_error(loc, state,
++                             "invalid xfb_buffer specified %d is larger than "
++                             "MAX_TRANSFORM_FEEDBACK_BUFFERS - 1 (%d).",
++                             buff_idx,
++                             state->Const.MaxTransformFeedbackBuffers - 1);
++            return true;
++         }
+          if (state->out_qualifier->out_xfb_stride[buff_idx]) {
+             state->out_qualifier->out_xfb_stride[buff_idx]->merge_qualifier(
+                new(state->linalloc) ast_layout_expression(*loc,
+diff --git a/src/glwrapper/libgl_wrapper.c b/src/glwrapper/libgl_wrapper.c
+index b081cfd6ee4..086224a3373 100644
+--- a/src/glwrapper/libgl_wrapper.c
++++ b/src/glwrapper/libgl_wrapper.c
+@@ -348,6 +348,15 @@ void glPointSize(GLfloat size) {
+ 
+ /* ============== Modern OpenGL / Extension query ============== */
+ 
++/* LWJGL's macOS loader probes this OSMesa symbol before falling back to
++ * dlsym on libGL.  Forward it through EGL so extension entry points resolve
++ * to the active Zink context without a process-wide DYLD interposer.
++ */
++__attribute__((visibility("default")))
++void *OSMesaGetProcAddress(const char *procName) {
++    return (void*)get_gl_proc(procName);
++}
++
+ /* glGetProcAddress - Important for LWJGL to load extension functions */
+ void *glXGetProcAddress(const char *procName) {
+     return (void*)get_gl_proc(procName);

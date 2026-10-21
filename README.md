@@ -40,6 +40,8 @@ Many major incompatibilities that are present with Voxy natively on Fabric will 
 
 AMD GPUs using Mesa on Linux may show terrain-shaped gaps in shader-rendered water because of Mesa's Hyper-Z depth compression. Add `AMD_DEBUG=nohyperz` to the launcher's instance environment variables and restart the game.
 
+Roxy 0.4.1+ adds experimental macOS support. A separate patch bundle is required, found [here](Roxy-macOS-compat), with instructions on how to set up the patch for Prism or Modrinth launchers found [here](Roxy-macOS-compat/setup-guide.md).
+
 Please report any major incompatibilities or bugs, along with logs, on the [Github](https://github.com/RasaNovum/Roxy/issues).
 
 ## License

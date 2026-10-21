@@ -48,8 +48,82 @@ public final class RoxyBytecodeRemapper {
         ClassWriter writer = new ClassWriter(reader, 0);
         reader.accept(new RoxyClassRemapper(writer, remapper, metadata), 0);
         return patchVoxyMissingStates(patchNeoForgeColorMapAccess(
-                patchNeoForgeGpuTextureCasts(patchClasspathDirectoryScan(writer.toByteArray()))
+                patchMacOSGraphicsGuard(patchVoxyJomlMemoryAccess(
+                        patchNeoForgeGpuTextureCasts(patchClasspathDirectoryScan(writer.toByteArray()))))
         ));
+    }
+
+    private static byte[] patchVoxyJomlMemoryAccess(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        String className = reader.getClassName();
+        if (!className.startsWith("me/cortex/voxy/")) return input;
+
+        ClassWriter writer = new ClassWriter(reader, 0);
+        boolean[] changed = {false};
+        reader.accept(new org.objectweb.asm.ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public org.objectweb.asm.MethodVisitor visitMethod(int access, String name, String descriptor,
+                                                                 String signature, String[] exceptions) {
+                org.objectweb.asm.MethodVisitor delegate = super.visitMethod(access, name, descriptor,
+                        signature, exceptions);
+                return new org.objectweb.asm.MethodVisitor(Opcodes.ASM9, delegate) {
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String methodName,
+                                                String methodDescriptor, boolean isInterface) {
+                        String resultType = switch (owner) {
+                            case "org/joml/Matrix4f" -> "org/joml/Matrix4fc";
+                            case "org/joml/Vector4f" -> "org/joml/Vector4fc";
+                            case "org/joml/Vector3f" -> "org/joml/Vector3fc";
+                            case "org/joml/Vector3i" -> "org/joml/Vector3ic";
+                            case "org/joml/Vector2f" -> "org/joml/Vector2fc";
+                            case "org/joml/Vector2i" -> "org/joml/Vector2ic";
+                            default -> null;
+                        };
+                        boolean write = methodName.equals("getToAddress");
+                        boolean read = methodName.equals("setFromAddress")
+                                && (owner.equals("org/joml/Vector4f") || owner.equals("org/joml/Vector3f"));
+                        if ((!write && !read) || resultType == null) {
+                            super.visitMethodInsn(opcode, owner, methodName, methodDescriptor, isInterface);
+                            return;
+                        }
+                        String expectedReturn = read ? owner : resultType;
+                        if (opcode != Opcodes.INVOKEVIRTUAL || isInterface
+                                || !methodDescriptor.equals("(J)L" + expectedReturn + ";")) {
+                            throw new IllegalStateException("Unsupported Voxy JOML memory call in " + className
+                                    + ": " + opcode + " " + owner + "." + methodName + methodDescriptor);
+                        }
+                        changed[0] = true;
+                        super.visitMethodInsn(Opcodes.INVOKESTATIC,
+                                "net/rasanovum/roxy/loader/RoxyJomlMemory",
+                                write ? "writeToAddress" : "readFromAddress",
+                                "(L" + owner + ";J)L" + expectedReturn + ";", false);
+                    }
+                };
+            }
+        }, 0);
+        return changed[0] ? writer.toByteArray() : input;
+    }
+
+    private static byte[] patchMacOSGraphicsGuard(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals("me/cortex/voxy/client/VoxyClient")) return input;
+        var node = new org.objectweb.asm.tree.ClassNode();
+        reader.accept(node, ClassReader.EXPAND_FRAMES);
+        var method = node.methods.stream()
+                .filter(m -> m.name.equals("initVoxyClient") && m.desc.equals("()V"))
+                .findFirst().orElseThrow(() -> new IllegalStateException("Unsupported Voxy client initialization"));
+        var continuation = new org.objectweb.asm.tree.LabelNode();
+        var guard = new org.objectweb.asm.tree.InsnList();
+        guard.add(new org.objectweb.asm.tree.MethodInsnNode(Opcodes.INVOKESTATIC,
+                "net/rasanovum/roxy/loader/RoxyMacOSGraphics", "canInitializeVoxy", "()Z", false));
+        guard.add(new org.objectweb.asm.tree.JumpInsnNode(Opcodes.IFNE, continuation));
+        guard.add(new org.objectweb.asm.tree.InsnNode(Opcodes.RETURN));
+        guard.add(continuation);
+        guard.add(new org.objectweb.asm.tree.FrameNode(Opcodes.F_NEW, 0, null, 0, null));
+        method.instructions.insert(guard);
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+        node.accept(writer);
+        return writer.toByteArray();
     }
 
     private static byte[] patchVoxyMissingStates(byte[] input) {

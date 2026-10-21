@@ -1,0 +1,3 @@
+5d39d5346ccd6a4b664ca7284611b428c9009b2cc16374c46b97718b7f10a079  roxy-lwjgl-lmdb-natives-macos-arm64.jar
+0ddb6c202d49ee880c6bbeb1b5d5c3d49186a540e04aa36eff9abafcf8a14487  roxy-lwjgl-zstd-natives-macos-arm64.jar
+1e5f0d1b7de7876ff46506096d5d41b45362697041b19b5b10dc23f787ee2485  roxy-rocksdbjni-10.2.1-natives-macos-arm64.jar
