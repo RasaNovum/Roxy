@@ -35,6 +35,7 @@ public final class RoxyFabricModReader implements IModFileReader {
     private static final String SUPPLEMENTAL_WORLDGEN_MIXIN = "roxy-voxy-worldgen.json";
     private static final Map<String, String> EMBEDDED_HOST_CLASSES = Map.ofEntries(
             Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcBackfill.class", "roxy/embedded/RoxyTfcBackfill.bin"),
+            Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcTerrainRefresh.class", "roxy/embedded/RoxyTfcTerrainRefresh.bin"),
             Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcProgress.class", "roxy/embedded/RoxyTfcProgress.bin"),
             Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcProgress$Visibility.class", "roxy/embedded/RoxyTfcProgress$Visibility.bin"),
             Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcAdapter.class", "roxy/embedded/RoxyTfcAdapter.bin"),
@@ -60,6 +61,25 @@ public final class RoxyFabricModReader implements IModFileReader {
 
     @Override
     public @Nullable IModFile read(JarContents jar, ModFileDiscoveryAttributes attributes) {
+        Path original = jar.getPrimaryPath();
+        try {
+            if (Files.isRegularFile(original)
+                    && RoxyJarContents.containsFile(jar, "META-INF/neoforge.mods.toml")
+                    && RoxyJarContents.containsFile(jar, "mobius/voxyseedgen/mixin/VoxyCullDistanceMixin.class")
+                    && SeedGenVoxyJarPatch.isTarget(original)) {
+                Path patched = SeedGenVoxyJarPatch.patch(original);
+                if (patched == null) return null;
+
+                try {
+                    return JarModsDotTomlModFileReader.createModFile(JarContents.of(patched), attributes);
+                } catch (RuntimeException exception) {
+                    throw new RuntimeException("Roxy: failed to load patched Voxy SeedGen jar", exception);
+                }
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("Roxy: failed to patch Voxy SeedGen jar", e);
+        }
+
         if (!RoxyJarContents.containsFile(jar, "fabric.mod.json")
                 || RoxyJarContents.containsFile(jar, MODS_TOML)) {
             return null;
@@ -73,7 +93,6 @@ public final class RoxyFabricModReader implements IModFileReader {
             return null;
         }
 
-        Path original = jar.getPrimaryPath();
         RoxyCrashReportHeader.patching(original);
         try {
             Path patched = patchJar(original, fabricMetadata);

@@ -86,11 +86,8 @@ public final class RoxyPowerGridCompat {
         try {
             Object minecraft = minecraft();
             Object currentLevel = field(minecraft, "level");
-            if (currentLevel == null) {
-                if (storeDirty) writeStore();
-                return;
-            }
             ensureLevel(currentLevel);
+            if (currentLevel == null) return;
             purgeDestroyedWires();
             persistPending();
             if (storeDirty) writeStore();
@@ -190,6 +187,7 @@ public final class RoxyPowerGridCompat {
 
     private static void ensureLevel(Object currentLevel) throws ReflectiveOperationException {
         if (level == currentLevel) return;
+        if (level != null) persistPending();
         if (storeDirty) writeStore();
         WIRES.clear();
         STORED_WIRES.clear();
@@ -197,8 +195,8 @@ public final class RoxyPowerGridCompat {
         DESTROYED_WIRES.clear();
         storeDirty = false;
         reflectionFailureReported = false;
-        storePath = storePath(currentLevel);
-        readStore(currentLevel);
+        storePath = currentLevel == null ? null : storePath(currentLevel);
+        if (currentLevel != null) readStore(currentLevel);
         level = currentLevel;
     }
 

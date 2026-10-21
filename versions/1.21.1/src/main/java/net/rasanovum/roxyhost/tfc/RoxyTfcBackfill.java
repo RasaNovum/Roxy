@@ -13,7 +13,6 @@ import net.rasanovum.roxy.tfc.TfcCompatConfig;
 import net.rasanovum.roxy.tfc.TfcVoxyBridge;
 import org.slf4j.LoggerFactory;
 
-/** Reads saved climate attachments without loading or generating Minecraft chunks. */
 public final class RoxyTfcBackfill {
     private static final int MAX_QUEUED = 8192, MAX_IN_FLIGHT = 32, MAX_MISSING = 131072;
     private static final LinkedHashSet<Long> near = new LinkedHashSet<>(), far = new LinkedHashSet<>();

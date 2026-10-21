@@ -40,11 +40,9 @@ public final class RoxyVoxyFogPatch {
                              float originalStart, float originalEnd, int originalShape,
                              float start, float end, int shape, Object level, double tick,
                              float rain, float thunder, float partialTick) {
-        // Avoid exposing Minecraft's nested FogMode type through this helper's descriptor.
         if (!"FOG_TERRAIN".equals(String.valueOf(fogMode))) return;
         extendedFogMode = 0;
         if (!noFluid) return;
-        // Better Fog owns its Voxy LOD profile, including opt-outs and its authored fog color.
         if (RoxyBetterFogCompat.available()) return;
 
         Accessors current = getAccessors();
@@ -247,7 +245,6 @@ public final class RoxyVoxyFogPatch {
                 Class.forName("net.minecraft.client.Minecraft", false, candidate);
                 return candidate;
             } catch (ClassNotFoundException ignored) {
-                // Try the next loader.
             }
         }
         throw new IllegalStateException("Unable to locate Minecraft's client class loader");

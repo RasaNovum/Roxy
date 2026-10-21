@@ -184,10 +184,10 @@ public final class RoxyChunksmithCompat {
                     renderer = current;
                     idlePolls = 0;
                     earliestReady = System.currentTimeMillis() + 2_000L;
-                    if (renderer == null) {
-                        Thread.sleep(100L);
-                        continue;
-                    }
+                }
+                if (renderer == null) {
+                    Thread.sleep(100L);
+                    continue;
                 }
 
                 Object nodeManager = resolved.renderNodeManager.get(renderer);

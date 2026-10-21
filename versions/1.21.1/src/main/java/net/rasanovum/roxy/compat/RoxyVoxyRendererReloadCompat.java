@@ -7,6 +7,11 @@ import net.rasanovum.roxy.patch.RoxyVoxyRenderPatch;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.lang.ref.WeakReference;
+import java.util.Collections;
+import java.util.IdentityHashMap;
+import java.util.Set;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.atomic.AtomicReference;
 
 public final class RoxyVoxyRendererReloadCompat {
@@ -14,6 +19,8 @@ public final class RoxyVoxyRendererReloadCompat {
     private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
     private static final ThreadLocal<IrisReloadState> IRIS_RELOAD = new ThreadLocal<>();
     private static final AtomicReference<PendingReload> PENDING = new AtomicReference<>();
+    private static final AtomicReference<Quarantine> QUARANTINE = new AtomicReference<>();
+    private static final AtomicLong RELOAD_GENERATION = new AtomicLong();
     private static final long QUIET_INTERVAL_NANOS = 500_000_000L;
     private static final long MAX_DEFER_NANOS = 5_000_000_000L;
     private static final long FAILURE_LOG_INTERVAL_MILLIS = 5000L;
@@ -25,13 +32,16 @@ public final class RoxyVoxyRendererReloadCompat {
     }
 
     public static void beginIrisReload() {
+        long generation = beginExplicitReloadGeneration();
         PENDING.set(null);
         Accessors current = getAccessors();
         if (current == null) return;
+        Object world = null;
+        Object levelRenderer = null;
         try {
             Object minecraft = current.minecraftInstance.invoke(null);
-            Object world = minecraft == null ? null : current.level.get(minecraft);
-            Object levelRenderer = minecraft == null ? null : current.levelRenderer.get(minecraft);
+            world = minecraft == null ? null : current.level.get(minecraft);
+            levelRenderer = minecraft == null ? null : current.levelRenderer.get(minecraft);
             if (world == null || levelRenderer == null) return;
 
             Method shutdownRenderer = levelRenderer.getClass().getMethod("voxy$shutdownRenderer");
@@ -40,7 +50,9 @@ public final class RoxyVoxyRendererReloadCompat {
             shutdownRenderer.invoke(levelRenderer);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
             IRIS_RELOAD.remove();
-            logFailure("Unable to retire Voxy before an Iris pipeline reload", exception);
+            Throwable cause = rootCause(exception);
+            if (isFatal(exception)) quarantine(world, levelRenderer, generation);
+            logFailure("Unable to retire Voxy before an Iris pipeline reload", cause);
         }
     }
 
@@ -51,8 +63,7 @@ public final class RoxyVoxyRendererReloadCompat {
 
         PendingReload pending = PENDING.get();
         if (pending != null
-                && pending.levelRenderer == state.levelRenderer
-                && pending.world == state.world) {
+                && pending.matches(state.levelRenderer, state.world)) {
             IRIS_RELOAD.remove();
             return;
         }
@@ -67,10 +78,11 @@ public final class RoxyVoxyRendererReloadCompat {
     }
 
     public static void invokeImmediateVoxyReload(Object levelRenderer) {
+        beginExplicitReloadGeneration();
         try {
             levelRenderer.getClass().getMethod("allChanged").invoke(levelRenderer);
         } catch (InvocationTargetException exception) {
-            Throwable cause = exception.getCause();
+            Throwable cause = rootCause(exception);
             if (cause instanceof RuntimeException runtime) throw runtime;
             if (cause instanceof Error error) throw error;
             throw new IllegalStateException("Unable to invoke Minecraft's renderer reload", cause);
@@ -88,21 +100,37 @@ public final class RoxyVoxyRendererReloadCompat {
         return deferred;
     }
 
-    private static boolean deferReload(Object levelRenderer) {
+    public static boolean isRendererReloadBlocked(Object world, Object levelRenderer) {
+        return isQuarantined(world, levelRenderer);
+    }
 
+    private static boolean deferReload(Object levelRenderer) {
+        Object world = null;
+        Object currentLevelRenderer = null;
         Accessors current = getAccessors();
         if (current == null) return false;
         try {
             Object minecraft = current.minecraftInstance.invoke(null);
-            Object world = minecraft == null ? null : current.level.get(minecraft);
-            Object currentRenderer = minecraft == null ? null : current.levelRenderer.get(minecraft);
-            if (world == null || currentRenderer != levelRenderer) return false;
+            world = minecraft == null ? null : current.level.get(minecraft);
+            currentLevelRenderer = minecraft == null ? null : current.levelRenderer.get(minecraft);
+            if (world == null || currentLevelRenderer != levelRenderer) return false;
 
             Method shutdownRenderer = levelRenderer.getClass().getMethod("voxy$shutdownRenderer");
             Method createRenderer = levelRenderer.getClass().getMethod("voxy$createRenderer");
             Method getRenderSystem = levelRenderer.getClass().getMethod("voxy$getRenderSystem");
-            Object renderer = getRenderSystem.invoke(levelRenderer);
+            Object renderer;
+            try {
+                renderer = getRenderSystem.invoke(levelRenderer);
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+                Throwable cause = rootCause(exception);
+                if (!isFatal(exception)) throw exception;
+                quarantine(world, levelRenderer, RELOAD_GENERATION.get());
+                logFailure("Quarantined automatic Voxy renderer reload after a fatal bridge failure", cause);
+                return true;
+            }
+            if (isQuarantined(world, levelRenderer)) return true;
             long now = System.nanoTime();
+            long generation = RELOAD_GENERATION.get();
             PendingReload next = new PendingReload(
                     levelRenderer,
                     world,
@@ -110,33 +138,41 @@ public final class RoxyVoxyRendererReloadCompat {
                     shutdownRenderer,
                     createRenderer,
                     getRenderSystem,
+                    generation,
                     now,
                     now
             );
             for (;;) {
                 PendingReload pending = PENDING.get();
-                if (pending != null
-                        && pending.levelRenderer == next.levelRenderer
-                        && pending.world == next.world) {
+                if (pending != null && pending.generation == generation && pending.matches(levelRenderer, world)) {
                     next = new PendingReload(
-                            pending.levelRenderer,
-                            pending.world,
-                            pending.renderer,
+                            levelRenderer,
+                            world,
+                            pending.renderer.get(),
                             pending.shutdownRenderer,
                             pending.createRenderer,
                             pending.getRenderSystem,
+                            pending.generation,
                             pending.firstRequestedAtNanos,
                             now
                     );
                 }
                 if (PENDING.compareAndSet(pending, next)) {
-                    if (pending == null || pending.levelRenderer != next.levelRenderer || pending.world != next.world) {
+                    if (pending == null || pending.generation != generation || !pending.matches(levelRenderer, world)) {
                         LOGGER.info("Deferred Voxy renderer reload until the client render state is stable");
                     }
                     return true;
                 }
             }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+            Throwable cause = rootCause(exception);
+            if (isFatal(exception)) {
+                if (world != null && currentLevelRenderer == levelRenderer) {
+                    quarantine(world, levelRenderer, RELOAD_GENERATION.get());
+                }
+                logFailure("Quarantined automatic Voxy renderer reload after a fatal bridge failure", cause);
+                return true;
+            }
             return false;
         }
     }
@@ -151,7 +187,16 @@ public final class RoxyVoxyRendererReloadCompat {
             Object minecraft = current.minecraftInstance.invoke(null);
             Object world = minecraft == null ? null : current.level.get(minecraft);
             Object levelRenderer = minecraft == null ? null : current.levelRenderer.get(minecraft);
-            if (world == null || levelRenderer != pending.levelRenderer || world != pending.world) {
+            Object expectedWorld = pending.world.get();
+            Object expectedLevelRenderer = pending.levelRenderer.get();
+            if (world == null || expectedWorld == null || expectedLevelRenderer == null
+                    || levelRenderer != expectedLevelRenderer || world != expectedWorld
+                    || pending.generation != RELOAD_GENERATION.get()) {
+                PENDING.compareAndSet(pending, null);
+                clearQuarantineForDifferentWorld(world);
+                return;
+            }
+            if (isQuarantined(world, levelRenderer)) {
                 PENDING.compareAndSet(pending, null);
                 return;
             }
@@ -163,32 +208,44 @@ public final class RoxyVoxyRendererReloadCompat {
 
             if (!PENDING.compareAndSet(pending, null)) return;
             try {
-                pending.shutdownRenderer.invoke(pending.levelRenderer);
-                pending.createRenderer.invoke(pending.levelRenderer);
+                pending.shutdownRenderer.invoke(expectedLevelRenderer);
+                pending.createRenderer.invoke(expectedLevelRenderer);
                 if (quietNanos >= QUIET_INTERVAL_NANOS) {
                     LOGGER.info("Applied deferred Voxy renderer reload after the client render state stabilized");
                 } else {
                     LOGGER.warn("Applied deferred Voxy renderer reload after the maximum stabilization wait elapsed");
                 }
             } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+                Throwable cause = rootCause(exception);
+                if (isFatal(exception)) {
+                    quarantine(pending, cause);
+                    return;
+                }
                 try {
-                    Object renderer = pending.getRenderSystem.invoke(pending.levelRenderer);
-                    if (renderer == null || renderer == pending.renderer) restorePending(pending);
+                    Object renderer = pending.getRenderSystem.invoke(expectedLevelRenderer);
+                    if (renderer == null || renderer == pending.renderer.get()) restorePending(pending);
                 } catch (ReflectiveOperationException | RuntimeException | LinkageError inspectionFailure) {
                     exception.addSuppressed(inspectionFailure);
-                    restorePending(pending);
+                    Throwable inspectionCause = rootCause(inspectionFailure);
+                    if (isFatal(inspectionFailure)) quarantine(pending, inspectionCause);
+                    else restorePending(pending);
                 }
                 long now = System.currentTimeMillis();
                 if (now - lastFailureAt >= FAILURE_LOG_INTERVAL_MILLIS) {
                     lastFailureAt = now;
-                    LOGGER.warn("Unable to apply deferred Voxy renderer reload", exception);
+                    LOGGER.warn("Unable to apply deferred Voxy renderer reload", cause);
                 }
             }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+            Throwable cause = rootCause(exception);
+            if (isFatal(exception)) {
+                quarantine(pending, cause);
+                return;
+            }
             long now = System.currentTimeMillis();
             if (now - lastFailureAt >= FAILURE_LOG_INTERVAL_MILLIS) {
                 lastFailureAt = now;
-                LOGGER.warn("Unable to inspect deferred Voxy renderer reload state", exception);
+                LOGGER.warn("Unable to inspect deferred Voxy renderer reload state", cause);
             }
         }
     }
@@ -200,20 +257,101 @@ public final class RoxyVoxyRendererReloadCompat {
             Object minecraft = current.minecraftInstance.invoke(null);
             Object world = minecraft == null ? null : current.level.get(minecraft);
             Object levelRenderer = minecraft == null ? null : current.levelRenderer.get(minecraft);
-            if (world == pending.world && levelRenderer == pending.levelRenderer) {
+            Object expectedWorld = pending.world.get();
+            Object expectedLevelRenderer = pending.levelRenderer.get();
+            if (world != null && world == expectedWorld && levelRenderer == expectedLevelRenderer
+                    && pending.generation == RELOAD_GENERATION.get()
+                    && !isQuarantined(world, levelRenderer)) {
                 PENDING.compareAndSet(null, new PendingReload(
-                        pending.levelRenderer,
-                        pending.world,
-                        pending.renderer,
+                        expectedLevelRenderer,
+                        world,
+                        pending.renderer.get(),
                         pending.shutdownRenderer,
                         pending.createRenderer,
                         pending.getRenderSystem,
+                        pending.generation,
                         pending.firstRequestedAtNanos,
                         System.nanoTime()
                 ));
             }
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+            logFailure("Unable to restore a deferred Voxy renderer reload", rootCause(exception));
         }
+    }
+
+    private static long beginExplicitReloadGeneration() {
+        long generation = RELOAD_GENERATION.incrementAndGet();
+        QUARANTINE.set(null);
+        return generation;
+    }
+
+    private static boolean isQuarantined(Object world, Object levelRenderer) {
+        Quarantine quarantine = QUARANTINE.get();
+        if (quarantine == null) return false;
+        if (quarantine.generation != RELOAD_GENERATION.get()) {
+            QUARANTINE.compareAndSet(quarantine, null);
+            return false;
+        }
+        Object quarantinedWorld = quarantine.world.get();
+        Object quarantinedLevelRenderer = quarantine.levelRenderer.get();
+        if (quarantinedWorld == null || quarantinedLevelRenderer == null) {
+            QUARANTINE.compareAndSet(quarantine, null);
+            return false;
+        }
+        if (world != quarantinedWorld) {
+            QUARANTINE.compareAndSet(quarantine, null);
+            return false;
+        }
+        return levelRenderer == quarantinedLevelRenderer;
+    }
+
+    private static void clearQuarantineForDifferentWorld(Object world) {
+        Quarantine quarantine = QUARANTINE.get();
+        if (quarantine == null) return;
+        Object quarantinedWorld = quarantine.world.get();
+        if (world == null || quarantinedWorld == null || world != quarantinedWorld) {
+            QUARANTINE.compareAndSet(quarantine, null);
+        }
+    }
+
+    private static void quarantine(PendingReload pending, Throwable cause) {
+        if (pending.generation != RELOAD_GENERATION.get()) return;
+        Object levelRenderer = pending.levelRenderer.get();
+        Object world = pending.world.get();
+        if (world == null || levelRenderer == null) return;
+        QUARANTINE.set(new Quarantine(world, levelRenderer, pending.generation));
+        PENDING.compareAndSet(pending, null);
+        logFailure("Quarantined Voxy renderer reload after a fatal compatibility failure", cause);
+    }
+
+    private static void quarantine(Object world, Object levelRenderer, long generation) {
+        if (generation != RELOAD_GENERATION.get() || world == null || levelRenderer == null) return;
+        QUARANTINE.set(new Quarantine(world, levelRenderer, generation));
+    }
+
+    private static Throwable rootCause(Throwable failure) {
+        Throwable current = failure;
+        Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        while (current != null && seen.add(current)) {
+            Throwable next = current instanceof InvocationTargetException invocation
+                    ? invocation.getTargetException()
+                    : current.getCause();
+            if (next == null || next == current || seen.contains(next)) return current;
+            current = next;
+        }
+        return failure;
+    }
+
+    private static boolean isFatal(Throwable failure) {
+        Set<Throwable> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        for (Throwable current = failure; current != null && seen.add(current); current = current.getCause()) {
+            if (current instanceof LinkageError) return true;
+            String name = current.getClass().getName();
+            if (name.equals("org.spongepowered.asm.mixin.transformer.throwables.MixinTransformerError")
+                    || name.equals("org.spongepowered.asm.mixin.transformer.throwables.MixinApplyError")
+                    || name.equals("org.spongepowered.asm.mixin.injection.throwables.InjectionError")) return true;
+        }
+        return false;
     }
 
     private static Accessors getAccessors() {
@@ -266,16 +404,58 @@ public final class RoxyVoxyRendererReloadCompat {
     private record Accessors(Method minecraftInstance, Field level, Field levelRenderer) {
     }
 
-    private record PendingReload(
-            Object levelRenderer,
-            Object world,
-            Object renderer,
-            Method shutdownRenderer,
-            Method createRenderer,
-            Method getRenderSystem,
-            long firstRequestedAtNanos,
-            long lastRequestedAtNanos
-    ) {
+    private static final class PendingReload {
+        private final WeakReference<Object> levelRenderer;
+        private final WeakReference<Object> world;
+        private final WeakReference<Object> renderer;
+        private final Method shutdownRenderer;
+        private final Method createRenderer;
+        private final Method getRenderSystem;
+        private final long generation;
+        private final long firstRequestedAtNanos;
+        private final long lastRequestedAtNanos;
+
+        private PendingReload(
+                Object levelRenderer,
+                Object world,
+                Object renderer,
+                Method shutdownRenderer,
+                Method createRenderer,
+                Method getRenderSystem,
+                long generation,
+                long firstRequestedAtNanos,
+                long lastRequestedAtNanos
+        ) {
+            this.levelRenderer = new WeakReference<>(levelRenderer);
+            this.world = new WeakReference<>(world);
+            this.renderer = new WeakReference<>(renderer);
+            this.shutdownRenderer = shutdownRenderer;
+            this.createRenderer = createRenderer;
+            this.getRenderSystem = getRenderSystem;
+            this.generation = generation;
+            this.firstRequestedAtNanos = firstRequestedAtNanos;
+            this.lastRequestedAtNanos = lastRequestedAtNanos;
+        }
+
+        private boolean matches(Object levelRenderer, Object world) {
+            return this.levelRenderer.get() == levelRenderer && this.world.get() == world;
+        }
+    }
+
+    private static final class Quarantine {
+        private final WeakReference<Object> world;
+        private final WeakReference<Object> levelRenderer;
+        private final long generation;
+
+        private Quarantine(
+                Object world,
+                Object levelRenderer,
+                long generation
+        ) {
+            this.world = new WeakReference<>(world);
+            this.levelRenderer = new WeakReference<>(levelRenderer);
+            this.generation = generation;
+        }
     }
 
     private static final class IrisReloadState {

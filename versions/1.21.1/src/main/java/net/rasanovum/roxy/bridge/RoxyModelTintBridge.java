@@ -25,7 +25,7 @@ public final class RoxyModelTintBridge {
             int index = (int) quad.getClass().getMethod("getTintIndex").invoke(quad);
             if (index < 0) return layerMetadata;
             if (net.rasanovum.roxy.tfc.TfcVoxyBridge.isBakingVariant())
-                return index == 0 ? net.rasanovum.roxy.tfc.TfcVoxyBridge.tintMetadata(layerMetadata) : layerMetadata;
+                return net.rasanovum.roxy.tfc.TfcVoxyBridge.tintMetadata(layerMetadata, index);
             TintPlan plan = PLANS.computeIfAbsent(state, ignored -> new TintPlan());
             synchronized (plan) {
                 Tint tint = plan.tints.get(index);

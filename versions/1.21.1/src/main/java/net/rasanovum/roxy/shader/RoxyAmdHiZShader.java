@@ -11,11 +11,11 @@ public final class RoxyAmdHiZShader {
     private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
     private static final String SCREENSPACE_PATH = "/assets/voxy/shaders/lod/hierarchical/screenspace.glsl";
     private static final String SAMPLE = "float sp = texelFetch(hizDepthSampler, ivec2(x, y), ml).r;";
-    private static final String PATCH_MARKER = "// Roxy AMD HiZ depth-sampling compatibility";
+    private static final String PATCH_MARKER = "#define ROXY_AMD_HIZ_COMPAT";
     private static final String PATCH = SAMPLE + """
 
 #ifndef USE_REVERSE_Z
-            // Roxy AMD HiZ depth-sampling compatibility
+            #define ROXY_AMD_HIZ_COMPAT
             if (sp <= 0.0001f) {
                 sp = 1.0f;
             }

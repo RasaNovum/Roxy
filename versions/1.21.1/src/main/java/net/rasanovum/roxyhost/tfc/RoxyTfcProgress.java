@@ -45,6 +45,10 @@ public final class RoxyTfcProgress {
     }
 
     private static void pollRendererReload(Minecraft minecraft) {
+        if (RoxyVoxyRendererReloadCompat.isRendererReloadBlocked(minecraft.level, minecraft.levelRenderer)) {
+            clearReloadState(false);
+            return;
+        }
         boolean requested = TfcVoxyBridge.updateEnabledState(minecraft.level);
         if (reloadQueued) {
             if (minecraft.level != reloadWorld || minecraft.levelRenderer != reloadLevelRenderer) {
@@ -129,7 +133,6 @@ public final class RoxyTfcProgress {
         var event = new LerpingBossEvent(ID, title, fraction,
                 unknown > 0 ? BossEvent.BossBarColor.YELLOW : BossEvent.BossBarColor.GREEN,
                 BossEvent.BossBarOverlay.PROGRESS, false, false, false);
-        // Update only the local HUD; no boss event is sent to the server or other players.
         overlay.update(ClientboundBossEventPacket.createAddPacket(event));
         visible = true;
     }

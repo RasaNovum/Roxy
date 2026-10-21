@@ -15,7 +15,6 @@ public final class TfcRefreshScheduler {
     private int pending;
     private long ticks;
     private long submittedCount, acceptedCount;
-    private long revision = Long.MIN_VALUE;
     private int cameraX, cameraZ;
     private Object renderer;
     private Access access;
@@ -46,9 +45,6 @@ public final class TfcRefreshScheduler {
         (distanceSquared(key)<=128.0*128?near:far).add(key);
     }
     public synchronized void requestResidentSweep() { for(long key:tracked.keySet())request(key); }
-    public synchronized void advanceRevision(long value) {
-        if(revision!=value){revision=value;requestResidentSweep();}
-    }
     public synchronized long begin(long key) {
         State state=tracked.get(key);
         return state==null?-1:state.desired;
@@ -113,7 +109,7 @@ public final class TfcRefreshScheduler {
         Iterator<Long> it=queue.iterator();if(!it.hasNext())return null;Long key=it.next();it.remove();return key;
     }
     private void remove(long key){State s=tracked.remove(key);near.remove(key);far.remove(key);if(s!=null&&s.desired>s.completed)pending--;}
-    public synchronized void reset(){tracked.clear();near.clear();far.clear();pruning.clear();pending=0;ticks=0;submittedCount=0;acceptedCount=0;cameraX=0;cameraZ=0;renderer=null;access=null;revision=Long.MIN_VALUE;failed=false;}
+    public synchronized void reset(){tracked.clear();near.clear();far.clear();pruning.clear();pending=0;ticks=0;submittedCount=0;acceptedCount=0;cameraX=0;cameraZ=0;renderer=null;access=null;failed=false;}
     public synchronized boolean complete(long key){State state=tracked.get(key);return state==null||state.desired==state.completed;}
     public synchronized long submittedCount(){return submittedCount;}
     public synchronized long acceptedCount(){return acceptedCount;}

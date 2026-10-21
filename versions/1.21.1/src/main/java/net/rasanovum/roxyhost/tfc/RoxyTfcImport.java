@@ -10,7 +10,6 @@ import net.minecraft.nbt.Tag;
 import net.rasanovum.roxy.tfc.TfcCompatConfig;
 import org.slf4j.LoggerFactory;
 
-/** Reads the versioned TFC 4.2.x chunk attachment without constructing a chunk. */
 public final class RoxyTfcImport {
     private static volatile Method engine;
     private static volatile Method capture;

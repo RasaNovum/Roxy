@@ -87,10 +87,6 @@ public final class RoxyLodEntityShader {
         }
     }
 
-    public static Object patchColorwheelResult(Object result) {
-        return patchColorwheelResult(result, null);
-    }
-
     private static boolean createPresent() {
         try {
             LoadingModList mods = LoadingModList.get();

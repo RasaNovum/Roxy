@@ -19,6 +19,7 @@ import net.neoforged.neoforgespi.language.IModInfo;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
+import java.lang.reflect.InvocationTargetException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystem;
 import java.nio.file.FileSystems;
@@ -46,9 +47,9 @@ public final class RoxyFabricLoaderImpl implements FabricLoader {
 
     private synchronized void initializeEntrypoints() {
         if (initialized) return;
-        initialized = true;
         invokeEntrypoints("main", ModInitializer.class);
         invokeEntrypoints("client", ClientModInitializer.class);
+        initialized = true;
     }
 
     public static CustomValue getCustomValue(ModMetadata metadata, String key) {
@@ -80,11 +81,15 @@ public final class RoxyFabricLoaderImpl implements FabricLoader {
                     }
                 }
             } catch (ReflectiveOperationException | LinkageError exception) {
-                System.err.println("Roxy: unable to initialize Fabric entrypoint " + className + ": " + exception);
-                exception.printStackTrace(System.err);
+                Throwable cause = exception instanceof InvocationTargetException invocation
+                        && invocation.getCause() != null ? invocation.getCause() : exception;
+                if (cause instanceof VirtualMachineError error) throw error;
+                if (cause instanceof ThreadDeath death) throw death;
+                throw new RuntimeException("Roxy: Voxy " + key + " entrypoint failed: " + className, cause);
+            } catch (VirtualMachineError | ThreadDeath fatal) {
+                throw fatal;
             } catch (Throwable throwable) {
-                System.err.println("Roxy: Fabric " + key + " entrypoint failed: " + throwable);
-                throwable.printStackTrace(System.err);
+                throw new RuntimeException("Roxy: Voxy " + key + " entrypoint failed: " + className, throwable);
             }
         }
     }
@@ -135,7 +140,11 @@ public final class RoxyFabricLoaderImpl implements FabricLoader {
                 Class<?> entrypointClass = Class.forName(className, true, contextLoader);
                 instances.add(entrypointClass.getDeclaredConstructor().newInstance());
             } catch (ReflectiveOperationException | LinkageError exception) {
-                System.err.println("Roxy: unable to create Fabric entrypoint " + className + ": " + exception);
+                Throwable cause = exception instanceof InvocationTargetException invocation
+                        && invocation.getCause() != null ? invocation.getCause() : exception;
+                if (cause instanceof VirtualMachineError error) throw error;
+                if (cause instanceof ThreadDeath death) throw death;
+                throw new RuntimeException("Roxy: unable to create Voxy " + key + " entrypoint " + className, cause);
             }
         }
         return List.copyOf(instances);

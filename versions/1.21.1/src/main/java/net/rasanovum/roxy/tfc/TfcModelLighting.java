@@ -4,8 +4,10 @@ public final class TfcModelLighting {
     private TfcModelLighting() {}
 
     public static int modelKey(int tint) {
-        return TfcVoxyBridge.isBakingVariant() && tint == -1 ? -2 : tint;
+        return TfcVoxyBridge.modelKey(tint);
     }
+
+    public static int modelTint(int tint) { return TfcVoxyBridge.modelTint(tint); }
 
     public static int flags(int flags) {
         return TfcVoxyBridge.isBakingVariant() ? flags | 32 : flags;

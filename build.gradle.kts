@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "net.rasanovum"
-version = "0.4.1-d-1"
+version = "0.4.1"
 
 val roxyZink = providers.gradleProperty("roxyZink").map(String::toBoolean).orElse(false)
 val macRuntime = providers.gradleProperty("roxyMacOSRuntime")
@@ -270,6 +270,10 @@ project(":1.21.1") {
                 into("roxy/embedded")
                 rename { "RoxyTfcBackfill.bin" }
             }
+            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/tfc/RoxyTfcTerrainRefresh.class")) {
+                into("roxy/embedded")
+                rename { "RoxyTfcTerrainRefresh.bin" }
+            }
             from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/tfc/RoxyTfcImport\$ChunkCapture.class")) {
                 into("roxy/embedded")
                 rename { "RoxyTfcImport\$ChunkCapture.bin" }
@@ -334,7 +338,6 @@ project(":1.21.1") {
         val packagedMainClasses = tasks.register<Sync>("copyPackagedRoxyClasses") {
             dependsOn(tasks.named("classes"))
             from(mainOutput) {
-                // Keep conditional Fabric stubs out of MOD_CLASSES to avoid a second net.fabricmc.* supplier.
                 exclude("net/fabricmc/**")
                 exclude("net/rasanovum/roxyhost/**")
                 exclude("net/rasanovum/roxy/client/RoxyClientWarnings*.class")
@@ -398,7 +401,6 @@ project(":1.21.1") {
                                 .toList()
                         }
                     }
-                    // Do not extract lz4-java because Minecraft already supplies it on the shared runtime classpath.
                     .filterNot { it.startsWith("lz4-java-") && it.endsWith(".jar") }
                     .toSet()
                 val installedModNames = fileTree(layout.projectDirectory.dir("runs/client/mods"))
@@ -432,15 +434,12 @@ project(":1.21.1") {
                         || it == "LIBGL_DRIVERS_PATH" || it == "EGL_PLATFORM"
                 }
                 environment = devRun.environment + graphicsEnvironment
-                // The dev task inherits the shell environment. Never let an
-                // unrelated shell override restore forged extension flags.
                 environment.remove("MESA_EXTENSION_OVERRIDE")
                 if (!providers.gradleProperty("roxyDiagnosticGL46")
                         .map(String::toBoolean).orElse(false).get()) {
                     environment.remove("MESA_GL_VERSION_OVERRIDE")
                     environment.remove("MESA_GLSL_VERSION_OVERRIDE")
                 }
-                // Keep the desktop/Gradle process from injecting another development-output copy.
                 environment.remove("CLASSPATH")
                 environment.remove("MOD_CLASSES")
                 jvmArgs = (devRun.jvmArgs + jvmArgs.orEmpty())

@@ -34,7 +34,6 @@ public abstract class RoxyGameRendererMixin {
         return getProjectionMatrix((double) fov);
     }
 
-    // Skip the cosmetic world icon capture because it can fault with Voxy's separate OpenGL pipeline.
     @Inject(method = "takeAutoScreenshot", at = @At("HEAD"), cancellable = true)
     private void roxy$skipAutoScreenshot(Path path, CallbackInfo ci) {
         ci.cancel();

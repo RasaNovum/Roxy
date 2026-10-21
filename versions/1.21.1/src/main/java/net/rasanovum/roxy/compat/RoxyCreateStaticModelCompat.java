@@ -186,7 +186,6 @@ public final class RoxyCreateStaticModelCompat {
         float x = ("upward".equals(slope) || "downward".equals(slope)) ? 90 : 0;
         if ("downward".equals(slope)) x += 180;
         if ("sideways".equals(slope)) x += 90;
-        if ("vertical".equals(slope) && ("east".equals(facing) || "west".equals(facing))) x += 0;
         float y = switch (facing) {
             case "south" -> 0;
             case "west" -> 90;
