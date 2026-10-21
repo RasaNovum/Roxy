@@ -43,7 +43,6 @@ public final class RoxyBetterFogCompat {
                 return color;
             }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
-            // Better Fog is optional; retain Voxy's original uniform on API failures.
         }
         return null;
     }

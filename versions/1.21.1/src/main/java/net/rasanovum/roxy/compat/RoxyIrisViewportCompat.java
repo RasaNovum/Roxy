@@ -11,7 +11,6 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
-// Bridges the Iris viewport capture that Voxy expects from newer Sodium.
 public final class RoxyIrisViewportCompat {
     private static final Logger LOGGER = LogUtils.getLogger();
     private static final String IRIS_UTIL = "me.cortex.voxy.client.core.util.IrisUtil";
@@ -71,7 +70,6 @@ public final class RoxyIrisViewportCompat {
                 }
             }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
-            // Iris and Voxy remain optional at this boundary. If their runtime ABI changes, the normal non-Iris viewport path must remain usable.
             if (!captureFailureLogged) {
                 captureFailureLogged = true;
                 LOGGER.warn("Roxy could not apply Voxy's Iris viewport bridge", exception);
@@ -184,7 +182,6 @@ public final class RoxyIrisViewportCompat {
                 Class.forName("net.minecraft.client.Minecraft", false, candidate);
                 return candidate;
             } catch (ClassNotFoundException ignored) {
-                // Try the next loader.
             }
         }
         throw new IllegalStateException("Unable to locate Minecraft's client class loader");

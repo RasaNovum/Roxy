@@ -7,7 +7,6 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.slf4j.LoggerFactory;
 
-/** A bounded climate journal; disk work never runs on a render or mesh thread. */
 public final class TfcClimateStore implements AutoCloseable {
     private static final int MAGIC = 0x52544643;
     private static final int VERSION = 1;
@@ -22,7 +21,6 @@ public final class TfcClimateStore implements AutoCloseable {
     });
     private final AtomicBoolean flushing = new AtomicBoolean();
     private volatile boolean closed;
-    private volatile long revision;
     private volatile long loadRevision;
     private Path path;
     private volatile boolean readOnly;
@@ -49,7 +47,6 @@ public final class TfcClimateStore implements AutoCloseable {
         snapshots.put(key,value);
         pending.put(key,value);
         trim(snapshots); trim(pending);
-        revision++;
         return true;
     }
 
@@ -57,7 +54,6 @@ public final class TfcClimateStore implements AutoCloseable {
         while (map.size() > LIMIT) map.remove(map.keySet().iterator().next());
     }
 
-    public long revision() { return revision; }
     public long loadRevision() { return loadRevision; }
     public synchronized int size() { return snapshots.size(); }
 
@@ -97,10 +93,8 @@ public final class TfcClimateStore implements AutoCloseable {
                 trim(loaded);
                 snapshots.clear();
                 snapshots.putAll(loaded);
-                revision++;
                 loadRevision++;
             }
-            // Rewrite once after loading so an interrupted trailing record cannot poison later appends.
             compact();
         } catch (IOException failure) {
             readOnly = true;

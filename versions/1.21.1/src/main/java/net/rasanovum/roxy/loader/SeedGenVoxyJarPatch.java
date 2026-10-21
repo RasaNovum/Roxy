@@ -463,7 +463,6 @@ final class SeedGenVoxyJarPatch {
             if (owner.equals(WORLD_SECTION) && name.equals("release") && descriptor.equals("()I")) {
                 sectionReleases++;
                 if (sectionReleases > 2) throw unsupported(LADDER_WRITER + ".class", "release", "(I)V");
-                // The receiver is already on the stack. Save it while the held-list slot is detached.
                 super.visitVarInsn(Opcodes.ASTORE, 4);
                 if (sectionReleases == 2) super.visitLabel(releaseTryStart);
                 super.visitVarInsn(Opcodes.ALOAD, 0);

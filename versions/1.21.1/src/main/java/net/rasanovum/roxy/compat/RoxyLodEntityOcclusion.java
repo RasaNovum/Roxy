@@ -75,13 +75,6 @@ public final class RoxyLodEntityOcclusion {
         }
     }
 
-    public static void invalidateFrame() {
-        synchronized (LOCK) {
-            frame = null;
-            frameOpen = false;
-        }
-    }
-
     public static void reset() {
         synchronized (LOCK) {
             frame = null;

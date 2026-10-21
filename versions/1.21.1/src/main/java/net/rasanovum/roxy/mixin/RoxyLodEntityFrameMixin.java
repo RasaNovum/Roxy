@@ -6,8 +6,6 @@ import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.LightTexture;
 import net.rasanovum.roxy.compat.RoxyLodEntityOcclusion;
-import net.rasanovum.roxy.compat.RoxyIrisNativeTransFade;
-import net.rasanovum.roxy.compat.RoxyIrisEffectsDepth;
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -22,7 +20,5 @@ public abstract class RoxyLodEntityFrameMixin {
                                     Matrix4f positionMatrix, Matrix4f projectionMatrix,
                                     CallbackInfo callbackInfo) {
         RoxyLodEntityOcclusion.beginFrame();
-        RoxyIrisNativeTransFade.beginFrame();
-        RoxyIrisEffectsDepth.beginFrame();
     }
 }

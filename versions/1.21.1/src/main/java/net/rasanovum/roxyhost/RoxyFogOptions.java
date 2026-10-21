@@ -6,7 +6,6 @@ import net.caffeinemc.mods.sodium.api.config.structure.ConfigBuilder;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.rasanovum.roxy.fog.RoxyFogConfig;
-import net.rasanovum.roxy.blend.RoxyBlendConfig;
 import net.rasanovum.roxy.compat.RoxyFogModCompat;
 import net.rasanovum.roxy.compat.RoxyBetterFogCompat;
 import net.rasanovum.roxy.tfc.TfcCompatConfig;
@@ -19,10 +18,6 @@ public final class RoxyFogOptions {
             ResourceLocation.fromNamespaceAndPath("voxy", "eviromental_fog");
     private static final ResourceLocation TFC_DAY_CYCLE =
             ResourceLocation.fromNamespaceAndPath("roxy", "tfc_day_cycle_lod_updates");
-    private static final ResourceLocation LOD_FADE_ENABLED =
-            ResourceLocation.fromNamespaceAndPath("roxy", "lod_fade_enabled");
-    private static final ResourceLocation LOD_FADE_WIDTH =
-            ResourceLocation.fromNamespaceAndPath("roxy", "lod_fade_width");
 
     private RoxyFogOptions() {}
 
@@ -75,26 +70,6 @@ public final class RoxyFogOptions {
             modOptions.addPage(page);
         }
 
-        RoxyBlendConfig.Settings blendSettings = RoxyBlendConfig.get();
-        var blendPage = builder.createOptionPage().setName(blendText("page"));
-        var blendEnabled = builder.createBooleanOption(LOD_FADE_ENABLED)
-                .setName(blendText("enabled"))
-                .setTooltip(blendText("enabled.tooltip"))
-                .setDefaultValue(true).setStorageHandler(RoxyBlendConfig::save)
-                .setBinding(v -> blendSettings.enabled = v, () -> blendSettings.enabled)
-                .setControlHiddenWhenDisabled(false);
-        var blendWidth = builder.createIntegerOption(LOD_FADE_WIDTH)
-                .setName(blendText("width"))
-                .setTooltip(blendText("width.tooltip"))
-                .setDefaultValue(RoxyBlendConfig.Settings.DEFAULT_WIDTH_CHUNKS).setRange(1, 8, 1)
-                .setValueFormatter(v -> Component.translatable("roxy.blend.chunks", v))
-                .setStorageHandler(RoxyBlendConfig::save)
-                .setBinding(v -> blendSettings.widthChunks = v, () -> blendSettings.widthChunks)
-                .setControlHiddenWhenDisabled(false)
-                .setEnabledProvider(state -> state.readBooleanOption(LOD_FADE_ENABLED), LOD_FADE_ENABLED);
-        blendPage.addOption(blendEnabled).addOption(blendWidth);
-        modOptions.addPage(blendPage);
-
         var lodUpdatesPage = builder.createOptionPage().setName(tfcText("page"));
         var tfc = builder.createBooleanOption(TFC_DAY_CYCLE)
                 .setName(tfcText("day_cycle"))
@@ -132,10 +107,6 @@ public final class RoxyFogOptions {
 
     private static Component tfcText(String key) {
         return Component.translatable("roxy.tfc." + key);
-    }
-
-    private static Component blendText(String key) {
-        return Component.translatable("roxy.blend." + key);
     }
 
     private static Component tfcTooltip() {

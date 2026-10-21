@@ -104,7 +104,6 @@ public final class RoxyTextureBridge {
                 Class.forName("net.minecraft.client.Minecraft", false, candidate);
                 return candidate;
             } catch (ClassNotFoundException ignored) {
-                // Try the next loader.
             }
         }
         throw new IllegalStateException("Unable to locate Minecraft's client class loader");

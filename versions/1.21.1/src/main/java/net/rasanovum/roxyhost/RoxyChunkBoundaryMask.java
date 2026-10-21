@@ -5,13 +5,7 @@ import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import net.caffeinemc.mods.sodium.client.render.SodiumWorldRenderer;
 import net.caffeinemc.mods.sodium.client.render.chunk.RenderSectionManager;
-import net.caffeinemc.mods.sodium.client.render.chunk.RenderSection;
-import net.caffeinemc.mods.sodium.client.render.chunk.data.SectionRenderDataUnsafe;
-import net.caffeinemc.mods.sodium.client.render.chunk.terrain.DefaultTerrainRenderPasses;
-import net.caffeinemc.mods.sodium.client.render.chunk.terrain.TerrainRenderPass;
-import net.caffeinemc.mods.sodium.client.model.quad.properties.ModelQuadFacing;
 import net.minecraft.core.SectionPos;
-import net.rasanovum.roxy.blend.RoxyLodFade;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -23,7 +17,6 @@ public final class RoxyChunkBoundaryMask {
     private final LongOpenHashSet additions;
     private final LongOpenHashSet removals;
     private final LongOpenHashSet visible = new LongOpenHashSet();
-    private final LongOpenHashSet allVisible = new LongOpenHashSet();
     private final LongArrayList obsolete = new LongArrayList();
     private final Method addPosition;
     private final Method removePosition;
@@ -52,9 +45,6 @@ public final class RoxyChunkBoundaryMask {
     public void sync(Object viewport) {
         try {
             visible.clear();
-            allVisible.clear();
-            RoxyLodFade.beginTranslucentBoundary();
-            boolean fading = RoxyLodFade.active();
             if (managerField == null) managerField = field(SodiumWorldRenderer.class, "renderSectionManager");
             SodiumWorldRenderer sodium = SodiumWorldRenderer.instanceNullable();
             RenderSectionManager manager = sodium == null ? null : (RenderSectionManager) managerField.get(sodium);
@@ -67,35 +57,16 @@ public final class RoxyChunkBoundaryMask {
                     var region = list.getRegion();
                     while (sections.hasNext()) {
                         var section = region.getSection(sections.nextByteAsInt());
-                        if (section == null || !section.isBuilt() || section.isDisposed()) continue;
-                        allVisible.add(SectionPos.asLong(section.getChunkX(), section.getChunkY(), section.getChunkZ()));
-                        if (fading && hasGeometry(section, DefaultTerrainRenderPasses.TRANSLUCENT)) {
-                            RoxyLodFade.addTranslucentSection(section.getChunkX(), section.getChunkY(), section.getChunkZ());
-                        }
-                        if (!fading || (RoxyLodFade.keepChunkBoundary(section.getChunkX(), section.getChunkZ())
-                                && (hasGeometry(section, DefaultTerrainRenderPasses.SOLID)
-                                || hasGeometry(section, DefaultTerrainRenderPasses.CUTOUT)))) {
+                        if (section != null && section.isBuilt() && !section.isDisposed()) {
                             visible.add(SectionPos.asLong(section.getChunkX(), section.getChunkY(), section.getChunkZ()));
                         }
                     }
                 }
             }
-            RoxyLodFade.uploadTranslucentBoundary();
-            if (fading && !RoxyLodFade.active()) visible.addAll(allVisible);
             applyVisible(viewport);
         } catch (ReflectiveOperationException exception) {
             throw new IllegalStateException("Unable to synchronize Voxy's visible chunk boundary", exception);
         }
-    }
-
-    private static boolean hasGeometry(RenderSection section, TerrainRenderPass pass) {
-        var storage = section.getRegion().getStorage(pass);
-        if (storage == null) return false;
-        long pointer = storage.getDataPointer(section.getSectionIndex());
-        for (int facing = 0; facing < ModelQuadFacing.COUNT; facing++) {
-            if (SectionRenderDataUnsafe.getVertexCount(pointer, facing) != 0) return true;
-        }
-        return false;
     }
 
     private void applyVisible(Object viewport) throws ReflectiveOperationException {

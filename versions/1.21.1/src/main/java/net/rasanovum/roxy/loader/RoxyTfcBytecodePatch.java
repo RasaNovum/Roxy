@@ -146,16 +146,30 @@ final class RoxyTfcBytecodePatch implements Opcodes {
                 }
                 if (method.name.equals("addEntry") && insn instanceof MethodInsnNode invocation
                         && invocation.name.equals("getBlockStateFromBlockId")) {
+                    require(method.desc.equals("(I)Z") && invocation.getOpcode() == INVOKEVIRTUAL
+                            && invocation.owner.equals("me/cortex/voxy/common/world/other/Mapper"), "bake state lookup");
+                    LabelNode variant = new LabelNode(), ready = new LabelNode();
                     InsnList hook = new InsnList();
+                    hook.add(new VarInsnNode(ALOAD, 0));
+                    hook.add(new VarInsnNode(ILOAD, 1));
+                    hook.add(call("isVariantBake", "(Ljava/lang/Object;I)Z"));
+                    hook.add(new JumpInsnNode(IFNE, variant));
+                    method.instructions.insertBefore(insn, hook);
+                    hook = new InsnList();
+                    hook.add(new JumpInsnNode(GOTO, ready));
+                    hook.add(variant);
+                    hook.add(new FrameNode(F_NEW, 2, new Object[]{MODEL, INTEGER}, 2,
+                            new Object[]{invocation.owner, INTEGER}));
                     hook.add(new VarInsnNode(ALOAD, 0));
                     hook.add(call("resolveBakeState", "(Ljava/lang/Object;ILjava/lang/Object;)Ljava/lang/Object;"));
                     hook.add(new TypeInsnNode(CHECKCAST, Type.getReturnType(invocation.desc).getInternalName()));
-                    method.instructions.insertBefore(insn, hook);
-                    method.instructions.remove(insn);
+                    hook.add(ready);
+                    hook.add(new FrameNode(F_NEW, 2, new Object[]{MODEL, INTEGER}, 1,
+                            new Object[]{Type.getReturnType(invocation.desc).getInternalName()}));
+                    method.instructions.insert(insn, hook);
                     resolved++;
                 }
                 if (method.name.equals("processModelResult") && insn.getOpcode() == ANEWARRAY && scoped == 0) {
-                    // The first allocation follows the non-null BlockBake check in the pinned Voxy jar.
                     InsnList hook = new InsnList();
                     hook.add(new VarInsnNode(ALOAD, 0));
                     hook.add(new VarInsnNode(ALOAD, 1));
@@ -202,7 +216,7 @@ final class RoxyTfcBytecodePatch implements Opcodes {
         require(initialized == 1 && resolved == 1 && scoped == 1 && uploading == 1 && committed == 1, "model factory");
         require(lightingKeys == 1 && lightingFlags == 1 && tintValues == 1, "TFC model metadata");
         require(variantUploads == 1, "TFC variant uploader registration");
-        wrapScope(node, bake, "endBake", false);
+        protectScope(node, bake, "endBake", false);
     }
 
     private static boolean isModelTintWrite(AbstractInsnNode write) {
@@ -338,35 +352,57 @@ final class RoxyTfcBytecodePatch implements Opcodes {
             }
         }
         require(resolved == 1 && reads == 9 && neighbors == 9 && mesh != null, "section mesher: " + resolved + "/" + reads + "/" + neighbors);
-        wrapScope(node, mesh, "endMesh", true);
+        protectScope(node, mesh, "endMesh", true);
     }
 
-    private static void wrapScope(ClassNode node, MethodNode original, String end, boolean mesh) {
-        String name = original.name;
-        original.name = "roxy$tfc$" + name;
-        MethodNode wrapper = new MethodNode(ASM9, original.access, name, original.desc, original.signature,
-                original.exceptions.toArray(String[]::new));
+    private static void protectScope(ClassNode node, MethodNode method, String end, boolean mesh) {
+        Type[] arguments = Type.getArgumentTypes(method.desc);
+        Type result = Type.getReturnType(method.desc);
+        require((method.access & ACC_STATIC) == 0 && arguments.length == (mesh ? 1 : 0)
+                && (mesh ? arguments[0].getSort() == Type.OBJECT && result.getSort() == Type.OBJECT
+                : result.getSort() == Type.BOOLEAN), "scope descriptor");
+        Object[] entryLocals = mesh ? new Object[]{node.name, arguments[0].getInternalName()} : new Object[]{node.name};
+        int resultSlot = Math.max(method.maxLocals, entryLocals.length);
+        Object[] resultLocals = new Object[resultSlot + 1];
+        java.util.Arrays.fill(resultLocals, TOP);
+        System.arraycopy(entryLocals, 0, resultLocals, 0, entryLocals.length);
+        resultLocals[resultSlot] = mesh ? result.getInternalName() : INTEGER;
+
         LabelNode start = new LabelNode(), finish = new LabelNode(), handler = new LabelNode();
-        InsnList code = wrapper.instructions;
-        code.add(start);
-        if (mesh) {
-            code.add(new VarInsnNode(ALOAD, 0));
-            code.add(new VarInsnNode(ALOAD, 1));
-            code.add(call("beginMesh", "(Ljava/lang/Object;Ljava/lang/Object;)V"));
+        int returnOpcode = mesh ? ARETURN : IRETURN;
+        int exits = 0;
+        for (AbstractInsnNode instruction : method.instructions.toArray()) {
+            if (instruction.getOpcode() != returnOpcode) continue;
+            InsnList exit = new InsnList();
+            exit.add(new VarInsnNode(mesh ? ASTORE : ISTORE, resultSlot));
+            exit.add(new JumpInsnNode(GOTO, finish));
+            method.instructions.insertBefore(instruction, exit);
+            method.instructions.remove(instruction);
+            exits++;
         }
-        code.add(new VarInsnNode(ALOAD, 0));
-        if (mesh) code.add(new VarInsnNode(ALOAD, 1));
-        code.add(new MethodInsnNode(INVOKESPECIAL, node.name, original.name, original.desc, false));
+        require(exits > 0, "scope exits");
+
+        InsnList entry = new InsnList();
+        entry.add(start);
+        if (mesh) {
+            entry.add(new VarInsnNode(ALOAD, 0));
+            entry.add(new VarInsnNode(ALOAD, 1));
+            entry.add(call("beginMesh", "(Ljava/lang/Object;Ljava/lang/Object;)V"));
+        }
+        method.instructions.insert(entry);
+
+        InsnList code = method.instructions;
         code.add(finish);
+        code.add(new FrameNode(F_NEW, resultLocals.length, resultLocals, 0, new Object[]{}));
         code.add(call(end, "()V"));
-        code.add(new InsnNode(mesh ? ARETURN : IRETURN));
+        code.add(new VarInsnNode(mesh ? ALOAD : ILOAD, resultSlot));
+        code.add(new InsnNode(returnOpcode));
         code.add(handler);
-        Object[] locals = mesh ? new Object[]{node.name, Type.getArgumentTypes(original.desc)[0].getInternalName()} : new Object[]{node.name};
-        code.add(new FrameNode(F_NEW, locals.length, locals, 1, new Object[]{"java/lang/Throwable"}));
-        code.add(call(end, "()V"));
+        code.add(new FrameNode(F_NEW, entryLocals.length, entryLocals, 1, new Object[]{"java/lang/Throwable"}));
+        code.add(call(mesh ? "meshFailed" : end, "()V"));
         code.add(new InsnNode(ATHROW));
-        wrapper.tryCatchBlocks.add(new TryCatchBlockNode(start, finish, handler, null));
-        node.methods.add(wrapper);
+        method.tryCatchBlocks.add(new TryCatchBlockNode(start, finish, handler, null));
+        method.maxLocals = resultSlot + 1;
     }
 
     private static MethodInsnNode call(String name, String descriptor) {

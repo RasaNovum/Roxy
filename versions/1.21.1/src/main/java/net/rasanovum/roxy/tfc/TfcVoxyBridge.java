@@ -107,6 +107,12 @@ public final class TfcVoxyBridge {
         } catch(ReflectiveOperationException failure) { warn(failure); }
     }
 
+    public static boolean isVariantBake(Object owner,int id) {
+        Factory factory=active;
+        return factory!=null && factory.owner==owner && id>=FIRST_VARIANT
+                && id-FIRST_VARIANT<factory.variants.size();
+    }
+
     public static Object resolveBakeState(Object mapper,int id,Object owner) {
         Factory factory=active;
         if(id>=FIRST_VARIANT) {
@@ -329,6 +335,7 @@ public final class TfcVoxyBridge {
         } catch(ReflectiveOperationException failure) { warn(failure); }
     }
     public static void endMesh() { MESH.remove(); }
+    public static void meshFailed() { MESH.remove();MESH_STAMP.remove(); }
     public static void meshAccepted(long key) {
         MeshStamp stamp=MESH_STAMP.get();MESH_STAMP.remove();
         if(stamp!=null && stamp.factory.get()==active && stamp.key==key)REFRESH.accepted(key,stamp.generation);

@@ -145,7 +145,6 @@ public final class RoxyMappings {
             if (mojmap != null) {
                 targetName = mojmap.members.get(new MemberKey(member.officialOwner, member.officialName, member.officialDescriptor));
                 if (targetName == null) {
-                    // Keep the official name when no Mojmap member name exists.
                     targetName = member.officialName;
                 }
             }
@@ -396,7 +395,6 @@ public final class RoxyMappings {
                 lines = reader.lines().toList();
             }
 
-            // Collect class names first so second-pass descriptor conversion is reliable.
             for (String line : lines) {
                 if (line.isBlank() || line.startsWith("#") || line.startsWith(" ") || !line.endsWith(":")) {
                     continue;

@@ -29,7 +29,6 @@ public final class RoxyFogHorizonMixin {
         float end = RenderSystem.getShaderFogEnd();
         FogShape shape = RenderSystem.getShaderFogShape();
         try {
-            // Match the sky disc's centre height and radius, independently of terrain visibility.
             RenderSystem.setShaderFogStart(16);
             RenderSystem.setShaderFogEnd(512);
             RenderSystem.setShaderFogShape(FogShape.SPHERE);

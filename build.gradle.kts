@@ -12,7 +12,7 @@ plugins {
 }
 
 group = "net.rasanovum"
-version = "0.4.1-d-8"
+version = "0.4.1"
 
 prism {
     metadata {
@@ -203,7 +203,6 @@ project(":1.21.1") {
         val packagedMainClasses = tasks.register<Sync>("copyPackagedRoxyClasses") {
             dependsOn(tasks.named("classes"))
             from(mainOutput) {
-                // Keep conditional Fabric stubs out of MOD_CLASSES to avoid a second net.fabricmc.* supplier.
                 exclude("net/fabricmc/**")
                 exclude("net/rasanovum/roxyhost/**")
                 exclude("net/rasanovum/roxy/client/RoxyClientWarnings*.class")
@@ -245,7 +244,6 @@ project(":1.21.1") {
                                 .toList()
                         }
                     }
-                    // Do not extract lz4-java because Minecraft already supplies it on the shared runtime classpath.
                     .filterNot { it.startsWith("lz4-java-") && it.endsWith(".jar") }
                     .toSet()
                 val mainClassDirectories = setOf(packagedMainClassesDir.get().asFile)
@@ -271,7 +269,6 @@ project(":1.21.1") {
                 classpath = files(packagedClasspath)
                 workingDir = layout.projectDirectory.dir("runs/client").asFile
                 environment = devRun.environment
-                // Keep the desktop/Gradle process from injecting another development-output copy.
                 environment.remove("CLASSPATH")
                 environment.remove("MOD_CLASSES")
                 jvmArgs = devRun.jvmArgs

@@ -85,7 +85,6 @@ public final class RoxyBakedQuadBridge {
                 method.trySetAccessible();
                 return method;
             } catch (NoSuchMethodException ignored) {
-                // Continue through the Voxy class hierarchy.
             }
         }
         throw new NoSuchMethodException(type.getName() + "." + name);
@@ -98,7 +97,6 @@ public final class RoxyBakedQuadBridge {
                 field.trySetAccessible();
                 return field;
             } catch (NoSuchFieldException ignored) {
-                // Continue through the Voxy/Minecraft class hierarchy.
             }
         }
         throw new NoSuchFieldException(type.getName() + "." + name);
