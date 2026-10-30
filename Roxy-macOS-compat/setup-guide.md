@@ -10,6 +10,24 @@ Download the `Roxy-macOS-compat.zip` from the Releases section of the Github pag
 
 The package includes the prepared Apple Silicon graphics runtime, native libraries, and a graphics probe. Players do not need to build Mesa or GLFW, install the Vulkan SDK, or install Xcode command line tools; all a user needs to do is download and extract the zip and follow the instance setup instructions. The package is ad-hoc signed and is not notarized.
 
+### Prepare the downloaded runtime before the first launch
+
+macOS can block the downloaded graphics libraries because this package is not notarized. To allow the contents to run properly, the package must be excluded from Apple's download quarantine.
+
+1. Open **Terminal**.
+2. Paste the following command:
+
+   ```sh
+   xattr -dr com.apple.quarantine 
+   ```
+
+4. Drag the extracted **Roxy-macOS-compat folder** from Finder into Terminal to insert its full path.
+5. Press enter to run the command. Successful completion will print nothing and returns to the Terminal prompt. If an error appears, check that you dragged the correct extracted folder before continuing.
+
+This removes Apple's download quarantine attribute from that folder and its contents. The same prepared runtime folder can serve multiple Minecraft instances, however downloading a new release of the patch will require the quarantine exclusion again from the new download.
+
+Apple also provides **System Settings → Privacy & Security → Open Anyway** after a blocked opening attempt; see [Apple's instructions for opening software from an unidentified developer](https://support.apple.com/en-gb/102445).
+
 ### Create a clean Prism instance
 
 In Prism Launcher, choose **Add Instance**, select Minecraft **1.21.1**, and create a new instance. In the instance's **Edit** window, install NeoForge. Keep this instance separate from existing worlds and mod setups while checking the runtime.
