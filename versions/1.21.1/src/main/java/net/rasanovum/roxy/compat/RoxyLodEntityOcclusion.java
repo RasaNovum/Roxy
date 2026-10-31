@@ -1,5 +1,6 @@
 package net.rasanovum.roxy.compat;
 
+import org.joml.Matrix4d;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
 import org.lwjgl.opengl.GL11C;
@@ -111,12 +112,10 @@ public final class RoxyLodEntityOcclusion {
                     return;
                 }
 
-                Object mvpObject = readField(viewport, "MVP");
+                Object projectionObject = readField(viewport, "projection");
                 Object vanillaProjectionObject = readField(viewport, "vanillaProjection");
-                Object modelViewObject = readField(viewport, "modelView");
-                if (!(mvpObject instanceof Matrix4fc mvp)
-                        || !(vanillaProjectionObject instanceof Matrix4fc vanillaProjection)
-                        || !(modelViewObject instanceof Matrix4fc modelView)) {
+                if (!(projectionObject instanceof Matrix4fc voxyProjection)
+                        || !(vanillaProjectionObject instanceof Matrix4fc vanillaProjection)) {
                     return;
                 }
                 int width = number(readField(viewport, "width"));
@@ -139,10 +138,9 @@ public final class RoxyLodEntityOcclusion {
                     return;
                 }
 
-                Matrix4f sourceClip = new Matrix4f(vanillaProjection).mul(modelView).invert();
-                Matrix4f transform = new Matrix4f(mvp).mul(sourceClip);
+                Matrix4d transform = new Matrix4d(vanillaProjection).mul(new Matrix4d(voxyProjection).invert());
                 float[] values = new float[16];
-                transform.get(values);
+                new Matrix4f(transform).get(values);
                 for (float value : values) if (!Float.isFinite(value)) return;
                 frame = new Frame(depthId, stencil, width, height, reverseZ, zeroOne, values);
                 if (!captureLogged) {

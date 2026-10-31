@@ -2837,6 +2837,10 @@ public final class RoxyBytecodeRemapper {
         if (!reader.getClassName().equals(VOXY_LEVEL_RENDERER_MIXIN)) return input;
 
         int[] reloadOrderPatched = new int[1];
+        int[] createMethodCount = new int[1];
+        int[] createGuardPatched = new int[1];
+        int[] captureMethodCount = new int[1];
+        int[] worldObservationPatched = new int[1];
         ClassWriter writer = new RoxyClassWriter(reader, ClassWriter.COMPUTE_FRAMES);
         reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
             @Override
@@ -2848,6 +2852,29 @@ public final class RoxyBytecodeRemapper {
                     String[] exceptions
             ) {
                 MethodVisitor method = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (name.equals("voxy$createRenderer")) {
+                    createMethodCount[0]++;
+                    if (!descriptor.equals("()V")) return method;
+                    createGuardPatched[0]++;
+                    return new MethodVisitor(Opcodes.ASM9, method) {
+                        @Override
+                        public void visitCode() {
+                            super.visitCode();
+                            Label createRenderer = new Label();
+                            super.visitVarInsn(Opcodes.ALOAD, 0);
+                            super.visitMethodInsn(
+                                    Opcodes.INVOKESTATIC,
+                                    ROXY_VOXY_RENDER_RELOAD_COMPAT,
+                                    "shouldCreateVoxyRenderer",
+                                    "(Ljava/lang/Object;)Z",
+                                    false
+                            );
+                            super.visitJumpInsn(Opcodes.IFNE, createRenderer);
+                            super.visitInsn(Opcodes.RETURN);
+                            super.visitLabel(createRenderer);
+                        }
+                    };
+                }
                 if (name.equals("voxy$reloadVoxyRenderer")
                         && descriptor.equals("(Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V")) {
                     return new MethodVisitor(Opcodes.ASM9, method) {
@@ -2886,25 +2913,34 @@ public final class RoxyBytecodeRemapper {
                         }
                     };
                 }
-                if (!name.equals("voxy$captureSetWorld") || !descriptor.endsWith(")V")) return method;
+                if (!name.equals("voxy$captureSetWorld")) return method;
+                captureMethodCount[0]++;
+                if (!descriptor.equals("(Lnet/minecraft/client/multiplayer/ClientLevel;"
+                        + "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;)V")) return method;
+                worldObservationPatched[0]++;
                 return new MethodVisitor(Opcodes.ASM9, method) {
                     @Override
                     public void visitCode() {
                         super.visitCode();
+                        super.visitVarInsn(Opcodes.ALOAD, 0);
                         super.visitVarInsn(Opcodes.ALOAD, 1);
                         super.visitMethodInsn(
                                 Opcodes.INVOKESTATIC,
-                                VOXY_RENDER_COMPAT,
-                                "observeWorld",
-                                "(Ljava/lang/Object;)V",
+                                ROXY_VOXY_RENDER_RELOAD_COMPAT,
+                                "observeWorldIfPrimary",
+                                "(Ljava/lang/Object;Ljava/lang/Object;)V",
                                 false
                         );
                     }
                 };
             }
         }, 0);
-        if (reloadOrderPatched[0] != 1) {
-            throw new IllegalStateException("Unsupported Voxy MixinLevelRenderer reload injection order");
+        if (reloadOrderPatched[0] != 1
+                || createMethodCount[0] != 1
+                || createGuardPatched[0] != 1
+                || captureMethodCount[0] != 1
+                || worldObservationPatched[0] != 1) {
+            throw new IllegalStateException("Unsupported Voxy MixinLevelRenderer lifecycle shape");
         }
         return writer.toByteArray();
     }

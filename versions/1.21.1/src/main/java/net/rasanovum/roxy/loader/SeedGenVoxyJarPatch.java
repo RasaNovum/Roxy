@@ -40,7 +40,7 @@ final class SeedGenVoxyJarPatch {
             "mobius/voxyseedgen/voxy/LodLevels.class", 1
     );
     private static final Pattern MOD_ID = Pattern.compile("(?m)^modId\\s*=\\s*\"voxyseedgen\"\\s*$");
-    private static final Pattern VERSION = Pattern.compile("(?m)^version\\s*=\\s*\"0\\.3\\.0\"\\s*$");
+    private static final Pattern VERSION = Pattern.compile("(?m)^version\\s*=\\s*\"0\\.3\\.[01]\"\\s*$");
 
     private SeedGenVoxyJarPatch() {
     }
@@ -97,13 +97,13 @@ final class SeedGenVoxyJarPatch {
                 && stringLogs.equals(Map.of(PRIORITY_MIXIN + ".class", 1));
         if ((!originalFields && !patchedFields) || (!oldSaveAbi && !currentSaveAbi)
                 || (!oldLogAbi && !currentLogAbi)) {
-            throw new IOException("Roxy: unsupported Voxy SeedGen 0.3.0 field/method layout");
+            throw new IOException("Roxy: unsupported Voxy SeedGen 0.3.0/0.3.1 field/method layout");
         }
         if (currentSaveAbi && currentLogAbi && patchedFields && cleanupReady[0]) {
             return null;
         }
 
-        Path patched = Files.createTempFile("roxy-voxyseedgen-0.3.0-", ".jar");
+        Path patched = Files.createTempFile("roxy-voxyseedgen-", ".jar");
         boolean complete = false;
         try {
             try (ZipFile input = new ZipFile(original.toFile());

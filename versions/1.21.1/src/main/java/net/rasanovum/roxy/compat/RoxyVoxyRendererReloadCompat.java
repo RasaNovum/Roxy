@@ -104,6 +104,31 @@ public final class RoxyVoxyRendererReloadCompat {
         return isQuarantined(world, levelRenderer);
     }
 
+    public static boolean shouldCreateVoxyRenderer(Object levelRenderer) {
+        Boolean primary = isPrimaryLevelRenderer(levelRenderer);
+        return primary == null || primary;
+    }
+
+    public static void observeWorldIfPrimary(Object levelRenderer, Object world) {
+        if (world != null && Boolean.TRUE.equals(isPrimaryLevelRenderer(levelRenderer))) {
+            RoxyVoxyRenderPatch.observeWorld(world);
+        }
+    }
+
+    private static Boolean isPrimaryLevelRenderer(Object levelRenderer) {
+        if (levelRenderer == null) return null;
+        Accessors current = getAccessors();
+        if (current == null) return null;
+        try {
+            Object minecraft = current.minecraftInstance.invoke(null);
+            Object primaryLevelRenderer = minecraft == null ? null : current.levelRenderer.get(minecraft);
+            return primaryLevelRenderer == null ? null : primaryLevelRenderer == levelRenderer;
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+            logFailure("Unable to identify the primary Minecraft renderer for Voxy compatibility", rootCause(exception));
+            return null;
+        }
+    }
+
     private static boolean deferReload(Object levelRenderer) {
         Object world = null;
         Object currentLevelRenderer = null;
