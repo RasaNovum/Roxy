@@ -16,6 +16,8 @@
   "roxy.fog.start.tooltip": "Distance in chunks where fog begins when weather is clear. Voxy's current render distance is used as the fog end point.",
   "roxy.fog.weather_roll_in": "Weather Fog Roll In",
   "roxy.fog.weather_roll_in.tooltip": "How strongly weather brings fog into nearby terrain. The higher the value the closer fog rolls in.",
+  "roxy.fog.terrain_enabled": "LOD Terrain Fog",
+  "roxy.fog.terrain_enabled.tooltip": "Apply Minecraft or modded fog to distant Voxy terrain when no shader pack is active.",
   "roxy.fog.requires_mod": "Requires a supported fog mod: Fog or No Man's Land.",
   "roxy.fog.betterfog_settings": "Better Fog controls its own fog distances and weather. Configure these in Better Fog's settings.",
   "roxy.fog.chunks": "%s chunks",

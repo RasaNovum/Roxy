@@ -42,6 +42,10 @@ public final class RoxyFogOptions {
             ResourceLocation[] rollInDependencies = new ResourceLocation[enabledDependencies.length + 1];
             rollInDependencies[0] = automaticId;
             System.arraycopy(enabledDependencies, 0, rollInDependencies, 1, enabledDependencies.length);
+            ResourceLocation terrainEnabledId = ResourceLocation.fromNamespaceAndPath("roxy", "terrain_fog_enabled");
+            ResourceLocation[] sharedStartDependencies = new ResourceLocation[enabledDependencies.length + 1];
+            sharedStartDependencies[0] = terrainEnabledId;
+            System.arraycopy(enabledDependencies, 0, sharedStartDependencies, 1, enabledDependencies.length);
             var automatic = builder.createBooleanOption(automaticId)
                     .setName(text("automatic"))
                     .setTooltip(tooltip("automatic.tooltip"))
@@ -49,14 +53,23 @@ public final class RoxyFogOptions {
                     .setBinding(v -> settings.automatic = v, () -> settings.automatic)
                     .setControlHiddenWhenDisabled(false)
                     .setEnabledProvider(state -> enabled(state, voxyOptionsAvailable), enabledDependencies);
+            var terrainEnabled = builder.createBooleanOption(terrainEnabledId)
+                    .setName(text("terrain_enabled"))
+                    .setTooltip(text("terrain_enabled.tooltip"))
+                    .setDefaultValue(true).setStorageHandler(storage)
+                    .setBinding(v -> settings.terrainEnabled = v, () -> settings.terrainEnabled)
+                    .setControlHiddenWhenDisabled(false)
+                    .setEnabledProvider(state -> terrainFogEnabled(state, voxyOptionsAvailable), enabledDependencies);
             var start = builder.createIntegerOption(ResourceLocation.fromNamespaceAndPath("roxy", "fog_start"))
                     .setName(text("start"))
-                    .setTooltip(tooltip("start.tooltip"))
+                    .setTooltip(startTooltip())
                     .setDefaultValue(RoxyFogConfig.Settings.DEFAULT_START_CHUNKS).setRange(0, maxChunks - 1, 1)
                     .setValueFormatter(v -> Component.translatable("roxy.fog.chunks", v))
                     .setStorageHandler(storage).setBinding(v -> settings.start = v * 16, () -> settings.start / 16)
                     .setControlHiddenWhenDisabled(false)
-                    .setEnabledProvider(state -> enabled(state, voxyOptionsAvailable), enabledDependencies);
+                    .setEnabledProvider(state -> enabled(state, voxyOptionsAvailable)
+                            || (terrainFogEnabled(state, voxyOptionsAvailable)
+                            && state.readBooleanOption(terrainEnabledId)), sharedStartDependencies);
             var rollIn = builder.createIntegerOption(ResourceLocation.fromNamespaceAndPath("roxy", "weather_fog_roll_in"))
                     .setName(text("weather_roll_in"))
                     .setTooltip(tooltip("weather_roll_in.tooltip"))
@@ -66,7 +79,7 @@ public final class RoxyFogOptions {
                     .setControlHiddenWhenDisabled(false)
                     .setEnabledProvider(state -> enabled(state, voxyOptionsAvailable) && state.readBooleanOption(automaticId),
                             rollInDependencies);
-            page.addOption(automatic).addOption(start).addOption(rollIn);
+            page.addOption(automatic).addOption(start).addOption(rollIn).addOption(terrainEnabled);
             modOptions.addPage(page);
         }
 
@@ -105,6 +118,17 @@ public final class RoxyFogOptions {
                 : text("requires_mod").copy().append("\n\n").append(description);
     }
 
+    private static Component startTooltip() {
+        Component description = text("start.tooltip");
+        if (RoxyBetterFogCompat.available()) {
+            return text("betterfog_settings").copy().append("\n\n").append(description);
+        }
+        return RoxyFogModCompat.supportedModPresent()
+                || (RoxyFogModCompat.nativeTerrainFogAllowed() && !shadersActive())
+                ? description
+                : text("requires_mod").copy().append("\n\n").append(description);
+    }
+
     private static Component tfcText(String key) {
         return Component.translatable("roxy.tfc." + key);
     }
@@ -117,6 +141,14 @@ public final class RoxyFogOptions {
 
     private static boolean enabled(ConfigState state, boolean voxyOptionsAvailable) {
         if (RoxyBetterFogCompat.available() || !RoxyFogModCompat.supportedModPresent() || shadersActive()) return false;
+        if (!voxyOptionsAvailable) return RoxyVoxyFogPatch.optionsEnabled();
+        return state.readBooleanOption(VOXY_ENABLED)
+                && state.readBooleanOption(VOXY_RENDERING)
+                && !state.readBooleanOption(VOXY_ENVIRONMENTAL_FOG);
+    }
+
+    private static boolean terrainFogEnabled(ConfigState state, boolean voxyOptionsAvailable) {
+        if (!RoxyFogModCompat.nativeTerrainFogAllowed() || shadersActive()) return false;
         if (!voxyOptionsAvailable) return RoxyVoxyFogPatch.optionsEnabled();
         return state.readBooleanOption(VOXY_ENABLED)
                 && state.readBooleanOption(VOXY_RENDERING)

@@ -17,6 +17,10 @@ public final class RoxyFogModCompat {
         return loaded("fog") || loaded("nomansland");
     }
 
+    public static boolean nativeTerrainFogAllowed() {
+        return !loaded("fog") && !loaded("nomansland") && !loaded("betterfog") && !loaded("distantfog");
+    }
+
     public static boolean betterFogPresent() {
         return loaded("betterfog");
     }

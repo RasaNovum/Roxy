@@ -2,9 +2,10 @@ package net.rasanovum.roxy.fog;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import net.rasanovum.roxy.compat.RoxyFogModCompat;
-import net.rasanovum.roxy.compat.RoxyBetterFogCompat;
 import java.lang.ref.WeakReference;
+import net.rasanovum.roxy.compat.RoxyBetterFogCompat;
+import net.rasanovum.roxy.compat.RoxyFogModCompat;
+import org.lwjgl.opengl.GL33C;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -15,6 +16,26 @@ public final class RoxyVoxyFogPatch {
     private static final String MINECRAFT_RENDER_SYSTEM = "com.mojang.blaze3d.systems.RenderSystem";
     private static final float NO_FOG = 1.0E9F;
     private static int extendedFogMode;
+    private static final float[] terrainFogEnd = new float[4];
+    private static final float[] terrainFogColour = new float[4];
+    private static final float[] nativeTerrainFogColour = new float[4];
+    private static volatile int nativeTerrainFogShape;
+    private static volatile boolean terrainFogPrepared;
+    private static volatile boolean normalFogShaderSupport;
+    private static volatile boolean terrainFogRequested;
+    private static final ClassValue<Field> VIEWPORT_FOG = new ClassValue<>() {
+        @Override
+        protected Field computeValue(Class<?> type) {
+            for (Class<?> owner = type; owner != null; owner = owner.getSuperclass()) {
+                for (Field field : owner.getDeclaredFields()) {
+                    if (!RoxyFogParameters.class.isAssignableFrom(field.getType())) continue;
+                    field.setAccessible(true);
+                    return field;
+                }
+            }
+            return null;
+        }
+    };
     private static final RoxyWeatherFog WEATHER = new RoxyWeatherFog();
     private static WeakReference<Object> diagnosticRenderer = new WeakReference<>(null);
     private static int diagnosticCount;
@@ -41,6 +62,7 @@ public final class RoxyVoxyFogPatch {
                              float start, float end, int shape, Object level, double tick,
                              float rain, float thunder, float partialTick) {
         if (!"FOG_TERRAIN".equals(String.valueOf(fogMode))) return;
+        terrainFogRequested = false;
         extendedFogMode = 0;
         if (!noFluid) return;
         if (RoxyBetterFogCompat.available()) return;
@@ -65,6 +87,27 @@ public final class RoxyVoxyFogPatch {
             Object pipeline = current.pipeline.get(renderer);
             if (pipeline != null && pipeline.getClass().getName().equals("me.cortex.voxy.client.core.NormalRenderPipeline")) {
                 float lodDistance = current.renderDistance.getFloat(config) * 512.0F;
+                if (builtinTerrainFogAllowed() && Float.isFinite(lodDistance) && lodDistance > 16.0F) {
+                    RoxyFogConfig.Settings terrainFog = RoxyFogConfig.get();
+                    RoxyFogRange range = terrainFog.apply(new RoxyFogRange(0.0F, lodDistance), lodDistance);
+                    float terrainEnd = range.end();
+                    float terrainStart = range.start();
+                    FogSetter setter = getFogSetter();
+                    if (setter != null && Float.isFinite(terrainStart) && Float.isFinite(terrainEnd)
+                            && terrainStart >= 0.0F && terrainEnd > terrainStart) {
+                        setter.start.invoke(null, terrainStart);
+                        setter.end.invoke(null, terrainEnd);
+                        RoxyFogParameters nativeFog = RoxyFogParameters.current();
+                        nativeTerrainFogColour[0] = nativeFog.red();
+                        nativeTerrainFogColour[1] = nativeFog.green();
+                        nativeTerrainFogColour[2] = nativeFog.blue();
+                        nativeTerrainFogColour[3] = nativeFog.alpha();
+                        nativeTerrainFogShape = shape;
+                        terrainFogRequested = true;
+                        extendedFogMode = shape == 1 ? 2 : 1;
+                        return;
+                    }
+                }
                 boolean fogMod = RoxyFogModCompat.fogActive();
                 if (!fogMod && (originalStart < 0 || originalEnd < viewDistance - 0.01F)) {
                     trace("preserved environmental baseline", originalStart, originalEnd, start, end, start, end, lodDistance);
@@ -113,6 +156,106 @@ public final class RoxyVoxyFogPatch {
 
     public static boolean hasExtendedFog() {
         return extendedFogMode != 0;
+    }
+
+    private static boolean builtinTerrainFogAllowed() {
+        return RoxyFogModCompat.nativeTerrainFogAllowed()
+                && !shaderPackEnabled()
+                && RoxyFogConfig.get().terrainEnabled;
+    }
+
+    private static boolean shaderPackEnabled() {
+        try {
+            Accessors current = getAccessors();
+            return current == null || Boolean.TRUE.equals(current.shaderPackEnabled.invoke(null));
+        } catch (ReflectiveOperationException | RuntimeException exception) {
+            return true;
+        }
+    }
+
+    public static void resetTerrainFog() {
+        clearTerrainFog();
+        normalFogShaderSupport = false;
+    }
+
+    public static void resetTerrainFogLifecycle() {
+        resetTerrainFog();
+        terrainFogRequested = false;
+        extendedFogMode = 0;
+        for (int i = 0; i < 4; i++) nativeTerrainFogColour[i] = 0.0F;
+        nativeTerrainFogShape = 0;
+    }
+
+    public static void prepareTerrainFog(Object viewport) {
+        clearTerrainFog();
+        normalFogShaderSupport = false;
+        Accessors current = getAccessors();
+        if (current == null) return;
+        try {
+            Object renderer = current.getNullable.invoke(null);
+            if (renderer == null) return;
+            Object pipeline = current.pipeline.get(renderer);
+            if (pipeline == null || !pipeline.getClass().getName().equals("me.cortex.voxy.client.core.NormalRenderPipeline")) return;
+            normalFogShaderSupport = true;
+            if (!terrainFogRequested || !builtinTerrainFogAllowed() || viewport == null) return;
+            Object voxyConfig = current.config.get(null);
+            if (voxyConfig == null || !(Boolean) current.renderingEnabled.invoke(voxyConfig)
+                    || current.environmentalFog.getBoolean(voxyConfig)) return;
+            float lodEnd = current.renderDistance.getFloat(voxyConfig) * 512.0F;
+            RoxyFogConfig.Settings settings = RoxyFogConfig.get();
+            RoxyFogRange range = settings.apply(new RoxyFogRange(0.0F, lodEnd), lodEnd);
+            float end = range.end();
+            float start = range.start();
+            if (!Float.isFinite(start) || !Float.isFinite(end) || end <= start) return;
+            RoxyFogParameters fog = viewportFogParameters(viewport);
+            float[] color = fog == null ? nativeTerrainFogColour
+                    : new float[]{fog.red(), fog.green(), fog.blue(), fog.alpha()};
+            if (!Float.isFinite(color[0]) || !Float.isFinite(color[1])
+                    || !Float.isFinite(color[2]) || !Float.isFinite(color[3])) return;
+            float inverseRange = 1.0F / (end - start);
+            terrainFogEnd[0] = inverseRange;
+            terrainFogEnd[1] = -start * inverseRange;
+            terrainFogEnd[2] = 1.0F;
+            terrainFogEnd[3] = nativeTerrainFogShape == 1 ? 2.0F : 1.0F;
+            terrainFogColour[0] = color[0];
+            terrainFogColour[1] = color[1];
+            terrainFogColour[2] = color[2];
+            terrainFogColour[3] = color[3];
+            terrainFogPrepared = true;
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException exception) {
+            clearTerrainFog();
+            if (!failureReported) {
+                failureReported = true;
+                LOGGER.warn("Unable to prepare Roxy terrain fog shader values", exception);
+            }
+        }
+    }
+
+    public static void uploadTerrainFog() {
+        if (!normalFogShaderSupport) return;
+        GL33C.glUniform4f(40, terrainFogEnd[0], terrainFogEnd[1], terrainFogEnd[2], terrainFogEnd[3]);
+        GL33C.glUniform4f(41, terrainFogColour[0], terrainFogColour[1], terrainFogColour[2], terrainFogColour[3]);
+    }
+
+    public static boolean terrainFogActive() {
+        return normalFogShaderSupport && terrainFogPrepared;
+    }
+
+    public static void uploadTerrainFogBlit() {
+        GL33C.glUniform1f(40, terrainFogActive() ? 1.0F : 0.0F);
+    }
+
+    public static void clearTerrainFog() {
+        terrainFogPrepared = false;
+        for (int i = 0; i < 4; i++) {
+            terrainFogEnd[i] = 0.0F;
+            terrainFogColour[i] = 0.0F;
+        }
+    }
+
+    private static RoxyFogParameters viewportFogParameters(Object viewport) throws ReflectiveOperationException {
+        Field field = VIEWPORT_FOG.get(viewport.getClass());
+        return field == null ? null : (RoxyFogParameters) field.get(viewport);
     }
 
     public static boolean optionsEnabled() {
@@ -218,7 +361,9 @@ public final class RoxyVoxyFogPatch {
                         configClass.getField("CONFIG"),
                         configClass.getMethod("isRenderingEnabled"),
                         configClass.getField("useEnvironmentalFog"),
-                        configClass.getField("sectionRenderDistance"), pipeline
+                        configClass.getField("sectionRenderDistance"), pipeline,
+                        Class.forName("me.cortex.voxy.client.core.util.IrisUtil", false, loader)
+                                .getMethod("irisShaderPackEnabled")
                 );
                 accessors = current;
                 return current;
@@ -230,7 +375,7 @@ public final class RoxyVoxyFogPatch {
     }
 
     private record Accessors(Method getNullable, Field config, Method renderingEnabled, Field environmentalFog,
-                             Field renderDistance, Field pipeline) {
+                             Field renderDistance, Field pipeline, Method shaderPackEnabled) {
     }
 
     private static ClassLoader findMinecraftLoader() {

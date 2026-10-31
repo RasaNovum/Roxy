@@ -53,6 +53,8 @@ public final class RoxyBytecodeRemapper {
     private static final String VOXY_RENDER_GENERATION_SERVICE =
             "me/cortex/voxy/client/core/rendering/building/RenderGenerationService";
     private static final String VOXY_RENDER_COMPAT = "net/rasanovum/roxy/patch/RoxyVoxyRenderPatch";
+    private static final String VOXY_MDIC_SECTION_RENDERER =
+            "me/cortex/voxy/client/core/rendering/section/backend/mdic/MDICSectionRenderer";
     private static final String VOXY_REQUEST_COMPAT = "net/rasanovum/roxy/patch/RoxyVoxyRequestPatch";
     private static final String VOXY_IMPORT_COMPAT = "net/rasanovum/roxy/compat/RoxyVoxyImportCompat";
     private static final String ROXY_VOXY_RENDER_RELOAD_COMPAT =
@@ -272,6 +274,9 @@ public final class RoxyBytecodeRemapper {
         output = patchVoxyMissingStates(output);
         output = patchVoxyTextureTintUpload(output);
         output = patchVoxyNormalFog(output);
+        output = patchVoxyTerrainFogUpload(output);
+        output = patchVoxySsaoFogUpload(output);
+        output = patchVoxyNormalFogSetup(output);
         output = patchVoxyChunkSectionLayer(output);
         output = patchVoxyWorldCallback(output);
         output = patchVoxyNodeStore(output);
@@ -599,7 +604,7 @@ public final class RoxyBytecodeRemapper {
         ClassReader reader = new ClassReader(input);
         if (!reader.getClassName().equals("me/cortex/voxy/client/core/NormalRenderPipeline")) return input;
         ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
-        int[] matches = new int[3];
+        int[] matches = new int[4];
         reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
             @Override
             public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
@@ -636,12 +641,122 @@ public final class RoxyBytecodeRemapper {
                             return;
                         }
                         super.visitMethodInsn(opcode, owner, called, desc, itf);
+                        if (opcode == Opcodes.INVOKEVIRTUAL
+                                && owner.equals("me/cortex/voxy/client/core/rendering/post/FullscreenBlit")
+                                && called.equals("bind") && desc.equals("()V")) {
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC,
+                                    "net/rasanovum/roxy/fog/RoxyVoxyFogPatch", "uploadTerrainFogBlit", "()V", false);
+                            matches[3]++;
+                        }
                     }
                 };
             }
         }, 0);
-        if (matches[0] != 1 || matches[1] != 1 || matches[2] != 4)
+        if (matches[0] != 1 || matches[1] != 1 || matches[2] != 4 || matches[3] != 1)
             throw new IllegalStateException("Unsupported Voxy normal fog pipeline");
+        return writer.toByteArray();
+    }
+
+    private static byte[] patchVoxyTerrainFogUpload(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals(VOXY_MDIC_SECTION_RENDERER)) return input;
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+        int[] matches = new int[1];
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                return new MethodVisitor(Opcodes.ASM9, super.visitMethod(access, name, descriptor, signature, exceptions)) {
+                    private boolean translucentShader;
+
+                    @Override
+                    public void visitFieldInsn(int opcode, String owner, String field, String desc) {
+                        translucentShader = opcode == Opcodes.GETFIELD && owner.equals(VOXY_MDIC_SECTION_RENDERER)
+                                && field.equals("translucentTerrainShader")
+                                && desc.equals("Lme/cortex/voxy/client/core/gl/shader/Shader;");
+                        super.visitFieldInsn(opcode, owner, field, desc);
+                    }
+
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String called, String desc, boolean itf) {
+                        super.visitMethodInsn(opcode, owner, called, desc, itf);
+                        if (translucentShader && opcode == Opcodes.INVOKEVIRTUAL
+                                && owner.equals("me/cortex/voxy/client/core/gl/shader/Shader")
+                                && called.equals("bind") && desc.equals("()V")) {
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC,
+                                    "net/rasanovum/roxy/fog/RoxyVoxyFogPatch", "uploadTerrainFog", "()V", false);
+                            matches[0]++;
+                        }
+                        translucentShader = false;
+                    }
+                };
+            }
+        }, 0);
+        if (matches[0] != 1) throw new IllegalStateException("Unsupported Voxy translucent terrain shader binding");
+        return writer.toByteArray();
+    }
+
+    private static byte[] patchVoxySsaoFogUpload(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals("me/cortex/voxy/client/core/SSAO")) return input;
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+        int[] matches = new int[1];
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                MethodVisitor method = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (!name.equals("computeSSAO")) return method;
+                return new MethodVisitor(Opcodes.ASM9, method) {
+                    private boolean ssaoShader;
+
+                    @Override
+                    public void visitFieldInsn(int opcode, String owner, String field, String desc) {
+                        ssaoShader = opcode == Opcodes.GETFIELD && owner.equals("me/cortex/voxy/client/core/SSAO")
+                                && field.equals("ssaoCompute") && desc.equals("Lme/cortex/voxy/client/core/gl/shader/Shader;");
+                        super.visitFieldInsn(opcode, owner, field, desc);
+                    }
+
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String called, String desc, boolean itf) {
+                        super.visitMethodInsn(opcode, owner, called, desc, itf);
+                        if (ssaoShader && opcode == Opcodes.INVOKEVIRTUAL
+                                && owner.equals("me/cortex/voxy/client/core/gl/shader/Shader")
+                                && called.equals("bind") && desc.equals("()V")) {
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC,
+                                    "net/rasanovum/roxy/fog/RoxyVoxyFogPatch", "uploadTerrainFog", "()V", false);
+                            matches[0]++;
+                        }
+                        ssaoShader = false;
+                    }
+                };
+            }
+        }, 0);
+        if (matches[0] != 1) throw new IllegalStateException("Unsupported Voxy SSAO fog binding");
+        return writer.toByteArray();
+    }
+
+    private static byte[] patchVoxyNormalFogSetup(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals("me/cortex/voxy/client/core/NormalRenderPipeline")) return input;
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+        int[] matches = new int[1];
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                MethodVisitor method = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (!name.equals("setup") || !descriptor.equals("(L" + VOXY_VIEWPORT + ";III)I")) return method;
+                matches[0]++;
+                return new MethodVisitor(Opcodes.ASM9, method) {
+                    @Override
+                    public void visitCode() {
+                        super.visitCode();
+                        super.visitVarInsn(Opcodes.ALOAD, 1);
+                        super.visitMethodInsn(Opcodes.INVOKESTATIC,
+                                "net/rasanovum/roxy/fog/RoxyVoxyFogPatch", "prepareTerrainFog", "(Ljava/lang/Object;)V", false);
+                    }
+                };
+            }
+        }, 0);
+        if (matches[0] != 1) throw new IllegalStateException("Unsupported Voxy normal fog setup");
         return writer.toByteArray();
     }
 
@@ -2279,6 +2394,8 @@ public final class RoxyBytecodeRemapper {
                     public void visitCode() {
                         super.visitCode();
                         super.visitMethodInsn(Opcodes.INVOKESTATIC,
+                                "net/rasanovum/roxy/fog/RoxyVoxyFogPatch", "resetTerrainFogLifecycle", "()V", false);
+                        super.visitMethodInsn(Opcodes.INVOKESTATIC,
                                 "net/rasanovum/roxy/compat/RoxyLodEntityOcclusion", "reset", "()V", false);
                         super.visitVarInsn(Opcodes.ALOAD, 0);
                         super.visitMethodInsn(
@@ -2531,6 +2648,8 @@ public final class RoxyBytecodeRemapper {
                         @Override
                         public void visitCode() {
                             super.visitCode();
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC,
+                                    "net/rasanovum/roxy/fog/RoxyVoxyFogPatch", "resetTerrainFog", "()V", false);
                             super.visitVarInsn(Opcodes.ALOAD, 0);
                             super.visitFieldInsn(
                                     Opcodes.GETFIELD,

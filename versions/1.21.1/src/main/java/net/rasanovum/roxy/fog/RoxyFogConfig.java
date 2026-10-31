@@ -2,6 +2,7 @@ package net.rasanovum.roxy.fog;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
 import net.neoforged.fml.loading.FMLPaths;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -22,8 +23,12 @@ public final class RoxyFogConfig {
     public static Settings read(Path path) {
         if (!Files.isRegularFile(path)) return new Settings();
         try (var reader = Files.newBufferedReader(path)) {
-            Settings result = GSON.fromJson(reader, Settings.class);
-            if (result == null) return new Settings();
+            JsonObject input = GSON.fromJson(reader, JsonObject.class);
+            if (input == null) return new Settings();
+            Settings result = GSON.fromJson(input, Settings.class);
+            if (!input.has("start") && input.has("terrainStart")) {
+                result.start = input.get("terrainStart").getAsInt();
+            }
             result.normalize();
             return result;
         } catch (IOException | RuntimeException exception) {
@@ -59,6 +64,7 @@ public final class RoxyFogConfig {
         public boolean automatic = true;
         public int start = DEFAULT_START_CHUNKS * 16;
         public int weatherRollIn = DEFAULT_WEATHER_ROLL_IN;
+        public boolean terrainEnabled = true;
 
         public void normalize() {
             start = Math.max(0, Math.min(8176, start)) / 16 * 16;
