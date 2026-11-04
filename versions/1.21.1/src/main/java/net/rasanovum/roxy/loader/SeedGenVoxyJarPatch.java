@@ -40,7 +40,7 @@ final class SeedGenVoxyJarPatch {
             "mobius/voxyseedgen/voxy/LodLevels.class", 1
     );
     private static final Pattern MOD_ID = Pattern.compile("(?m)^modId\\s*=\\s*\"voxyseedgen\"\\s*$");
-    private static final Pattern VERSION = Pattern.compile("(?m)^version\\s*=\\s*\"0\\.3\\.[01]\"\\s*$");
+    private static final Pattern VERSION = Pattern.compile("(?m)^version\\s*=\\s*\"(\\d+)\\.(\\d+)\\.(\\d+)(?:[-+][0-9A-Za-z.-]+)?\"\\s*$");
 
     private SeedGenVoxyJarPatch() {
     }
@@ -51,13 +51,34 @@ final class SeedGenVoxyJarPatch {
             if (metadata == null || input.getEntry(MOD_MARKER) == null) return false;
             try (InputStream stream = input.getInputStream(metadata)) {
                 String toml = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
-                return MOD_ID.matcher(toml).find() && VERSION.matcher(toml).find();
+                return MOD_ID.matcher(toml).find() && parseVersion(toml) != null;
             }
+        }
+    }
+
+    private static Version parseVersion(String toml) {
+        var matcher = VERSION.matcher(toml);
+        if (!matcher.find()) return null;
+        try {
+            Version version = new Version(Integer.parseInt(matcher.group(1)),
+                    Integer.parseInt(matcher.group(2)), Integer.parseInt(matcher.group(3)));
+            return version.atLeast(0, 3, 0) ? version : null;
+        } catch (NumberFormatException exception) {
+            return null;
         }
     }
 
     static Path patch(Path original) throws IOException {
         if (!isTarget(original)) return null;
+
+        boolean strictLegacyLayout;
+        try (ZipFile input = new ZipFile(original.toFile())) {
+            ZipEntry metadata = input.getEntry(MODS_TOML);
+            try (InputStream stream = input.getInputStream(metadata)) {
+                Version version = parseVersion(new String(stream.readAllBytes(), StandardCharsets.UTF_8));
+                strictLegacyLayout = version == null || !version.atLeast(0, 3, 2);
+            }
+        }
 
         Map<String, byte[]> replacements = new HashMap<>();
         Map<String, Integer> intReads = new HashMap<>();
@@ -74,7 +95,7 @@ final class SeedGenVoxyJarPatch {
                 if (entry.isDirectory() || !entry.getName().endsWith(".class")
                         || !entry.getName().startsWith("mobius/voxyseedgen/")) continue;
                 try (InputStream stream = input.getInputStream(entry)) {
-                    ReadPatch result = patchBytecode(stream.readAllBytes(), entry.getName());
+                    ReadPatch result = patchBytecode(stream.readAllBytes(), entry.getName(), strictLegacyLayout);
                     if (result.bytecode != null) replacements.put(entry.getName(), result.bytecode);
                     if (result.intReads > 0) intReads.put(entry.getName(), result.intReads);
                     if (result.floatReads > 0) floatReads.put(entry.getName(), result.floatReads);
@@ -87,17 +108,24 @@ final class SeedGenVoxyJarPatch {
             }
         }
 
-        boolean originalFields = intReads.equals(EXPECTED_READS) && floatReads.isEmpty();
-        boolean patchedFields = intReads.isEmpty() && floatReads.equals(EXPECTED_READS);
-        boolean oldSaveAbi = voidSaves.equals(Map.of(LADDER_WRITER + ".class", 1)) && booleanSaves.isEmpty();
+        boolean originalFields = intReads.equals(EXPECTED_READS)
+                && (!strictLegacyLayout || floatReads.isEmpty());
+        boolean patchedFields = intReads.isEmpty()
+                && (!strictLegacyLayout || floatReads.equals(EXPECTED_READS));
+        boolean oldSaveAbi = voidSaves.equals(Map.of(LADDER_WRITER + ".class", 1))
+                && (!strictLegacyLayout || booleanSaves.isEmpty());
         boolean currentSaveAbi = voidSaves.isEmpty()
-                && booleanSaves.equals(Map.of(LADDER_WRITER + ".class", 1));
-        boolean oldLogAbi = voidLogs.equals(Map.of(PRIORITY_MIXIN + ".class", 1)) && stringLogs.isEmpty();
+                && (!strictLegacyLayout || booleanSaves.equals(Map.of(LADDER_WRITER + ".class", 1)));
+        boolean oldLogAbi = voidLogs.equals(Map.of(PRIORITY_MIXIN + ".class", 1))
+                && (!strictLegacyLayout || stringLogs.isEmpty());
         boolean currentLogAbi = voidLogs.isEmpty()
-                && stringLogs.equals(Map.of(PRIORITY_MIXIN + ".class", 1));
+                && (!strictLegacyLayout || stringLogs.equals(Map.of(PRIORITY_MIXIN + ".class", 1)));
+        if (!strictLegacyLayout && intReads.isEmpty() && voidSaves.isEmpty() && voidLogs.isEmpty()) {
+            return null;
+        }
         if ((!originalFields && !patchedFields) || (!oldSaveAbi && !currentSaveAbi)
                 || (!oldLogAbi && !currentLogAbi)) {
-            throw new IOException("Roxy: unsupported Voxy SeedGen 0.3.0/0.3.1 field/method layout");
+            throw new IOException("Roxy: unsupported Voxy SeedGen field/method layout");
         }
         if (currentSaveAbi && currentLogAbi && patchedFields && cleanupReady[0]) {
             return null;
@@ -137,7 +165,7 @@ final class SeedGenVoxyJarPatch {
         }
     }
 
-    private static ReadPatch patchBytecode(byte[] input, String entryName) throws IOException {
+    private static ReadPatch patchBytecode(byte[] input, String entryName, boolean patchLegacyCleanup) throws IOException {
         ClassReader reader = new ClassReader(input);
         int[] intReads = new int[1];
         int[] floatReads = new int[1];
@@ -168,13 +196,14 @@ final class SeedGenVoxyJarPatch {
                     }
                     return delegate;
                 }
-                if (isLadderWriter && !cleanupMarker && (name.equals("endPass") || name.equals("endTile"))
+                if (patchLegacyCleanup && isLadderWriter && !cleanupMarker
+                        && (name.equals("endPass") || name.equals("endTile"))
                         && descriptor.equals("()V")) {
                     cleanupPatched[0] = true;
                     cleanupMethodCount[0]++;
                     return new DrainHeldVisitor(delegate, name.equals("endPass"));
                 }
-                if (isLadderWriter && !cleanupMarker && name.equals("release")
+                if (patchLegacyCleanup && isLadderWriter && !cleanupMarker && name.equals("release")
                         && descriptor.equals("(I)V") && (access & Opcodes.ACC_PRIVATE) != 0) {
                     cleanupPatched[0] = true;
                     cleanupMethodCount[0]++;
@@ -236,34 +265,49 @@ final class SeedGenVoxyJarPatch {
                     public void visitMethodInsn(int opcode, String owner, String methodName,
                                                 String methodDescriptor, boolean isInterface) {
                         flushUnexpected();
-                        if (owner.equals(WORLD_ENGINE) && methodName.equals("saveSection")
-                                && (methodDescriptor.equals(SAVE_VOID) || methodDescriptor.equals(SAVE_BOOLEAN))) {
-                            if (!isLadderWriter || !name.equals("markDirty")
-                                    || !descriptor.equals("(L" + WORLD_SECTION + ";II)V")
-                                    || opcode != Opcodes.INVOKEVIRTUAL || isInterface) {
+                        if (owner.equals(WORLD_ENGINE) && methodName.equals("saveSection")) {
+                            if (!methodDescriptor.equals(SAVE_VOID) && !methodDescriptor.equals(SAVE_BOOLEAN)) {
                                 throw unsupported(entryName, name, descriptor);
                             }
                             if (methodDescriptor.equals(SAVE_VOID)) {
+                                if (!isLadderWriter || !name.equals("markDirty")
+                                        || !descriptor.equals("(L" + WORLD_SECTION + ";II)V")
+                                        || opcode != Opcodes.INVOKEVIRTUAL || isInterface) {
+                                    throw unsupported(entryName, name, descriptor);
+                                }
                                 voidSaves[0]++;
                                 super.visitMethodInsn(opcode, owner, methodName, SAVE_BOOLEAN, false);
                                 super.visitInsn(Opcodes.POP);
                                 return;
                             }
+                            if (patchLegacyCleanup && (!isLadderWriter || !name.equals("markDirty")
+                                    || !descriptor.equals("(L" + WORLD_SECTION + ";II)V")
+                                    || opcode != Opcodes.INVOKEVIRTUAL || isInterface)) {
+                                throw unsupported(entryName, name, descriptor);
+                            }
                             booleanSaves[0]++;
                         }
-                        if (owner.equals(VOXY_LOGGER) && methodName.equals("info")
-                                && (methodDescriptor.equals(LOG_VOID) || methodDescriptor.equals(LOG_STRING))) {
-                            if (!entryName.equals(PRIORITY_MIXIN + ".class")
-                                    || !name.equals("voxyseedgen$neverNegative")
-                                    || !descriptor.equals("(I)I") || opcode != Opcodes.INVOKESTATIC
-                                    || isInterface) {
+                        if (owner.equals(VOXY_LOGGER) && methodName.equals("info")) {
+                            if (!methodDescriptor.equals(LOG_VOID) && !methodDescriptor.equals(LOG_STRING)) {
                                 throw unsupported(entryName, name, descriptor);
                             }
                             if (methodDescriptor.equals(LOG_VOID)) {
+                                if (!entryName.equals(PRIORITY_MIXIN + ".class")
+                                        || !name.equals("voxyseedgen$neverNegative")
+                                        || !descriptor.equals("(I)I") || opcode != Opcodes.INVOKESTATIC
+                                        || isInterface) {
+                                    throw unsupported(entryName, name, descriptor);
+                                }
                                 voidLogs[0]++;
                                 super.visitMethodInsn(opcode, owner, methodName, LOG_STRING, false);
                                 super.visitInsn(Opcodes.POP);
                                 return;
+                            }
+                            if (patchLegacyCleanup && (!entryName.equals(PRIORITY_MIXIN + ".class")
+                                    || !name.equals("voxyseedgen$neverNegative")
+                                    || !descriptor.equals("(I)I") || opcode != Opcodes.INVOKESTATIC
+                                    || isInterface)) {
+                                throw unsupported(entryName, name, descriptor);
                             }
                             stringLogs[0]++;
                         }
@@ -351,16 +395,16 @@ final class SeedGenVoxyJarPatch {
             throw new IOException("Roxy: unexpected SeedGen render-distance reads in " + entryName);
         }
         int expected = EXPECTED_READS.getOrDefault(entryName, 0);
-        if (intReads[0] > expected || floatReads[0] > expected) {
+        if (intReads[0] > expected || patchLegacyCleanup && floatReads[0] > expected) {
             throw new IOException("Roxy: unsupported Voxy SeedGen render-distance read count in " + entryName);
         }
         boolean cleanupReady = isLadderWriter && (cleanupMarker || cleanupPatched[0]);
-        if (isLadderWriter && cleanupPatched[0] && cleanupMethodCount[0] != 3) {
+        if (patchLegacyCleanup && isLadderWriter && cleanupPatched[0] && cleanupMethodCount[0] != 3) {
             throw new IOException("Roxy: unsupported SeedGen LadderWriter cleanup method set");
         }
         boolean hasChanges = intReads[0] != 0 || voidSaves[0] != 0 || voidLogs[0] != 0
                 || (isLadderWriter && cleanupPatched[0]);
-        if (isLadderWriter && !cleanupReady) {
+        if (patchLegacyCleanup && isLadderWriter && !cleanupReady) {
             throw new IOException("Roxy: unsupported SeedGen LadderWriter cleanup layout");
         }
         return new ReadPatch(hasChanges ? writer.toByteArray() : null,
@@ -390,6 +434,14 @@ final class SeedGenVoxyJarPatch {
             }
         }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
         return found[0];
+    }
+
+    private record Version(int major, int minor, int patch) {
+        private boolean atLeast(int requiredMajor, int requiredMinor, int requiredPatch) {
+            if (major != requiredMajor) return major > requiredMajor;
+            if (minor != requiredMinor) return minor > requiredMinor;
+            return patch >= requiredPatch;
+        }
     }
 
     private static void emitForgetHeld(ClassWriter writer, String owner) {

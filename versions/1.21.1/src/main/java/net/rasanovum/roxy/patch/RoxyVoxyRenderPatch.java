@@ -53,6 +53,7 @@ public final class RoxyVoxyRenderPatch {
     private static WeakReference<Object> worldEngineToken = new WeakReference<>(null);
     private static boolean worldObserved;
     private static boolean engineObserved;
+    private static boolean worldRetired;
 
     private RoxyVoxyRenderPatch() {
     }
@@ -78,6 +79,7 @@ public final class RoxyVoxyRenderPatch {
                 worldEngineToken = new WeakReference<>(null);
                 worldObserved = true;
                 engineObserved = false;
+                worldRetired = false;
             }
             if (changed) resetState(true);
         }
@@ -100,8 +102,31 @@ public final class RoxyVoxyRenderPatch {
                 changed = engineObserved;
                 worldEngineToken = new WeakReference<>(worldEngine);
                 engineObserved = true;
+                worldRetired = false;
             }
             if (changed) resetState(true);
+        }
+    }
+
+    public static void activateWorld() {
+        synchronized (PUBLICATION_LOCK) {
+            synchronized (RENDER_LOCK) {
+                worldRetired = false;
+            }
+        }
+    }
+
+    public static void retireWorld() {
+        synchronized (PUBLICATION_LOCK) {
+            synchronized (RENDER_LOCK) {
+                if (worldRetired) return;
+                worldToken = new WeakReference<>(null);
+                worldEngineToken = new WeakReference<>(null);
+                worldObserved = false;
+                engineObserved = false;
+                worldRetired = true;
+            }
+            resetState(true);
         }
     }
 
@@ -199,6 +224,7 @@ public final class RoxyVoxyRenderPatch {
                     SERVICE_SEQUENCES.put(renderGenerationService, REPAIR_SEQUENCE.get());
                     SERVICE_WORLDS.put(renderGenerationService, WORLD_GENERATION.get());
                     activeRenderGenerationService = renderGenerationService;
+                    worldRetired = false;
                 }
             }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {

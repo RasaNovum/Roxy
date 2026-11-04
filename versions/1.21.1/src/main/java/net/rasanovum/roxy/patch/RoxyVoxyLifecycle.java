@@ -4,6 +4,7 @@ import net.rasanovum.roxy.compat.RoxyVoxyRendererReloadCompat;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
@@ -16,6 +17,7 @@ public final class RoxyVoxyLifecycle {
     private static Object instance;
     private static Object engine;
     private static Object renderer;
+    private static WeakReference<Object> level = new WeakReference<>(null);
     private static boolean rendererReady;
 
     private RoxyVoxyLifecycle() {
@@ -29,9 +31,12 @@ public final class RoxyVoxyLifecycle {
             Methods resolved = methods();
             Object currentInstance = resolved.voxyInstance.invoke(null);
             Object minecraft = resolved.minecraftInstance.invoke(null);
-            Object level = resolved.level.get(minecraft);
+            Object currentLevel = resolved.level.get(minecraft);
             if (currentInstance != null) RoxyVoxyRendererReloadCompat.processPending();
-            Object currentEngine = level == null ? null : resolved.worldEngine.invoke(null, level);
+            Object currentEngine = currentLevel == null ? null : resolved.worldEngine.invoke(null, currentLevel);
+            if (currentLevel == null) RoxyVoxyRenderPatch.retireWorld();
+            else if (currentLevel != level.get()) RoxyVoxyRenderPatch.activateWorld();
+            level = new WeakReference<>(currentLevel);
             if (currentInstance == null || currentEngine == null) {
                 if (instance != currentInstance || engine != currentEngine) {
                     instance = currentInstance;
@@ -51,7 +56,7 @@ public final class RoxyVoxyLifecycle {
                 engine = currentEngine;
                 renderer = currentRenderer;
                 rendererReady = false;
-                if (worldChanged) RoxyVoxyRenderPatch.observeWorld(level, currentEngine);
+                if (worldChanged) RoxyVoxyRenderPatch.observeWorld(currentLevel, currentEngine);
                 if (currentRenderer != null) {
                     RoxyVoxyRenderPatch.registerRenderer(currentRenderer);
                     LOGGER.info("Registered Voxy render task tracking for a world or renderer change");
