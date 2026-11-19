@@ -43,7 +43,7 @@ public final class RoxyFabricModReader implements IModFileReader {
             Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcAdapter.class", "roxy/embedded/RoxyTfcAdapter.bin"),
             Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcImport.class", "roxy/embedded/RoxyTfcImport.bin"),
             Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcImport$ChunkCapture.class", "roxy/embedded/RoxyTfcImport$ChunkCapture.bin"),
-            Map.entry("net/rasanovum/roxyhost/RoxyFogOptions.class", "roxy/embedded/RoxyFogOptions.bin"),
+            Map.entry("net/rasanovum/roxyhost/RoxySodiumOptions.class", "roxy/embedded/RoxySodiumOptions.bin"),
             Map.entry("net/rasanovum/roxyhost/RoxyChunkBoundaryMask.class", "roxy/embedded/RoxyChunkBoundaryMask.bin"),
             Map.entry("net/rasanovum/roxyhost/RoxyPalettedContainerFactory.class", "roxy/embedded/RoxyPalettedContainerFactory.bin"),
             Map.entry("net/rasanovum/roxyhost/RoxyTerrainSlabs.class", "roxy/embedded/RoxyTerrainSlabs.bin"),

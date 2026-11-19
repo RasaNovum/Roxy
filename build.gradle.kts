@@ -267,9 +267,9 @@ project(":1.21.1") {
                 into("roxy/embedded")
                 rename { "RoxyChunkBoundaryMask.bin" }
             }
-            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyFogOptions.class")) {
+            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxySodiumOptions.class")) {
                 into("roxy/embedded")
-                rename { "RoxyFogOptions.bin" }
+                rename { "RoxySodiumOptions.bin" }
             }
             from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/tfc/RoxyTfcAdapter.class")) {
                 into("roxy/embedded")

@@ -894,7 +894,7 @@ public final class RoxyBytecodeRemapper {
                         @Override public void visitInsn(int opcode) {
                             if (opcode == Opcodes.RETURN && registered) {
                                 super.visitVarInsn(Opcodes.ALOAD, 1);
-                                super.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxyhost/RoxyFogOptions", "register", "(Ljava/lang/Object;)V", false);
+                                super.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxyhost/RoxySodiumOptions", "register", "(Ljava/lang/Object;)V", false);
                             }
                             super.visitInsn(opcode);
                         }

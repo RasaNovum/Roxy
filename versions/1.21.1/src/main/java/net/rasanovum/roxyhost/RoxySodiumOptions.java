@@ -5,6 +5,7 @@ import net.caffeinemc.mods.sodium.api.config.StorageEventHandler;
 import net.caffeinemc.mods.sodium.api.config.option.OptionFlag;
 import net.caffeinemc.mods.sodium.api.config.structure.BooleanOptionBuilder;
 import net.caffeinemc.mods.sodium.api.config.structure.ConfigBuilder;
+import net.caffeinemc.mods.sodium.api.config.structure.OptionPageBuilder;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.rasanovum.roxy.fog.RoxyFogConfig;
@@ -17,7 +18,7 @@ import net.rasanovum.roxy.fog.RoxyVoxyFogPatch;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
-public final class RoxyFogOptions {
+public final class RoxySodiumOptions {
     private static final ResourceLocation VOXY_ENABLED = ResourceLocation.fromNamespaceAndPath("voxy", "enabled");
     private static final ResourceLocation VOXY_RENDERING = ResourceLocation.fromNamespaceAndPath("voxy", "rendering");
     private static final ResourceLocation VOXY_ENVIRONMENTAL_FOG =
@@ -25,70 +26,73 @@ public final class RoxyFogOptions {
     private static final ResourceLocation TFC_DAY_CYCLE =
             ResourceLocation.fromNamespaceAndPath("roxy", "tfc_day_cycle_lod_updates");
 
-    private RoxyFogOptions() {}
+    private RoxySodiumOptions() {}
 
     public static void register(Object value) {
         ConfigBuilder builder = (ConfigBuilder) value;
-        addOptions(builder, RoxyFogConfig.get(), RoxyFogConfig::save, !shadersActive());
-    }
-
-    private static void addOptions(ConfigBuilder builder, RoxyFogConfig.Settings settings,
-                                   StorageEventHandler storage, boolean includeFogOptions) {
-        int maxChunks = 512;
         var modOptions = builder.registerModOptions("roxy")
                 .setNonTintedIcon(ResourceLocation.fromNamespaceAndPath("roxy", "icon.png"));
-        if (includeFogOptions) {
-            var page = builder.createOptionPage().setName(text("page"));
-            ResourceLocation automaticId = ResourceLocation.fromNamespaceAndPath("roxy", "fog_automatic");
-            boolean voxyOptionsAvailable = voxyOptionsAvailable();
-            ResourceLocation[] enabledDependencies = voxyOptionsAvailable
-                    ? new ResourceLocation[]{VOXY_ENABLED, VOXY_RENDERING, VOXY_ENVIRONMENTAL_FOG,
-                            ConfigState.UPDATE_ON_APPLY, ConfigState.UPDATE_ON_REBUILD}
-                    : new ResourceLocation[]{ConfigState.UPDATE_ON_APPLY, ConfigState.UPDATE_ON_REBUILD};
-            ResourceLocation[] rollInDependencies = new ResourceLocation[enabledDependencies.length + 1];
-            rollInDependencies[0] = automaticId;
-            System.arraycopy(enabledDependencies, 0, rollInDependencies, 1, enabledDependencies.length);
-            ResourceLocation terrainEnabledId = ResourceLocation.fromNamespaceAndPath("roxy", "terrain_fog_enabled");
-            ResourceLocation[] sharedStartDependencies = new ResourceLocation[enabledDependencies.length + 1];
-            sharedStartDependencies[0] = terrainEnabledId;
-            System.arraycopy(enabledDependencies, 0, sharedStartDependencies, 1, enabledDependencies.length);
-            var automatic = builder.createBooleanOption(automaticId)
-                    .setName(text("automatic"))
-                    .setTooltip(tooltip("automatic.tooltip"))
-                    .setDefaultValue(true).setStorageHandler(storage)
-                    .setBinding(v -> settings.automatic = v, () -> settings.automatic)
-                    .setControlHiddenWhenDisabled(false)
-                    .setEnabledProvider(state -> enabled(state, voxyOptionsAvailable), enabledDependencies);
-            var terrainEnabled = builder.createBooleanOption(terrainEnabledId)
-                    .setName(text("terrain_enabled"))
-                    .setTooltip(text("terrain_enabled.tooltip"))
-                    .setDefaultValue(true).setStorageHandler(storage)
-                    .setBinding(v -> settings.terrainEnabled = v, () -> settings.terrainEnabled)
-                    .setControlHiddenWhenDisabled(false)
-                    .setEnabledProvider(state -> terrainFogEnabled(state, voxyOptionsAvailable), enabledDependencies);
-            var start = builder.createIntegerOption(ResourceLocation.fromNamespaceAndPath("roxy", "fog_start"))
-                    .setName(text("start"))
-                    .setTooltip(startTooltip())
-                    .setDefaultValue(RoxyFogConfig.Settings.DEFAULT_START_CHUNKS).setRange(0, maxChunks - 1, 1)
-                    .setValueFormatter(v -> Component.translatable("roxy.fog.chunks", v))
-                    .setStorageHandler(storage).setBinding(v -> settings.start = v * 16, () -> settings.start / 16)
-                    .setControlHiddenWhenDisabled(false)
-                    .setEnabledProvider(state -> enabled(state, voxyOptionsAvailable)
-                            || (terrainFogEnabled(state, voxyOptionsAvailable)
-                            && state.readBooleanOption(terrainEnabledId)), sharedStartDependencies);
-            var rollIn = builder.createIntegerOption(ResourceLocation.fromNamespaceAndPath("roxy", "weather_fog_roll_in"))
-                    .setName(text("weather_roll_in"))
-                    .setTooltip(tooltip("weather_roll_in.tooltip"))
-                    .setDefaultValue(RoxyFogConfig.Settings.DEFAULT_WEATHER_ROLL_IN).setRange(0, 100, 1)
-                    .setValueFormatter(v -> Component.translatable("roxy.fog.percent", v))
-                    .setStorageHandler(storage).setBinding(v -> settings.weatherRollIn = v, () -> settings.weatherRollIn)
-                    .setControlHiddenWhenDisabled(false)
-                    .setEnabledProvider(state -> enabled(state, voxyOptionsAvailable) && state.readBooleanOption(automaticId),
-                            rollInDependencies);
-            page.addOption(automatic).addOption(start).addOption(rollIn).addOption(terrainEnabled);
-            modOptions.addPage(page);
-        }
+        if (!shadersActive()) modOptions.addPage(createFogPage(builder));
+        modOptions.addPage(createCompatibilityPage(builder));
+        modOptions.addPage(createLodUpdatesPage(builder));
+    }
 
+    private static OptionPageBuilder createFogPage(ConfigBuilder builder) {
+        var settings = RoxyFogConfig.get();
+        StorageEventHandler storage = RoxyFogConfig::save;
+        int maxChunks = 512;
+        var page = builder.createOptionPage().setName(text("page"));
+        ResourceLocation automaticId = ResourceLocation.fromNamespaceAndPath("roxy", "fog_automatic");
+        boolean voxyOptionsAvailable = voxyOptionsAvailable();
+        ResourceLocation[] enabledDependencies = voxyOptionsAvailable
+                ? new ResourceLocation[]{VOXY_ENABLED, VOXY_RENDERING, VOXY_ENVIRONMENTAL_FOG,
+                        ConfigState.UPDATE_ON_APPLY, ConfigState.UPDATE_ON_REBUILD}
+                : new ResourceLocation[]{ConfigState.UPDATE_ON_APPLY, ConfigState.UPDATE_ON_REBUILD};
+        ResourceLocation[] rollInDependencies = new ResourceLocation[enabledDependencies.length + 1];
+        rollInDependencies[0] = automaticId;
+        System.arraycopy(enabledDependencies, 0, rollInDependencies, 1, enabledDependencies.length);
+        ResourceLocation terrainEnabledId = ResourceLocation.fromNamespaceAndPath("roxy", "terrain_fog_enabled");
+        ResourceLocation[] sharedStartDependencies = new ResourceLocation[enabledDependencies.length + 1];
+        sharedStartDependencies[0] = terrainEnabledId;
+        System.arraycopy(enabledDependencies, 0, sharedStartDependencies, 1, enabledDependencies.length);
+        var automatic = builder.createBooleanOption(automaticId)
+                .setName(text("automatic"))
+                .setTooltip(tooltip("automatic.tooltip"))
+                .setDefaultValue(true).setStorageHandler(storage)
+                .setBinding(v -> settings.automatic = v, () -> settings.automatic)
+                .setControlHiddenWhenDisabled(false)
+                .setEnabledProvider(state -> enabled(state, voxyOptionsAvailable), enabledDependencies);
+        var terrainEnabled = builder.createBooleanOption(terrainEnabledId)
+                .setName(text("terrain_enabled"))
+                .setTooltip(text("terrain_enabled.tooltip"))
+                .setDefaultValue(true).setStorageHandler(storage)
+                .setBinding(v -> settings.terrainEnabled = v, () -> settings.terrainEnabled)
+                .setControlHiddenWhenDisabled(false)
+                .setEnabledProvider(state -> terrainFogEnabled(state, voxyOptionsAvailable), enabledDependencies);
+        var start = builder.createIntegerOption(ResourceLocation.fromNamespaceAndPath("roxy", "fog_start"))
+                .setName(text("start"))
+                .setTooltip(startTooltip())
+                .setDefaultValue(RoxyFogConfig.Settings.DEFAULT_START_CHUNKS).setRange(0, maxChunks - 1, 1)
+                .setValueFormatter(v -> Component.translatable("roxy.fog.chunks", v))
+                .setStorageHandler(storage).setBinding(v -> settings.start = v * 16, () -> settings.start / 16)
+                .setControlHiddenWhenDisabled(false)
+                .setEnabledProvider(state -> enabled(state, voxyOptionsAvailable)
+                        || (terrainFogEnabled(state, voxyOptionsAvailable)
+                        && state.readBooleanOption(terrainEnabledId)), sharedStartDependencies);
+        var rollIn = builder.createIntegerOption(ResourceLocation.fromNamespaceAndPath("roxy", "weather_fog_roll_in"))
+                .setName(text("weather_roll_in"))
+                .setTooltip(tooltip("weather_roll_in.tooltip"))
+                .setDefaultValue(RoxyFogConfig.Settings.DEFAULT_WEATHER_ROLL_IN).setRange(0, 100, 1)
+                .setValueFormatter(v -> Component.translatable("roxy.fog.percent", v))
+                .setStorageHandler(storage).setBinding(v -> settings.weatherRollIn = v, () -> settings.weatherRollIn)
+                .setControlHiddenWhenDisabled(false)
+                .setEnabledProvider(state -> enabled(state, voxyOptionsAvailable) && state.readBooleanOption(automaticId),
+                        rollInDependencies);
+        page.addOption(automatic).addOption(start).addOption(rollIn).addOption(terrainEnabled);
+        return page;
+    }
+
+    private static OptionPageBuilder createCompatibilityPage(ConfigBuilder builder) {
         var compatibility = RoxyCompatConfig.optionsForRestart();
         var compatibilityPage = builder.createOptionPage().setName(compatText("page"));
         compatibilityPage.addOption(compatOption(builder, "terrain_slabs",
@@ -99,8 +103,10 @@ public final class RoxyFogOptions {
                 value -> compatibility.copycats = value, () -> compatibility.copycats));
         compatibilityPage.addOption(compatOption(builder, "power_grid",
                 value -> compatibility.powerGrid = value, () -> compatibility.powerGrid));
-        modOptions.addPage(compatibilityPage);
+        return compatibilityPage;
+    }
 
+    private static OptionPageBuilder createLodUpdatesPage(ConfigBuilder builder) {
         var lodUpdatesPage = builder.createOptionPage().setName(tfcText("page"));
         var tfc = builder.createBooleanOption(TFC_DAY_CYCLE)
                 .setName(tfcText("day_cycle"))
@@ -121,7 +127,7 @@ public final class RoxyFogOptions {
                                 && state.readBooleanOption(TFC_DAY_CYCLE),
                         TFC_DAY_CYCLE, ConfigState.UPDATE_ON_APPLY, ConfigState.UPDATE_ON_REBUILD);
         lodUpdatesPage.addOption(tfc).addOption(showProgress);
-        modOptions.addPage(lodUpdatesPage);
+        return lodUpdatesPage;
     }
 
     private static BooleanOptionBuilder compatOption(ConfigBuilder builder, String key,
@@ -195,7 +201,7 @@ public final class RoxyFogOptions {
     private static boolean voxyOptionsAvailable() {
         try {
             Class<?> voxy = Class.forName("me.cortex.voxy.commonImpl.VoxyCommon", false,
-                    RoxyFogOptions.class.getClassLoader());
+                    RoxySodiumOptions.class.getClassLoader());
             return Boolean.TRUE.equals(voxy.getMethod("isAvailable").invoke(null));
         } catch (ReflectiveOperationException | LinkageError | RuntimeException ignored) {
             return false;
