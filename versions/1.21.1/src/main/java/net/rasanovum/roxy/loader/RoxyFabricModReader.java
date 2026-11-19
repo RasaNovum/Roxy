@@ -9,6 +9,7 @@ import net.neoforged.fml.loading.moddiscovery.readers.JarModsDotTomlModFileReade
 import net.neoforged.neoforgespi.locating.IModFile;
 import net.neoforged.neoforgespi.locating.IModFileReader;
 import net.neoforged.neoforgespi.locating.ModFileDiscoveryAttributes;
+import net.rasanovum.roxy.compat.RoxyCompatConfig;
 import org.jetbrains.annotations.Nullable;
 
 import java.io.BufferedReader;
@@ -23,6 +24,7 @@ import java.util.Set;
 import java.util.List;
 import java.util.Map;
 import java.util.StringJoiner;
+import java.util.function.Predicate;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipOutputStream;
@@ -44,6 +46,7 @@ public final class RoxyFabricModReader implements IModFileReader {
             Map.entry("net/rasanovum/roxyhost/RoxyFogOptions.class", "roxy/embedded/RoxyFogOptions.bin"),
             Map.entry("net/rasanovum/roxyhost/RoxyChunkBoundaryMask.class", "roxy/embedded/RoxyChunkBoundaryMask.bin"),
             Map.entry("net/rasanovum/roxyhost/RoxyPalettedContainerFactory.class", "roxy/embedded/RoxyPalettedContainerFactory.bin"),
+            Map.entry("net/rasanovum/roxyhost/RoxyTerrainSlabs.class", "roxy/embedded/RoxyTerrainSlabs.bin"),
             Map.entry("net/rasanovum/roxyhost/RoxyVoxyNeoForge.class", "roxy/embedded/RoxyVoxyNeoForge.bin"),
             Map.entry("net/rasanovum/roxy/client/RoxyClientWarnings.class", "roxy/embedded/RoxyClientWarnings.bin"),
             Map.entry("net/rasanovum/roxy/client/RoxyClientWarnings$Warning.class", "roxy/embedded/RoxyClientWarnings$Warning.bin"),
@@ -116,6 +119,10 @@ public final class RoxyFabricModReader implements IModFileReader {
         java.util.Map<String, byte[]> remappedClasses = remapClasses(original, mappings, true);
         byte[] supplementalShaderMixin = readSupplementalShaderMixin();
         byte[] supplementalWorldgenMixin = readResource(SUPPLEMENTAL_WORLDGEN_MIXIN);
+        if (!RoxyCompatConfig.copycatsEnabled()) {
+            supplementalWorldgenMixin = removeClientMixins(supplementalWorldgenMixin,
+                    "RoxyCopycatsBlockEntityPacketMixin"::equals);
+        }
 
         try (ZipFile input = new ZipFile(original.toFile());
              ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(patched))) {
@@ -228,7 +235,19 @@ public final class RoxyFabricModReader implements IModFileReader {
     }
 
     private static byte[] readSupplementalShaderMixin() throws IOException {
-        return readResource(SUPPLEMENTAL_SHADER_MIXIN);
+        byte[] source = readResource(SUPPLEMENTAL_SHADER_MIXIN);
+        boolean tfc = RoxyCompatConfig.tfcEnabled();
+        boolean powerGrid = RoxyCompatConfig.powerGridEnabled();
+        if (tfc && powerGrid) return source;
+        return removeClientMixins(source, name -> (!tfc && name.startsWith("tfc."))
+                || (!powerGrid && name.equals("RoxyClientLevelEntityMixin")));
+    }
+
+    private static byte[] removeClientMixins(byte[] source, Predicate<String> remove) {
+        if (source == null) return null;
+        JsonObject config = JsonParser.parseString(new String(source, StandardCharsets.UTF_8)).getAsJsonObject();
+        config.getAsJsonArray("client").asList().removeIf(entry -> remove.test(entry.getAsString()));
+        return config.toString().getBytes(StandardCharsets.UTF_8);
     }
 
     private static byte[] readResource(String name) throws IOException {
@@ -489,7 +508,9 @@ public final class RoxyFabricModReader implements IModFileReader {
                 }
             }
         }
-        return minimum == null ? null : "[" + minimum + ",)";
+        if (minimum == null) return null;
+        if (compareVersions(minimum, "0.8.12") < 0) minimum = "0.8.12";
+        return "[" + minimum + ",)";
     }
 
     private static String lowerBound(String constraint) {

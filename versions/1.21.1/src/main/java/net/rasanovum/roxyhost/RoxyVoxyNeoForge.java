@@ -9,6 +9,7 @@ import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
+import net.rasanovum.roxy.compat.RoxyCompatConfig;
 import net.rasanovum.roxy.compat.RoxyPowerGridCompat;
 import net.rasanovum.roxy.patch.RoxyVoxyLifecycle;
 import net.rasanovum.roxy.loader.RoxyFabricRuntime;
@@ -34,7 +35,8 @@ public final class RoxyVoxyNeoForge {
 
     @SuppressWarnings({"rawtypes", "unchecked"})
     private void onRegisterClientCommands(RegisterClientCommandsEvent event) {
-        if (TfcCompatConfig.installed()) event.getDispatcher().register(net.minecraft.commands.Commands.literal("roxy")
+        if (RoxyCompatConfig.tfcEnabled() && TfcCompatConfig.installed())
+            event.getDispatcher().register(net.minecraft.commands.Commands.literal("roxy")
                 .then(net.minecraft.commands.Commands.literal("tfc")
                         .then(net.minecraft.commands.Commands.literal("status").executes(context -> {
                             context.getSource().sendSuccess(() -> net.minecraft.network.chat.Component.literal(
@@ -67,11 +69,13 @@ public final class RoxyVoxyNeoForge {
     }
 
     private void onClientTick(ClientTickEvent.Post event) {
+        net.rasanovum.roxy.compat.RoxyCopycatsCompat.tick();
         RoxyVoxyLifecycle.tick();
-        if (net.minecraft.client.Minecraft.getInstance().level == null)
+        if (RoxyCompatConfig.tfcEnabled() && net.minecraft.client.Minecraft.getInstance().level == null) {
             net.rasanovum.roxyhost.tfc.RoxyTfcTerrainRefresh.reset();
+        }
         RoxyPowerGridCompat.tick();
-        net.rasanovum.roxyhost.tfc.RoxyTfcProgress.tick();
+        if (RoxyCompatConfig.tfcEnabled()) net.rasanovum.roxyhost.tfc.RoxyTfcProgress.tick();
     }
 
     private void onEntityLeaveLevel(EntityLeaveLevelEvent event) {

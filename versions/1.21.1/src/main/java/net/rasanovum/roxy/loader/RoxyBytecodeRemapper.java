@@ -1,5 +1,6 @@
 package net.rasanovum.roxy.loader;
 
+import net.rasanovum.roxy.compat.RoxyCompatConfig;
 import org.objectweb.asm.AnnotationVisitor;
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
@@ -301,7 +302,12 @@ public final class RoxyBytecodeRemapper {
         output = patchVoxyModelTinting(output);
         output = patchVoxyModelFactory(output);
         output = patchVoxyIceModelFlags(output);
-        output = RoxyTfcBytecodePatch.patch(output);
+        if (RoxyCompatConfig.terrainSlabsEnabled()) {
+            output = patchVoxyTerrainSlabSnow(output);
+        }
+        if (RoxyCompatConfig.tfcEnabled()) {
+            output = RoxyTfcBytecodePatch.patch(output);
+        }
         output = patchVoxyModelBakeryConstructorCleanup(output);
         output = patchVoxyRenderSystemConstructorCleanup(output);
         output = patchVoxyFluidClassification(output);
@@ -323,6 +329,78 @@ public final class RoxyBytecodeRemapper {
         output = patchMacOSGraphicsGuard(output);
         output = patchVoxyJomlMemoryAccess(output);
         return patchFabricMetadata ? patchFabricMetadataAccess(output) : output;
+    }
+
+    private static byte[] patchVoxyTerrainSlabSnow(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals(VOXY_RENDER_DATA_FACTORY)) return input;
+
+        String world = "me/cortex/voxy/common/world/WorldEngine";
+        String section = "me/cortex/voxy/common/world/WorldSection";
+        String mapper = "me/cortex/voxy/common/world/other/Mapper";
+        String compat = "net/rasanovum/roxy/compat/RoxyTerrainSlabsCompat";
+        int[] matches = new int[3];
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor,
+                                             String signature, String[] exceptions) {
+                MethodVisitor delegate = super.visitMethod(access, name, descriptor, signature, exceptions);
+                boolean mesh = name.equals("generateMesh") && descriptor.startsWith("(L" + section + ";)");
+                boolean outerFaces = name.equals("generateYZNonOpaqueOuterGeometry") && descriptor.equals("(I)V");
+                boolean nonOpaqueFace = name.equals("shouldMeshNonOpaqueBlockFace") && descriptor.equals("(IJJJJ)Z");
+                if (!mesh && !outerFaces && !nonOpaqueFace) return delegate;
+                return new MethodVisitor(Opcodes.ASM9, delegate) {
+                    @Override
+                    public void visitMethodInsn(int opcode, String owner, String method, String desc, boolean itf) {
+                        super.visitMethodInsn(opcode, owner, method, desc, itf);
+                        if (!mesh || !owner.equals(VOXY_RENDER_DATA_FACTORY)
+                                || !method.equals("acquireNeighborData") || !desc.equals("(L" + section + ";I)V")) return;
+                        loadField("world", "L" + world + ";");
+                        super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, world, "getMapper", "()L" + mapper + ";", false);
+                        super.visitVarInsn(Opcodes.ALOAD, 1);
+                        super.visitMethodInsn(Opcodes.INVOKEVIRTUAL, section, "_unsafeGetRawDataArray", "()[J", false);
+                        loadField("neighboringFaces", "[J");
+                        super.visitVarInsn(Opcodes.ILOAD, 3);
+                        loadField("sectionData", "[J");
+                        loadField("opaqueMasks", "[I");
+                        loadField("nonOpaqueMasks", "[I");
+                        super.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxyhost/RoxyTerrainSlabs",
+                                "adjustSnow", "(Ljava/lang/Object;[J[JI[J[I[I)V", false);
+                        matches[0]++;
+                    }
+
+                    private void loadField(String field, String desc) {
+                        super.visitVarInsn(Opcodes.ALOAD, 0);
+                        super.visitFieldInsn(Opcodes.GETFIELD, VOXY_RENDER_DATA_FACTORY, field, desc);
+                    }
+
+                    @Override
+                    public void visitVarInsn(int opcode, int index) {
+                        super.visitVarInsn(opcode, index);
+                        if (outerFaces && opcode == Opcodes.ILOAD && (index == 20 || index == 25)) {
+                            super.visitVarInsn(Opcodes.LLOAD, 16);
+                            super.visitMethodInsn(Opcodes.INVOKESTATIC, compat, "occludesSnow", "(ZJ)Z", false);
+                            matches[1]++;
+                        }
+                    }
+
+                    @Override
+                    public void visitLdcInsn(Object value) {
+                        if ((outerFaces || nonOpaqueFace) && Long.valueOf(0x3fffc000000L).equals(value)) {
+                            super.visitLdcInsn(0x800003fffc000000L);
+                            matches[2]++;
+                            return;
+                        }
+                        super.visitLdcInsn(value);
+                    }
+                };
+            }
+        }, 0);
+        if (matches[0] != 1 || matches[1] != 4 || matches[2] != 3) {
+            throw new IllegalStateException("Unsupported Voxy terrain snow mesher layout");
+        }
+        return writer.toByteArray();
     }
 
     private static byte[] patchVoxyJomlMemoryAccess(byte[] input) {
@@ -1789,8 +1867,10 @@ public final class RoxyBytecodeRemapper {
                 method.visitMethodInsn(Opcodes.INVOKESTATIC,
                         "net/rasanovum/roxy/compat/RoxyCreateStaticModelCompat", "wrap",
                         "(Ljava/lang/Object;Ljava/lang/Object;)Ljava/lang/Object;", false);
-                method.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxy/tfc/TfcVoxyBridge",
-                        "bakedModel", "(Ljava/lang/Object;)Ljava/lang/Object;", false);
+                if (RoxyCompatConfig.tfcEnabled()) {
+                    method.visitMethodInsn(Opcodes.INVOKESTATIC, "net/rasanovum/roxy/tfc/TfcVoxyBridge",
+                            "bakedModel", "(Ljava/lang/Object;)Ljava/lang/Object;", false);
+                }
                 method.visitTypeInsn(Opcodes.CHECKCAST, BAKED_MODEL);
                 method.visitVarInsn(Opcodes.ASTORE, 3);
 

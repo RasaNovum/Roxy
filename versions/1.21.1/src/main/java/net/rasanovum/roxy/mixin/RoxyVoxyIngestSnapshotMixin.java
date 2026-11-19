@@ -1,15 +1,16 @@
 package net.rasanovum.roxy.mixin;
 
-import net.minecraft.core.Holder;
-import net.minecraft.world.level.biome.Biome;
+import com.llamalad7.mixinextras.sugar.Local;
+import com.llamalad7.mixinextras.injector.wrapmethod.WrapMethod;
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
-import net.minecraft.world.level.chunk.PalettedContainer;
-import net.minecraft.world.level.chunk.PalettedContainerRO;
+import net.rasanovum.roxy.compat.RoxyCopycatsCompat;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Pseudo;
+import org.spongepowered.asm.mixin.injection.Coerce;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.ModifyArg;
-
 
 @Pseudo
 @Mixin(targets = "me.cortex.voxy.common.world.service.VoxelIngestService", remap = false)
@@ -21,41 +22,44 @@ public final class RoxyVoxyIngestSnapshotMixin {
                     "Lnet/minecraft/world/level/chunk/DataLayer;" +
                     "Lnet/minecraft/world/level/chunk/DataLayer;)V";
 
-    @ModifyArg(
-            method = {
-                    "enqueueIngest(Lme/cortex/voxy/common/world/WorldEngine;Lnet/minecraft/world/level/chunk/LevelChunk;)Z",
-                    "rawIngest0(Lme/cortex/voxy/common/world/WorldEngine;Lnet/minecraft/world/level/chunk/LevelChunkSection;IIILnet/minecraft/world/level/chunk/DataLayer;Lnet/minecraft/world/level/chunk/DataLayer;)Z"
-            },
-            at = @At(
-                    value = "INVOKE",
-                    target = INGEST_SECTION_CONSTRUCTOR,
-                    remap = false
-            ),
-            index = 4,
-            require = 3,
+    @WrapMethod(
+            method = "enqueueIngest(Lme/cortex/voxy/common/world/WorldEngine;Lnet/minecraft/world/level/chunk/LevelChunk;)Z",
             remap = false
     )
-    private static LevelChunkSection roxy$snapshotSection(LevelChunkSection section) {
-        return new LevelChunkSection(section.getStates().copy(), copyBiomes(section.getBiomes()));
+    private boolean roxy$wrapChunkSnapshot(@Coerce Object worldEngine, LevelChunk chunk,
+                                            Operation<Boolean> original) {
+        RoxyCopycatsCompat.beginChunkIngest(chunk);
+        try {
+            return original.call(worldEngine, chunk);
+        } finally {
+            RoxyCopycatsCompat.endChunkIngest();
+        }
     }
 
-    @SuppressWarnings("unchecked")
-    private static PalettedContainerRO<Holder<Biome>> copyBiomes(PalettedContainerRO<Holder<Biome>> source) {
-        if (source instanceof PalettedContainer<?> palette) {
-            return ((PalettedContainer<Holder<Biome>>) palette).copy();
-        }
+    @ModifyArg(
+            method = "enqueueIngest(Lme/cortex/voxy/common/world/WorldEngine;Lnet/minecraft/world/level/chunk/LevelChunk;)Z",
+            at = @At(value = "INVOKE", target = INGEST_SECTION_CONSTRUCTOR, remap = false),
+            index = 4,
+            require = 2,
+            remap = false
+    )
+    private static LevelChunkSection roxy$snapshotChunkSection(LevelChunkSection section,
+                                                                @Local(argsOnly = true) LevelChunk chunk,
+                                                                @Local(index = 5) int sectionY) {
+        return (LevelChunkSection) RoxyCopycatsCompat.snapshotSection(section, chunk, sectionY);
+    }
 
-        PalettedContainer<Holder<Biome>> copy = source.recreate();
-        if (copy == null) {
-            throw new IllegalStateException("Unable to snapshot Voxy biome container");
-        }
-        for (int y = 0; y < 4; y++) {
-            for (int z = 0; z < 4; z++) {
-                for (int x = 0; x < 4; x++) {
-                    copy.set(x, y, z, source.get(x, y, z));
-                }
-            }
-        }
-        return copy;
+    @ModifyArg(
+            method = "rawIngest0(Lme/cortex/voxy/common/world/WorldEngine;Lnet/minecraft/world/level/chunk/LevelChunkSection;IIILnet/minecraft/world/level/chunk/DataLayer;Lnet/minecraft/world/level/chunk/DataLayer;)Z",
+            at = @At(value = "INVOKE", target = INGEST_SECTION_CONSTRUCTOR, remap = false),
+            index = 4,
+            require = 1,
+            remap = false
+    )
+    private static LevelChunkSection roxy$snapshotRawSection(LevelChunkSection section,
+                                                              @Local(argsOnly = true, ordinal = 0) int sectionX,
+                                                              @Local(argsOnly = true, ordinal = 1) int sectionY,
+                                                              @Local(argsOnly = true, ordinal = 2) int sectionZ) {
+        return (LevelChunkSection) RoxyCopycatsCompat.snapshotRawSection(section, sectionX, sectionY, sectionZ);
     }
 }

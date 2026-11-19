@@ -2,14 +2,20 @@ package net.rasanovum.roxyhost;
 
 import net.caffeinemc.mods.sodium.api.config.ConfigState;
 import net.caffeinemc.mods.sodium.api.config.StorageEventHandler;
+import net.caffeinemc.mods.sodium.api.config.option.OptionFlag;
+import net.caffeinemc.mods.sodium.api.config.structure.BooleanOptionBuilder;
 import net.caffeinemc.mods.sodium.api.config.structure.ConfigBuilder;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 import net.rasanovum.roxy.fog.RoxyFogConfig;
 import net.rasanovum.roxy.compat.RoxyFogModCompat;
 import net.rasanovum.roxy.compat.RoxyBetterFogCompat;
+import net.rasanovum.roxy.compat.RoxyCompatConfig;
 import net.rasanovum.roxy.tfc.TfcCompatConfig;
 import net.rasanovum.roxy.fog.RoxyVoxyFogPatch;
+
+import java.util.function.Consumer;
+import java.util.function.Supplier;
 
 public final class RoxyFogOptions {
     private static final ResourceLocation VOXY_ENABLED = ResourceLocation.fromNamespaceAndPath("voxy", "enabled");
@@ -83,6 +89,18 @@ public final class RoxyFogOptions {
             modOptions.addPage(page);
         }
 
+        var compatibility = RoxyCompatConfig.optionsForRestart();
+        var compatibilityPage = builder.createOptionPage().setName(compatText("page"));
+        compatibilityPage.addOption(compatOption(builder, "terrain_slabs",
+                value -> compatibility.terrainSlabs = value, () -> compatibility.terrainSlabs));
+        compatibilityPage.addOption(compatOption(builder, "tfc",
+                value -> compatibility.tfc = value, () -> compatibility.tfc));
+        compatibilityPage.addOption(compatOption(builder, "copycats",
+                value -> compatibility.copycats = value, () -> compatibility.copycats));
+        compatibilityPage.addOption(compatOption(builder, "power_grid",
+                value -> compatibility.powerGrid = value, () -> compatibility.powerGrid));
+        modOptions.addPage(compatibilityPage);
+
         var lodUpdatesPage = builder.createOptionPage().setName(tfcText("page"));
         var tfc = builder.createBooleanOption(TFC_DAY_CYCLE)
                 .setName(tfcText("day_cycle"))
@@ -90,7 +108,7 @@ public final class RoxyFogOptions {
                 .setDefaultValue(false).setStorageHandler(TfcCompatConfig::save)
                 .setBinding(TfcCompatConfig::setEnabled, TfcCompatConfig::enabled)
                 .setControlHiddenWhenDisabled(false)
-                .setEnabledProvider(state -> TfcCompatConfig.installed(),
+                .setEnabledProvider(state -> TfcCompatConfig.installed() && RoxyCompatConfig.tfcEnabled(),
                         ConfigState.UPDATE_ON_APPLY, ConfigState.UPDATE_ON_REBUILD);
         var showProgress = builder.createBooleanOption(
                         ResourceLocation.fromNamespaceAndPath("roxy", "tfc_show_progress"))
@@ -99,10 +117,26 @@ public final class RoxyFogOptions {
                 .setDefaultValue(true).setStorageHandler(TfcCompatConfig::save)
                 .setBinding(TfcCompatConfig::setShowProgress, TfcCompatConfig::showProgress)
                 .setControlHiddenWhenDisabled(true)
-                .setEnabledProvider(state -> TfcCompatConfig.installed() && state.readBooleanOption(TFC_DAY_CYCLE),
+                .setEnabledProvider(state -> TfcCompatConfig.installed() && RoxyCompatConfig.tfcEnabled()
+                                && state.readBooleanOption(TFC_DAY_CYCLE),
                         TFC_DAY_CYCLE, ConfigState.UPDATE_ON_APPLY, ConfigState.UPDATE_ON_REBUILD);
         lodUpdatesPage.addOption(tfc).addOption(showProgress);
         modOptions.addPage(lodUpdatesPage);
+    }
+
+    private static BooleanOptionBuilder compatOption(ConfigBuilder builder, String key,
+                                                     Consumer<Boolean> setter, Supplier<Boolean> getter) {
+        return builder.createBooleanOption(ResourceLocation.fromNamespaceAndPath("roxy", "compat_" + key))
+                .setName(compatText(key))
+                .setTooltip(compatText(key + ".tooltip").copy().append("\n\n").append(compatText("restart")))
+                .setDefaultValue(true)
+                .setStorageHandler(RoxyCompatConfig::save)
+                .setBinding(setter, getter)
+                .setFlags(OptionFlag.REQUIRES_GAME_RESTART);
+    }
+
+    private static Component compatText(String key) {
+        return Component.translatable("roxy.compat." + key);
     }
 
     private static Component text(String key) {
@@ -135,8 +169,11 @@ public final class RoxyFogOptions {
 
     private static Component tfcTooltip() {
         Component description = tfcText("day_cycle.tooltip");
-        return TfcCompatConfig.installed() ? description
-                : tfcText("requires_mod").copy().append("\n\n").append(description);
+        if (!TfcCompatConfig.installed()) {
+            return tfcText("requires_mod").copy().append("\n\n").append(description);
+        }
+        return RoxyCompatConfig.tfcEnabled() ? description
+                : tfcText("requires_compat").copy().append("\n\n").append(description);
     }
 
     private static boolean enabled(ConfigState state, boolean voxyOptionsAvailable) {

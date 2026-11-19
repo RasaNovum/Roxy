@@ -326,7 +326,9 @@ public final class RoxyFabricModReader implements IModFileReader {
                 }
             }
         }
-        return minimum == null ? null : "[" + minimum + ",)";
+        if (minimum == null) return null;
+        if (compareVersions(minimum, "0.8.12") < 0) minimum = "0.8.12";
+        return "[" + minimum + ",)";
     }
 
     private static String lowerBound(String constraint) {

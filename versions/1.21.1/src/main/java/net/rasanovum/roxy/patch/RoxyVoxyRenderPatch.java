@@ -1,6 +1,8 @@
 package net.rasanovum.roxy.patch;
 
+import net.rasanovum.roxy.compat.RoxyCompatConfig;
 import net.rasanovum.roxy.render.RoxyVoxyWorkDrain;
+import net.rasanovum.roxy.tfc.TfcVoxyBridge;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -450,7 +452,9 @@ public final class RoxyVoxyRenderPatch {
 
             try {
                 ((Consumer<Object>) consumer).accept(result);
-                if(taskStamp!=null)net.rasanovum.roxy.tfc.TfcVoxyBridge.meshAccepted(taskStamp.position);
+                if (taskStamp != null && RoxyCompatConfig.tfcEnabled()) {
+                    TfcVoxyBridge.meshAccepted(taskStamp.position);
+                }
             } catch (RuntimeException | Error exception) {
                 synchronized (RENDER_LOCK) {
                     retainFailedTaskLocked(taskStamp);

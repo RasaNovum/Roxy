@@ -1,8 +1,12 @@
 package net.fabricmc.loader.api;
 
 import net.fabricmc.api.EnvType;
+import net.fabricmc.loader.api.entrypoint.EntrypointContainer;
+import net.neoforged.fml.loading.FMLEnvironment;
+import net.neoforged.fml.loading.FMLPaths;
 
 import java.nio.file.Path;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 
@@ -27,4 +31,20 @@ public interface FabricLoader {
     Optional<ModContainer> getModContainer(String modId);
     <T> List<T> getEntrypoints(String key, Class<T> type);
     Path getConfigDir();
+
+    default Collection<ModContainer> getAllMods() {
+        return List.of();
+    }
+
+    default <T> List<EntrypointContainer<T>> getEntrypointContainers(String key, Class<T> type) {
+        return List.of();
+    }
+
+    default Path getGameDir() {
+        return FMLPaths.GAMEDIR.get();
+    }
+
+    default boolean isDevelopmentEnvironment() {
+        return !FMLEnvironment.production;
+    }
 }

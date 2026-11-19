@@ -41,6 +41,7 @@ public final class RoxyPowerGridCompat {
     }
 
     public static void track(Object entity) {
+        if (!RoxyCompatConfig.powerGridEnabled()) return;
         if (!isPowerGridWire(entity)) return;
         try {
             ensureLevel(invoke(entity, "level"));
@@ -54,6 +55,7 @@ public final class RoxyPowerGridCompat {
     }
 
     public static void cache(Object entity, Object reason) {
+        if (!RoxyCompatConfig.powerGridEnabled()) return;
         if (!isPowerGridWire(entity)) return;
         try {
             Object minecraft = minecraft();
@@ -83,6 +85,7 @@ public final class RoxyPowerGridCompat {
     }
 
     public static void tick() {
+        if (!RoxyCompatConfig.powerGridEnabled()) return;
         try {
             Object minecraft = minecraft();
             Object currentLevel = field(minecraft, "level");
@@ -97,6 +100,7 @@ public final class RoxyPowerGridCompat {
     }
 
     public static void render(Object event) {
+        if (!RoxyCompatConfig.powerGridEnabled()) return;
         try {
             if (!invoke(event, "getStage").toString().endsWith("after_entities")) return;
             Object minecraft = minecraft();
@@ -268,6 +272,7 @@ public final class RoxyPowerGridCompat {
     }
 
     public static void markServerRemoval(Object entity, Object level) {
+        if (!RoxyCompatConfig.powerGridEnabled()) return;
         if (!isPowerGridWire(entity)) return;
         try {
             if (Boolean.TRUE.equals(invoke(level, "isClientSide"))) return;

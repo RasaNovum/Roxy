@@ -2,6 +2,7 @@ package net.rasanovum.roxy.tfc;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import net.rasanovum.roxy.compat.RoxyCompatConfig;
 import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.fml.loading.LoadingModList;
 
@@ -32,7 +33,7 @@ public final class TfcCompatConfig {
     }
 
     public static boolean enabled() {
-        return installed() && get().enabled;
+        return RoxyCompatConfig.tfcEnabled() && installed() && get().enabled;
     }
 
     public static boolean showProgress() {

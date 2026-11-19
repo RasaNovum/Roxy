@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "net.rasanovum"
-version = "0.4.2"
+version = "0.4.2-d-8"
 
 val roxyZink = providers.gradleProperty("roxyZink").map(String::toBoolean).orElse(false)
 val macRuntime = providers.gradleProperty("roxyMacOSRuntime")
@@ -202,9 +202,15 @@ project(":1.21.11") {
 }
 
 project(":1.21.1") {
+    plugins.apply("java")
     val sodiumCompileApi by configurations.creating
     dependencies {
         add(sodiumCompileApi.name, "maven.modrinth:sodium:mc1.21.1-0.8.12-neoforge")
+        add("testImplementation", "org.junit.jupiter:junit-jupiter:5.11.4")
+        add("testRuntimeOnly", "org.junit.platform:junit-platform-launcher:1.11.4")
+    }
+    tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
+        useJUnitPlatform()
     }
     val sodiumApiDirectory = layout.buildDirectory.dir("roxy-sodium-api")
     val extractSodiumCompileApi = tasks.register<Copy>("extractSodiumCompileApi") {
@@ -241,6 +247,10 @@ project(":1.21.1") {
             from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyPalettedContainerFactory.class")) {
                 into("roxy/embedded")
                 rename { "RoxyPalettedContainerFactory.bin" }
+            }
+            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyTerrainSlabs.class")) {
+                into("roxy/embedded")
+                rename { "RoxyTerrainSlabs.bin" }
             }
             from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyChunkBoundaryMask.class")) {
                 into("roxy/embedded")
