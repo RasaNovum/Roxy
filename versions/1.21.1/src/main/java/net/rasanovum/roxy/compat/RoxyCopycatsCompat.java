@@ -20,6 +20,19 @@ public final class RoxyCopycatsCompat {
     private static final ConcurrentHashMap<MethodKey, Optional<Method>> METHODS = new ConcurrentHashMap<>();
     private static final ThreadLocal<IngestSnapshot> INGEST_SNAPSHOT = new ThreadLocal<>();
     private static final Map<Object, Set<Long>> PENDING_INGESTS = new IdentityHashMap<>();
+    private static final ClassValue<Optional<Method>> SHAPE_FALLBACK = new ClassValue<>() {
+        @Override
+        protected Optional<Method> computeValue(Class<?> stateType) {
+            try {
+                ClassLoader loader = stateType.getClassLoader();
+                Class<?> helper = Class.forName("net.rasanovum.roxyhost.RoxyCopycatShapeFallback", false, loader);
+                return Optional.of(helper.getMethod("approximate", stateType, stateType));
+            } catch (ReflectiveOperationException | LinkageError failure) {
+                LOGGER.log(java.util.logging.Level.WARNING, "Unable to resolve Copycat LOD shape mapping", failure);
+                return Optional.empty();
+            }
+        }
+    };
     private static volatile boolean ingestFailureLogged;
     private static volatile boolean rawFailureLogged;
     private static volatile boolean modCheckComplete;
@@ -75,12 +88,26 @@ public final class RoxyCopycatsCompat {
                 Object state = invoke(source, "getBlockState", blockEntity.x, blockEntity.y, blockEntity.z);
                 if (!isPotentialCopycatState(state)) continue;
                 if (!isCopycat(state, blockEntity.blockEntity)) continue;
-                Object material = representativeMaterial(blockEntity.blockEntity, loader);
-                if (material != null) invoke(copy, "setBlockState", blockEntity.x, blockEntity.y, blockEntity.z, material, false);
+                Object material = representativeMaterial(state, blockEntity.blockEntity, loader);
+                if (material != null) {
+                    Object lodState = approximateShape(state, material);
+                    invoke(copy, "setBlockState", blockEntity.x, blockEntity.y, blockEntity.z, lodState, false);
+                }
             }
             return copy;
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
             throw new IllegalStateException("Unable to snapshot Copycat materials for Voxy", failure);
+        }
+    }
+
+    private static Object approximateShape(Object state, Object material) {
+        Method method = SHAPE_FALLBACK.get(state.getClass()).orElse(null);
+        if (method == null) return material;
+        try {
+            return method.invoke(null, state, material);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
+            logIngestFailure(failure);
+            return material;
         }
     }
 
@@ -286,7 +313,7 @@ public final class RoxyCopycatsCompat {
         }
     }
 
-    private static Object representativeMaterial(Object blockEntity, ClassLoader loader) {
+    private static Object representativeMaterial(Object copycatState, Object blockEntity, ClassLoader loader) {
         if (blockEntity == null) return null;
         try {
             Method storageMethod = findMethod(blockEntity.getClass(), "getMaterialItemStorage", 0);
@@ -295,10 +322,18 @@ public final class RoxyCopycatsCompat {
                 Method mapMethod = storage == null ? null : findMethod(storage.getClass(), "getMaterialMap", 0);
                 Object map = mapMethod == null ? null : mapMethod.invoke(storage);
                 if (map instanceof Map<?, ?> materials) {
-                    List<Object> candidates = new ArrayList<>(materials.values());
+                    Object block = invoke(copycatState, "getBlock");
+                    Method partExists = findCompatibleMethod(block.getClass(), "partExists",
+                            new Object[]{copycatState, ""});
+                    List<Object> candidates = new ArrayList<>(materials.size());
+                    for (Map.Entry<?, ?> entry : materials.entrySet()) {
+                        if (partExists != null && entry.getKey() instanceof String part
+                                && !Boolean.TRUE.equals(partExists.invoke(block, copycatState, part))) continue;
+                        candidates.add(entry.getValue());
+                    }
                     Object selected = CopycatMaterialPolicy.representative(candidates,
                             value -> usable(value, loader), value -> stableKey(value, loader));
-                    if (selected != null) return selected;
+                    if (selected != null || partExists != null) return selected;
                 }
             }
             Method single = findMethod(blockEntity.getClass(), "getMaterial", 0);

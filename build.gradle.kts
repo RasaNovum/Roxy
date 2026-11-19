@@ -211,6 +211,7 @@ project(":1.21.1") {
     }
     tasks.withType<org.gradle.api.tasks.testing.Test>().configureEach {
         useJUnitPlatform()
+        workingDir = layout.buildDirectory.get().asFile
     }
     val sodiumApiDirectory = layout.buildDirectory.dir("roxy-sodium-api")
     val extractSodiumCompileApi = tasks.register<Copy>("extractSodiumCompileApi") {
@@ -230,6 +231,12 @@ project(":1.21.1") {
     }
 
     afterEvaluate {
+        val sourceSets = extensions.getByType<SourceSetContainer>()
+        val minecraftSources = sourceSets.getByName("main")
+        sourceSets.named("test") {
+            compileClasspath += minecraftSources.compileClasspath
+            runtimeClasspath += minecraftSources.runtimeClasspath
+        }
         tasks.named<ProcessResources>("processResources") {
             from({ roxyIntermediary.files.map { zipTree(it) } }) {
                 include("mappings/mappings.tiny")
@@ -251,6 +258,10 @@ project(":1.21.1") {
             from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyTerrainSlabs.class")) {
                 into("roxy/embedded")
                 rename { "RoxyTerrainSlabs.bin" }
+            }
+            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyCopycatShapeFallback.class")) {
+                into("roxy/embedded")
+                rename { "RoxyCopycatShapeFallback.bin" }
             }
             from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyChunkBoundaryMask.class")) {
                 into("roxy/embedded")
