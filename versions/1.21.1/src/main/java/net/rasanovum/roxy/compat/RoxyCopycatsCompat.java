@@ -1,26 +1,40 @@
 package net.rasanovum.roxy.compat;
 
 import java.lang.reflect.Array;
-import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.logging.Logger;
-import java.util.Optional;
 
 public final class RoxyCopycatsCompat {
     private static final Logger LOGGER = Logger.getLogger("Roxy");
     private static final ConcurrentHashMap<MethodKey, Optional<Method>> METHODS = new ConcurrentHashMap<>();
     private static final ThreadLocal<IngestSnapshot> INGEST_SNAPSHOT = new ThreadLocal<>();
     private static final Map<Object, Set<Long>> PENDING_INGESTS = new IdentityHashMap<>();
+    private static final AtomicBoolean SNAPSHOT_FAILURE_LOGGED = new AtomicBoolean();
+    private static final ClassValue<Optional<Method>> SECTION_SNAPSHOT = new ClassValue<>() {
+        @Override
+        protected Optional<Method> computeValue(Class<?> sourceType) {
+            try {
+                ClassLoader loader = sourceType.getClassLoader();
+                Class<?> sectionType = Class.forName("net.minecraft.world.level.chunk.LevelChunkSection", false, loader);
+                Class<?> helper = Class.forName("net.rasanovum.roxyhost.RoxyPalettedContainerFactory", false, loader);
+                return Optional.of(helper.getMethod("snapshotSection", sectionType));
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
+                logSnapshotFailure(sourceType, failure);
+                return Optional.empty();
+            }
+        }
+    };
     private static final ClassValue<Optional<Method>> SHAPE_FALLBACK = new ClassValue<>() {
         @Override
         protected Optional<Method> computeValue(Class<?> stateType) {
@@ -36,7 +50,6 @@ public final class RoxyCopycatsCompat {
     };
     private static volatile boolean ingestFailureLogged;
     private static volatile boolean rawFailureLogged;
-    private static volatile boolean cloneFailureLogged;
     private static volatile boolean modCheckComplete;
     private static volatile boolean copycatModLoaded;
 
@@ -81,15 +94,13 @@ public final class RoxyCopycatsCompat {
     }
 
     public static Object snapshotSection(Object source, Object chunk, int sectionY) {
-        if (source == null) return null;
         Object copy = cloneSection(source);
-        if (copy == source) return source;
-        if (!RoxyCompatConfig.copycatsEnabled()) return copy;
+        if (copy == null || chunk == null || !RoxyCompatConfig.copycatsEnabled()) return copy;
         if (!hasCopycatMod(source.getClass().getClassLoader())) return copy;
         try {
             ClassLoader loader = source.getClass().getClassLoader();
             for (BlockEntityAt blockEntity : sectionBlockEntities(chunk, sectionY)) {
-                Object state = invoke(source, "getBlockState", blockEntity.x, blockEntity.y, blockEntity.z);
+                Object state = invoke(copy, "getBlockState", blockEntity.x, blockEntity.y, blockEntity.z);
                 if (!isPotentialCopycatState(state)) continue;
                 if (!isCopycat(state, blockEntity.blockEntity)) continue;
                 Object material = representativeMaterial(state, blockEntity.blockEntity, loader);
@@ -100,7 +111,8 @@ public final class RoxyCopycatsCompat {
             }
             return copy;
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
-            throw new IllegalStateException("Unable to snapshot Copycat materials for Voxy", failure);
+            logSnapshotFailure(source.getClass(), failure);
+            return null;
         }
     }
 
@@ -230,47 +242,20 @@ public final class RoxyCopycatsCompat {
     static Object cloneSection(Object source) {
         if (source == null) return null;
         try {
-            Object states = invoke(source, "getStates");
-            if (states == null) {
-                throw new IllegalStateException("Section states container is null for " + source.getClass().getName());
-            }
-            Object copiedStates = invoke(states, "copy");
-            if (copiedStates == null) {
-                throw new IllegalStateException("Copied states container is null for " + states.getClass().getName());
-            }
-            Object biomes = invoke(source, "getBiomes");
-            if (biomes == null) {
-                throw new IllegalStateException("Section biomes container is null for " + source.getClass().getName());
-            }
-            Object copiedBiomes = copyBiomes(biomes);
-            if (copiedBiomes == null) {
-                throw new IllegalStateException("Copied biomes container is null for " + biomes.getClass().getName());
-            }
-            for (Class<?> type = source.getClass(); type != null; type = type.getSuperclass()) {
-                if (Modifier.isAbstract(type.getModifiers())) continue;
-                for (Constructor<?> constructor : type.getConstructors()) {
-                    Class<?>[] parameters = constructor.getParameterTypes();
-                    if (parameters.length == 2 && parameters[0].isInstance(copiedStates)
-                            && parameters[1].isInstance(copiedBiomes)) {
-                        return constructor.newInstance(copiedStates, copiedBiomes);
-                    }
-                }
-            }
-            throw new NoSuchMethodException("LevelChunkSection copy constructor for " + source.getClass().getName()
-                    + " (" + typeName(copiedStates) + ", " + typeName(copiedBiomes) + ")");
+            Method snapshot = SECTION_SNAPSHOT.get(source.getClass()).orElse(null);
+            return snapshot == null ? null : snapshot.invoke(null, source);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
-            if (!cloneFailureLogged) {
-                cloneFailureLogged = true;
-                LOGGER.log(java.util.logging.Level.WARNING,
-                        "Unable to copy Voxy's input section (" + source.getClass().getName() + "); falling back to live section",
-                        failure);
-            }
-            return source;
+            logSnapshotFailure(source.getClass(), failure);
+            return null;
         }
     }
 
-    private static String typeName(Object value) {
-        return value == null ? "null" : value.getClass().getName();
+    private static void logSnapshotFailure(Class<?> sourceType, Throwable failure) {
+        if (SNAPSHOT_FAILURE_LOGGED.compareAndSet(false, true)) {
+            LOGGER.log(java.util.logging.Level.WARNING,
+                    "Unable to snapshot Voxy's input section (" + sourceType.getName() + "); skipping ingestion",
+                    failure);
+        }
     }
 
     private static boolean hasCopycatMod(ClassLoader loader) {
@@ -291,22 +276,6 @@ public final class RoxyCopycatsCompat {
             }
         }
         return copycatModLoaded;
-    }
-
-    private static Object copyBiomes(Object source) throws ReflectiveOperationException {
-        Method copy = findMethod(source.getClass(), "copy", 0);
-        if (copy != null) {
-            Object copied = copy.invoke(source);
-            if (copied != null) return copied;
-        }
-        Object result = invoke(source, "recreate");
-        if (result == null) throw new IllegalStateException("Unable to snapshot Voxy biome container");
-        for (int y = 0; y < 4; y++) {
-            for (int z = 0; z < 4; z++) {
-                for (int x = 0; x < 4; x++) invoke(result, "set", x, y, z, invoke(source, "get", x, y, z));
-            }
-        }
-        return result;
     }
 
     private static boolean isPotentialCopycatState(Object state) {
