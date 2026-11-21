@@ -5,6 +5,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import cpw.mods.jarhandling.JarContents;
+import net.neoforged.fml.ModLoadingException;
+import net.neoforged.fml.ModLoadingIssue;
 import net.neoforged.fml.loading.moddiscovery.readers.JarModsDotTomlModFileReader;
 import net.neoforged.neoforgespi.locating.IModFile;
 import net.neoforged.neoforgespi.locating.IModFileReader;
@@ -97,6 +99,15 @@ public final class RoxyFabricModReader implements IModFileReader {
             return null;
         }
 
+        if (targetsMinecraft2612(fabricMetadata)) {
+            ModLoadingException exception = new ModLoadingException(ModLoadingIssue.warning(
+                    "Roxy skipped Voxy for Minecraft 26.1.2 ({0}). Replace it with Voxy 0.2.16-beta for Minecraft 1.21.11: "
+                            + "https://modrinth.com/mod/voxy/version/H3w2nVdU",
+                    original.getFileName().toString()).withAffectedPath(original));
+            RoxyCrashReportHeader.rejected(original, exception);
+            throw exception;
+        }
+
         RoxyCrashReportHeader.patching(original);
         try {
             Path patched = patchJar(original, fabricMetadata);
@@ -110,6 +121,25 @@ public final class RoxyFabricModReader implements IModFileReader {
             RoxyCrashReportHeader.failed(throwable);
             throw throwable;
         }
+    }
+
+    private static boolean targetsMinecraft2612(JsonObject metadata) {
+        JsonObject depends = object(metadata, "depends");
+        if (depends == null) return false;
+        JsonElement minecraft = depends.get("minecraft");
+        if (minecraft == null) return false;
+        if (!minecraft.isJsonArray()) return isMinecraft2612Requirement(minecraft);
+        JsonArray requirements = minecraft.getAsJsonArray();
+        return !requirements.isEmpty() && requirements.asList().stream()
+                .allMatch(RoxyFabricModReader::isMinecraft2612Requirement);
+    }
+
+    private static boolean isMinecraft2612Requirement(JsonElement requirement) {
+        if (!requirement.isJsonPrimitive() || !requirement.getAsJsonPrimitive().isString()) return false;
+        return switch (requirement.getAsString().trim()) {
+            case "26.1.2", "=26.1.2", "~26.1.2", "^26.1.2" -> true;
+            default -> false;
+        };
     }
 
     private static Path patchJar(Path original, JsonObject fabricMetadata) throws IOException {

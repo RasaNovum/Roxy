@@ -3,9 +3,14 @@ package net.rasanovum.roxyhost.tfc;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.List;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.resources.model.WeightedBakedModel;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.core.BlockPos;
+import net.minecraft.util.RandomSource;
+import net.minecraft.util.random.WeightedEntry;
+import net.minecraft.util.random.WeightedRandom;
 import net.minecraft.world.level.ChunkPos;
 import net.minecraft.world.level.block.Block;
 import net.minecraft.world.level.block.state.BlockState;
@@ -33,6 +38,8 @@ public final class RoxyTfcAdapter {
     private static Method selectModel;
     private static Method colourProvider;
     private static Field denseModel;
+    private static Field weightedModels;
+    private static Field totalModelWeight;
     private static Method day;
     private static Method calendarTicks;
     private static Method monthDays;
@@ -77,6 +84,10 @@ public final class RoxyTfcAdapter {
                 selectModel.setAccessible(true);
                 denseModel = modelClass.getDeclaredField("denseLeavesBakedModel");
                 denseModel.setAccessible(true);
+                weightedModels = WeightedBakedModel.class.getDeclaredField("list");
+                weightedModels.setAccessible(true);
+                totalModelWeight = WeightedBakedModel.class.getDeclaredField("totalWeight");
+                totalModelWeight.setAccessible(true);
                 Class<?> calendars = Class.forName("net.dries007.tfc.util.calendar.Calendars", true, loader);
                 calendar = calendars.getField("CLIENT").get(null);
                 Class<?> calendarApi = Class.forName("net.dries007.tfc.util.calendar.ICalendar", false, loader);
@@ -188,14 +199,14 @@ public final class RoxyTfcAdapter {
         if (minecraft.level == null || !minecraft.isSameThread()) return null;
         BlockState blockState = (BlockState) state;
         Object sourceModel = minecraft.getBlockRenderer().getBlockModel(blockState);
-        if (leaf && !modelClass.isInstance(sourceModel)) return null;
         if (sourceModel == null) return null;
         Object previous = CLIMATE.get();
         long[] previousCalendar = CALENDAR.get();
         try {
+            Object leafModel = leaf ? representativeLeafModel(sourceModel) : null;
             if (snapshot != null && climateModel.invoke(null, minecraft.level).getClass() != overworldClimate) snapshot = null;
             if (snapshot == null) {
-                Object selected = leaf ? denseModel.get(sourceModel) : sourceModel;
+                Object selected = leafModel == null ? sourceModel : denseModel.get(leafModel);
                 int tint0 = minecraft.getBlockColors().getColor(blockState, null, null, 0);
                 int tint1 = leaf ? -1 : minecraft.getBlockColors().getColor(blockState, null, null, 1);
                 return selected == null ? null : new Object[]{selected, tint0, tint1};
@@ -212,7 +223,7 @@ public final class RoxyTfcAdapter {
             values[4] = forest;
             updatePacket.invoke(chunk, values);
             BlockPos position = new BlockPos(x, y, z);
-            Object selected = leaf ? selectModel.invoke(sourceModel, blockState, position) : sourceModel;
+            Object selected = leafModel == null ? sourceModel : selectModel.invoke(leafModel, blockState, position);
             int tint0 = minecraft.getBlockColors().getColor(blockState, minecraft.level, position, 0);
             int tint1 = leaf ? -1 : minecraft.getBlockColors().getColor(blockState, minecraft.level, position, 1);
             return new Object[]{selected, tint0, tint1};
@@ -223,6 +234,21 @@ public final class RoxyTfcAdapter {
             if (previous == null) CLIMATE.remove(); else CLIMATE.set(previous);
             if (previousCalendar == null) CALENDAR.remove(); else CALENDAR.set(previousCalendar);
         }
+    }
+
+    private static Object representativeLeafModel(Object model) throws IllegalAccessException {
+        if (model instanceof WeightedBakedModel) {
+            RandomSource random = RandomSource.create(42L);
+            while (model instanceof WeightedBakedModel weighted) {
+                int totalWeight = totalModelWeight.getInt(weighted);
+                if (totalWeight <= 0) return null;
+                @SuppressWarnings("unchecked")
+                List<WeightedEntry.Wrapper<?>> models = (List<WeightedEntry.Wrapper<?>>) weightedModels.get(weighted);
+                model = WeightedRandom.getWeightedItem(models, Math.abs((int) random.nextLong()) % totalWeight)
+                        .map(WeightedEntry.Wrapper::data).orElse(null);
+            }
+        }
+        return modelClass.isInstance(model) ? model : null;
     }
 
     public static Object scopedClimate() { return TfcCompatConfig.enabled() ? CLIMATE.get() : null; }

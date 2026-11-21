@@ -990,6 +990,12 @@ public final class TfcVoxyBridge {
             enqueue(factory,entry);
             return false;
         }
+        if(!variant.appearance().equals(entry.appearance)) {
+            entry.revision=-1;
+            if(!enqueue(factory,entry))return false;
+            entry.pending=null;entry.waiting=false;
+            return true;
+        }
         Variant activeVariant=factory.variants.get(variant.request-FIRST_VARIANT);
         if(activeVariant!=variant) {
             variant=nearestPaletteVariant(factory,variant.family,entry.appearance);
@@ -1141,8 +1147,7 @@ public final class TfcVoxyBridge {
             boolean mayAddColour=mayAddColourVariant(factory.variants.size(),familySlotCount);
             boolean mayAddGeometry=mayAddGeometryFamily(factory.variants.size(),familySlotCount);
             if(pendingFamily!=null) {
-                variant=nearestPaletteVariant(factory,family,key);
-                if(variant==null)variant=pendingFamily.replacement;
+                variant=pendingFamily.replacement;
             } else if(mayAddColour || mayAddGeometry) {
                 if(factory.enqueue==null || !factory.enqueue.tryLock()){enqueue(factory,entry);return;}
                 try {
@@ -1387,7 +1392,7 @@ public final class TfcVoxyBridge {
         boolean stale=plan.replacement.revision!=revision;
         List<Variant> family=factory.families.get(previous.family);
         List<Variant> alternatives=family==null?List.of(previous):family.stream().filter(candidate->candidate!=replacement).toList();
-        for(Entry entry:new ArrayList<>(factory.waiting))if(entry.pending==replacement) {
+        for(Entry entry:new ArrayList<>(factory.waiting))if(entry.pending==replacement && replacement.appearance().equals(entry.appearance)) {
             Variant nearest=nearestPaletteVariant(factory,previous.family,entry.appearance);
             if(nearest!=null && !alternatives.contains(nearest))nearest=null;
             entry.pending=null;entry.waiting=false;
@@ -1397,8 +1402,9 @@ public final class TfcVoxyBridge {
                 if(entry.variant!=null)entry.variant.entries.remove(entry);
                 entry.variant=null;entry.model=-1;
             }
-            entry.revision=stale?Long.MIN_VALUE:revision;entry.evaluatedDirty=entry.dirty;
-            if(stale)enqueue(factory,entry);
+            boolean retry=stale || nearest==null || !nearest.appearance().equals(entry.appearance);
+            entry.revision=retry?Long.MIN_VALUE:revision;entry.evaluatedDirty=entry.dirty;
+            if(retry)enqueue(factory,entry);
         }
         factory.waiting.removeIf(entry->!entry.waiting);
     }

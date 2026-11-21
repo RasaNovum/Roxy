@@ -41,24 +41,28 @@ public final class RoxyCrashReportHeader {
         advance("LOCATED", 2, path, null);
     }
 
+    public static void rejected(Path path, Throwable failure) {
+        advance("REJECTED", 3, path, failure);
+    }
+
     public static void patching(Path path) {
-        advance("PATCHING", 3, path, null);
+        advance("PATCHING", 4, path, null);
     }
 
     public static void patched(Path path) {
-        advance("PATCHED", 4, path, null);
+        advance("PATCHED", 5, path, null);
     }
 
     public static void initializing() {
-        advance("INITIALIZING", 5, null, null);
+        advance("INITIALIZING", 6, null, null);
     }
 
     public static void initialized() {
-        advance("SUCCESS", 6, null, null);
+        advance("SUCCESS", 7, null, null);
     }
 
     public static void failed(Throwable throwable) {
-        advance("FAILED", 7, null, throwable);
+        advance("FAILED", 8, null, throwable);
     }
 
     private static void advance(String state, int rank, Path path, Throwable failure) {
@@ -88,11 +92,12 @@ public final class RoxyCrashReportHeader {
         return switch (state) {
             case "NOT_FOUND" -> 1;
             case "LOCATED" -> 2;
-            case "PATCHING" -> 3;
-            case "PATCHED" -> 4;
-            case "INITIALIZING" -> 5;
-            case "SUCCESS" -> 6;
-            case "FAILED" -> 7;
+            case "REJECTED" -> 3;
+            case "PATCHING" -> 4;
+            case "PATCHED" -> 5;
+            case "INITIALIZING" -> 6;
+            case "SUCCESS" -> 7;
+            case "FAILED" -> 8;
             default -> 0;
         };
     }
@@ -104,10 +109,11 @@ public final class RoxyCrashReportHeader {
             String status = switch (state) {
                 case "SUCCESS" -> "Roxy is present! It loaded " + file + " successfully in this run.";
                 case "FAILED" -> "Roxy is present! It attempted to load " + file + ", but loading failed in this run.";
+                case "REJECTED" -> "Roxy is present! It skipped the incompatible Voxy jar " + file + ".";
                 case "NOT_FOUND" -> "Roxy is present! It did not locate a Voxy jar before this crash.";
                 default -> "Roxy is present! It found " + file + ", but loading had not completed before this crash.";
             };
-            if (state.equals("FAILED")) {
+            if (state.equals("FAILED") || state.equals("REJECTED")) {
                 String failure = System.getProperty(FAILURE);
                 if (failure != null && !failure.isBlank()) status += "\nLoading failure: " + sanitize(failure, 240);
             }
