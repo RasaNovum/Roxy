@@ -188,6 +188,9 @@ public final class RoxyBytecodeRemapper {
     private static final String VOXY_RENDER_PROPERTIES = "me/cortex/voxy/client/core/RenderProperties";
     private static final String VOXY_IRIS_RENDER_PIPELINE = "me/cortex/voxy/client/core/IrisVoxyRenderPipeline";
     private static final String VOXY_DEFAULT_CHUNK_RENDERER = "me/cortex/voxy/client/mixin/sodium/MixinDefaultChunkRenderer";
+    private static final String VOXY_NVIDIUM_RENDER_PIPELINE = "me/cortex/voxy/client/mixin/nvidium/MixinRenderPipeline";
+    private static final String SODIUM_VIEWPORT = "net/caffeinemc/mods/sodium/client/render/viewport/Viewport";
+    private static final String ACEDIUM_COMPAT = "net/rasanovum/roxy/compat/RoxyAcediumCompat";
     private static final String SODIUM_CHUNK_RENDER_MATRICES = "net/caffeinemc/mods/sodium/client/render/chunk/ChunkRenderMatrices";
     private static final String SODIUM_TERRAIN_RENDER_PASS = "net/caffeinemc/mods/sodium/client/render/chunk/terrain/TerrainRenderPass";
     private static final String SODIUM_CAMERA_TRANSFORM = "net/caffeinemc/mods/sodium/client/render/viewport/CameraTransform";
@@ -297,6 +300,7 @@ public final class RoxyBytecodeRemapper {
         output = patchVoxyCommandsReload(output);
         output = patchVoxyRenderSystemViewport(output);
         output = patchVoxyDefaultChunkRenderer(output);
+        output = patchVoxyNvidiumRenderPipeline(output);
         output = patchVoxyTextureSetup(output);
         output = patchVoxyBakedModel(output);
         output = patchVoxyModelTinting(output);
@@ -3751,6 +3755,196 @@ public final class RoxyBytecodeRemapper {
                 inject.visitEnd();
             }
         }, 0);
+        return writer.toByteArray();
+    }
+
+    private static byte[] patchVoxyNvidiumRenderPipeline(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        if (!reader.getClassName().equals(VOXY_NVIDIUM_RENDER_PIPELINE)) return input;
+
+        String viewport = "L" + SODIUM_VIEWPORT + ";";
+        String matrices = "L" + SODIUM_CHUNK_RENDER_MATRICES + ";";
+        String callbackInfo = "Lorg/spongepowered/asm/mixin/injection/callback/CallbackInfo;";
+        String handlerDescriptor = "(" + viewport + matrices + "DDD" + callbackInfo + ")V";
+        int[] matched = new int[1];
+
+        ClassWriter writer = new RoxyClassWriter(reader, ClassWriter.COMPUTE_FRAMES);
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(
+                    int access,
+                    String name,
+                    String descriptor,
+                    String signature,
+                    String[] exceptions
+            ) {
+                if (name.equals("voxy$injectRender")) {
+                    matched[0]++;
+                    MethodVisitor method = super.visitMethod(access, name, handlerDescriptor, null, exceptions);
+                    addNvidiumRenderHandler(method);
+                    return null;
+                }
+                return super.visitMethod(access, name, descriptor, signature, exceptions);
+            }
+
+            private void addNvidiumRenderHandler(MethodVisitor method) {
+                AnnotationVisitor inject = method.visitAnnotation(INJECT, true);
+                AnnotationVisitor methods = inject.visitArray("method");
+                methods.visit(null, "renderFrame");
+                methods.visitEnd();
+                AnnotationVisitor ats = inject.visitArray("at");
+                AnnotationVisitor at = ats.visitAnnotation(null, AT);
+                at.visit("value", "RETURN");
+                at.visitEnd();
+                ats.visitEnd();
+                inject.visitEnd();
+
+                Label done = new Label();
+                Label sourceReady = new Label();
+                Label renderStart = new Label();
+                Label renderEnd = new Label();
+                Label renderFailed = new Label();
+
+                method.visitCode();
+                method.visitMethodInsn(
+                        Opcodes.INVOKESTATIC,
+                        "me/cortex/voxy/client/core/util/IrisUtil",
+                        "irisShadowActive",
+                        "()Z",
+                        false
+                );
+                method.visitJumpInsn(Opcodes.IFNE, done);
+                method.visitVarInsn(Opcodes.ALOAD, 0);
+                method.visitMethodInsn(
+                        Opcodes.INVOKESTATIC,
+                        ACEDIUM_COMPAT,
+                        "isSecondaryRenderContextActive",
+                        "(Ljava/lang/Object;)Z",
+                        false
+                );
+                method.visitJumpInsn(Opcodes.IFNE, done);
+                method.visitMethodInsn(
+                        Opcodes.INVOKESTATIC,
+                        MINECRAFT,
+                        "getInstance",
+                        "()L" + MINECRAFT + ";",
+                        false
+                );
+                method.visitFieldInsn(
+                        Opcodes.GETFIELD,
+                        MINECRAFT,
+                        "levelRenderer",
+                        "L" + MINECRAFT_LEVEL_RENDERER + ";"
+                );
+                method.visitTypeInsn(Opcodes.CHECKCAST, VOXY_RENDER_SYSTEM_BRIDGE);
+                method.visitMethodInsn(
+                        Opcodes.INVOKEINTERFACE,
+                        VOXY_RENDER_SYSTEM_BRIDGE,
+                        "voxy$getRenderSystem",
+                        "()L" + VOXY_RENDER_SYSTEM + ";",
+                        true
+                );
+                method.visitVarInsn(Opcodes.ASTORE, 10);
+                method.visitVarInsn(Opcodes.ALOAD, 10);
+                method.visitJumpInsn(Opcodes.IFNULL, done);
+                method.visitVarInsn(Opcodes.ALOAD, 10);
+                method.visitVarInsn(Opcodes.ALOAD, 2);
+                method.visitVarInsn(Opcodes.DLOAD, 3);
+                method.visitVarInsn(Opcodes.DLOAD, 5);
+                method.visitVarInsn(Opcodes.DLOAD, 7);
+                method.visitMethodInsn(
+                        Opcodes.INVOKEVIRTUAL,
+                        VOXY_RENDER_SYSTEM,
+                        "setupViewport",
+                        VOXY_SETUP_VIEWPORT_1_21_1,
+                        false
+                );
+                method.visitVarInsn(Opcodes.ASTORE, 11);
+                method.visitVarInsn(Opcodes.ALOAD, 11);
+                method.visitJumpInsn(Opcodes.IFNULL, done);
+                method.visitMethodInsn(
+                        Opcodes.INVOKESTATIC,
+                        "net/rasanovum/roxy/bridge/RoxyFramebufferBridge",
+                        "prepareVoxySource",
+                        "()J",
+                        false
+                );
+                method.visitVarInsn(Opcodes.LSTORE, 12);
+                method.visitVarInsn(Opcodes.LLOAD, 12);
+                method.visitInsn(Opcodes.L2I);
+                method.visitJumpInsn(Opcodes.IFNE, sourceReady);
+                method.visitMethodInsn(
+                        Opcodes.INVOKESTATIC,
+                        MINECRAFT,
+                        "getInstance",
+                        "()L" + MINECRAFT + ";",
+                        false
+                );
+                method.visitMethodInsn(
+                        Opcodes.INVOKEVIRTUAL,
+                        MINECRAFT,
+                        "getMainRenderTarget",
+                        "()Lcom/mojang/blaze3d/pipeline/RenderTarget;",
+                        false
+                );
+                method.visitInsn(Opcodes.ICONST_0);
+                method.visitMethodInsn(
+                        Opcodes.INVOKEVIRTUAL,
+                        "com/mojang/blaze3d/pipeline/RenderTarget",
+                        "bindWrite",
+                        "(Z)V",
+                        false
+                );
+                method.visitLabel(sourceReady);
+                method.visitMethodInsn(
+                        Opcodes.INVOKESTATIC,
+                        "net/rasanovum/roxy/bridge/RoxyFramebufferBridge",
+                        "useMainColorAttachment",
+                        "()V",
+                        false
+                );
+                method.visitTryCatchBlock(renderStart, renderEnd, renderFailed, null);
+                method.visitLabel(renderStart);
+                method.visitVarInsn(Opcodes.ALOAD, 10);
+                method.visitVarInsn(Opcodes.ALOAD, 11);
+                method.visitMethodInsn(
+                        Opcodes.INVOKEVIRTUAL,
+                        VOXY_RENDER_SYSTEM,
+                        "renderOpaque",
+                        "(L" + VOXY_VIEWPORT + ";)V",
+                        false
+                );
+                method.visitLabel(renderEnd);
+                method.visitVarInsn(Opcodes.LLOAD, 12);
+                method.visitMethodInsn(
+                        Opcodes.INVOKESTATIC,
+                        "net/rasanovum/roxy/bridge/RoxyFramebufferBridge",
+                        "restoreFramebuffer",
+                        "(J)V",
+                        false
+                );
+                method.visitJumpInsn(Opcodes.GOTO, done);
+                method.visitLabel(renderFailed);
+                method.visitVarInsn(Opcodes.ASTORE, 14);
+                method.visitVarInsn(Opcodes.LLOAD, 12);
+                method.visitMethodInsn(
+                        Opcodes.INVOKESTATIC,
+                        "net/rasanovum/roxy/bridge/RoxyFramebufferBridge",
+                        "restoreFramebuffer",
+                        "(J)V",
+                        false
+                );
+                method.visitVarInsn(Opcodes.ALOAD, 14);
+                method.visitInsn(Opcodes.ATHROW);
+                method.visitLabel(done);
+                method.visitInsn(Opcodes.RETURN);
+                method.visitMaxs(0, 0);
+                method.visitEnd();
+            }
+        }, 0);
+        if (matched[0] != 1) {
+            throw new IllegalStateException("Unsupported Voxy Nvidium render pipeline mixin");
+        }
         return writer.toByteArray();
     }
 
