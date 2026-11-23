@@ -4,6 +4,7 @@ import net.rasanovum.roxy.compat.RoxyCompatConfig;
 import net.rasanovum.roxy.tfc.TfcVoxyBridge;
 
 import java.lang.reflect.Constructor;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.HashMap;
@@ -59,11 +60,15 @@ public final class RoxyModelTintBridge {
             ClassLoader loader = provider.getClass().getClassLoader();
             Class<?> type = Class.forName("net.minecraft.client.color.block.BlockColor", false, loader);
             return Proxy.newProxyInstance(loader, new Class<?>[]{type}, (proxy, method, args) -> {
-                if (method.getName().equals("getColor") && args != null && args.length == 4) {
+                if (method.getName().equals("getColor") && args != null && args.length == 4 && args[0] != null) {
                     TintPlan plan = PLANS.get(args[0]);
                     if (plan != null && plan.biomeIndex >= 0) args[3] = plan.biomeIndex;
                 }
-                return method.invoke(provider, args);
+                try {
+                    return method.invoke(provider, args);
+                } catch (InvocationTargetException exception) {
+                    throw exception.getTargetException();
+                }
             });
         } catch (ReflectiveOperationException exception) {
             throw new IllegalStateException("Unable to select the model's biome tint index", exception);

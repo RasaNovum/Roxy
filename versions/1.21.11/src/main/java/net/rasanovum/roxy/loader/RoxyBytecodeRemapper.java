@@ -34,7 +34,11 @@ public final class RoxyBytecodeRemapper {
     private static final String MODIFY_CONSTANT = "Lorg/spongepowered/asm/mixin/injection/ModifyConstant;";
     private static final String GL_TEXTURE = "com/mojang/blaze3d/opengl/GlTexture";
     private static final String GPU_COMPAT = "net/rasanovum/roxy/loader/RoxyGpuCompat";
+    private static final String MINECRAFT = "net/minecraft/client/Minecraft";
+    private static final String BLOCK = "net/minecraft/world/level/block/Block";
+    private static final String BLOCK_COLOR = "net/minecraft/client/color/block/BlockColor";
     private static final String BLOCK_COLORS = "net/minecraft/client/color/block/BlockColors";
+    private static final String VOXY_MODEL_FACTORY = "me/cortex/voxy/client/core/model/ModelFactory";
     private static final String COLOR_COMPAT = "net/rasanovum/roxy/bridge/RoxyColorBridge";
 
     private RoxyBytecodeRemapper() {
@@ -252,6 +256,7 @@ public final class RoxyBytecodeRemapper {
     private static byte[] patchNeoForgeColorMapAccess(byte[] input) {
         ClassReader reader = new ClassReader(input);
         ClassWriter writer = new ClassWriter(reader, 0);
+        boolean modelFactory = reader.getClassName().equals(VOXY_MODEL_FACTORY);
         reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
             @Override
             public MethodVisitor visitMethod(
@@ -262,6 +267,38 @@ public final class RoxyBytecodeRemapper {
                     String[] exceptions
             ) {
                 MethodVisitor delegate = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (modelFactory
+                        && (access & Opcodes.ACC_STATIC) != 0
+                        && name.equals("getColourProvider")
+                        && descriptor.equals("(L" + BLOCK + ";)L" + BLOCK_COLOR + ";")) {
+                    delegate.visitCode();
+                    delegate.visitMethodInsn(
+                            Opcodes.INVOKESTATIC,
+                            MINECRAFT,
+                            "getInstance",
+                            "()L" + MINECRAFT + ";",
+                            false
+                    );
+                    delegate.visitMethodInsn(
+                            Opcodes.INVOKEVIRTUAL,
+                            MINECRAFT,
+                            "getBlockColors",
+                            "()L" + BLOCK_COLORS + ";",
+                            false
+                    );
+                    delegate.visitVarInsn(Opcodes.ALOAD, 0);
+                    delegate.visitMethodInsn(
+                            Opcodes.INVOKESTATIC,
+                            COLOR_COMPAT,
+                            "getBlockColor",
+                            "(L" + BLOCK_COLORS + ";L" + BLOCK + ";)L" + BLOCK_COLOR + ";",
+                            false
+                    );
+                    delegate.visitInsn(Opcodes.ARETURN);
+                    delegate.visitMaxs(2, 1);
+                    delegate.visitEnd();
+                    return null;
+                }
                 return new MethodVisitor(Opcodes.ASM9, delegate) {
                     @Override
                     public void visitFieldInsn(int opcode, String owner, String name, String descriptor) {
