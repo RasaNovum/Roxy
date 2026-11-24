@@ -1,7 +1,5 @@
 package net.rasanovum.roxy.compat;
 
-import net.minecraft.client.Camera;
-import net.minecraft.world.phys.Vec3;
 import net.rasanovum.roxy.fog.RoxyFogParameters;
 import net.rasanovum.roxy.util.RoxyClassLoaders;
 import net.rasanovum.roxy.util.RoxyReflection;
@@ -36,12 +34,14 @@ public final class RoxyIrisViewportCompat {
 
     public static void capture(
             Object levelRenderer,
-            Camera camera,
+            double cameraX,
+            double cameraY,
+            double cameraZ,
             Matrix4f positionMatrix,
             Matrix4f projectionMatrix
     ) {
         capturedViewportReady = false;
-        if (levelRenderer == null || camera == null) return;
+        if (levelRenderer == null) return;
         if (!RoxyVoxyRendererReloadCompat.shouldCreateVoxyRenderer(levelRenderer)) return;
 
         Accessors current = getAccessors(levelRenderer.getClass().getClassLoader());
@@ -57,13 +57,12 @@ public final class RoxyIrisViewportCompat {
             if (current.shadowActive != null && Boolean.TRUE.equals(current.shadowActive.invoke(null))) return;
 
             Object matrices = current.matricesConstructor.newInstance(projectionMatrix, positionMatrix);
-            Vec3 position = camera.getPosition();
             captured = current.capturedConstructor.newInstance(
                     matrices,
                     RoxyFogParameters.current(),
-                    position.x,
-                    position.y,
-                    position.z
+                    cameraX,
+                    cameraY,
+                    cameraZ
             );
             current.capturedViewport.set(null, captured);
 

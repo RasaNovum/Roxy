@@ -5,6 +5,7 @@ import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.renderer.GameRenderer;
 import net.minecraft.client.renderer.LevelRenderer;
 import net.minecraft.client.renderer.LightTexture;
+import net.minecraft.world.phys.Vec3;
 import net.rasanovum.roxy.compat.RoxyIrisViewportCompat;
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
@@ -25,6 +26,15 @@ public abstract class RoxyIrisLevelRendererMixin {
             Matrix4f projectionMatrix,
             CallbackInfo callbackInfo
     ) {
-        RoxyIrisViewportCompat.capture(this, camera, positionMatrix, projectionMatrix);
+        if (camera == null) return;
+        Vec3 position = camera.getPosition();
+        RoxyIrisViewportCompat.capture(
+                this,
+                position.x,
+                position.y,
+                position.z,
+                positionMatrix,
+                projectionMatrix
+        );
     }
 }
