@@ -3,8 +3,11 @@ package net.rasanovum.roxy.fog;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.ref.WeakReference;
+import java.util.concurrent.ConcurrentHashMap;
 import net.rasanovum.roxy.compat.RoxyBetterFogCompat;
 import net.rasanovum.roxy.compat.RoxyFogModCompat;
+import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL20C;
 import org.lwjgl.opengl.GL33C;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -15,7 +18,8 @@ public final class RoxyVoxyFogPatch {
     private static final String VOXY_CONFIG = "me.cortex.voxy.client.config.VoxyConfig";
     private static final String MINECRAFT_RENDER_SYSTEM = "com.mojang.blaze3d.systems.RenderSystem";
     private static final float NO_FOG = 1.0E9F;
-    private static int extendedFogMode;
+    private static volatile int extendedFogMode;
+    private static final ConcurrentHashMap<Integer, ProgramUniforms> PROGRAM_UNIFORMS = new ConcurrentHashMap<>();
     private static final float[] terrainFogEnd = new float[4];
     private static final float[] terrainFogColour = new float[4];
     private static final float[] nativeTerrainFogColour = new float[4];
@@ -66,6 +70,10 @@ public final class RoxyVoxyFogPatch {
         extendedFogMode = 0;
         if (!noFluid) return;
         if (RoxyBetterFogCompat.available()) return;
+        if (originalStart < 0.0F || originalEnd < viewDistance - 0.01F) {
+            trace("preserved environmental baseline", originalStart, originalEnd, start, end, start, end, 0.0F);
+            return;
+        }
 
         Accessors current = getAccessors();
         if (current == null) return;
@@ -87,7 +95,10 @@ public final class RoxyVoxyFogPatch {
             Object pipeline = current.pipeline.get(renderer);
             if (pipeline != null && pipeline.getClass().getName().equals("me.cortex.voxy.client.core.NormalRenderPipeline")) {
                 float lodDistance = current.renderDistance.getFloat(config) * 512.0F;
-                if (builtinTerrainFogAllowed() && Float.isFinite(lodDistance) && lodDistance > 16.0F) {
+                boolean modModifiedFog = Math.abs(start - originalStart) > 0.01F
+                        || Math.abs(end - originalEnd) > 0.01F
+                        || shape != originalShape;
+                if (!modModifiedFog && builtinTerrainFogAllowed() && Float.isFinite(lodDistance) && lodDistance > 16.0F) {
                     RoxyFogConfig.Settings terrainFog = RoxyFogConfig.get();
                     RoxyFogRange range = terrainFog.apply(new RoxyFogRange(0.0F, lodDistance), lodDistance);
                     float terrainEnd = range.end();
@@ -109,10 +120,6 @@ public final class RoxyVoxyFogPatch {
                     }
                 }
                 boolean fogMod = RoxyFogModCompat.fogActive();
-                if (!fogMod && (originalStart < 0 || originalEnd < viewDistance - 0.01F)) {
-                    trace("preserved environmental baseline", originalStart, originalEnd, start, end, start, end, lodDistance);
-                    return;
-                }
                 RoxyFogRange range = fogMod ? RoxyFogRange.extendModified(start, end, viewDistance, lodDistance)
                         : RoxyFogRange.extend(originalStart, originalEnd, originalShape, start, end, shape, viewDistance, lodDistance);
                 if (range != null && RoxyFogModCompat.supportedModPresent()) {
@@ -176,6 +183,7 @@ public final class RoxyVoxyFogPatch {
     public static void resetTerrainFog() {
         clearTerrainFog();
         normalFogShaderSupport = false;
+        PROGRAM_UNIFORMS.clear();
     }
 
     public static void resetTerrainFogLifecycle() {
@@ -233,8 +241,14 @@ public final class RoxyVoxyFogPatch {
 
     public static void uploadTerrainFog() {
         if (!normalFogShaderSupport) return;
-        GL33C.glUniform4f(40, terrainFogEnd[0], terrainFogEnd[1], terrainFogEnd[2], terrainFogEnd[3]);
-        GL33C.glUniform4f(41, terrainFogColour[0], terrainFogColour[1], terrainFogColour[2], terrainFogColour[3]);
+        ProgramUniforms uniforms = currentProgramUniforms();
+        if (uniforms == null) return;
+        if (uniforms.endLocation >= 0) {
+            GL33C.glUniform4f(uniforms.endLocation, terrainFogEnd[0], terrainFogEnd[1], terrainFogEnd[2], terrainFogEnd[3]);
+        }
+        if (uniforms.colourLocation >= 0) {
+            GL33C.glUniform4f(uniforms.colourLocation, terrainFogColour[0], terrainFogColour[1], terrainFogColour[2], terrainFogColour[3]);
+        }
     }
 
     public static boolean terrainFogActive() {
@@ -242,7 +256,22 @@ public final class RoxyVoxyFogPatch {
     }
 
     public static void uploadTerrainFogBlit() {
-        GL33C.glUniform1f(40, terrainFogActive() ? 1.0F : 0.0F);
+        ProgramUniforms uniforms = currentProgramUniforms();
+        if (uniforms == null || uniforms.activeLocation < 0) return;
+        GL33C.glUniform1f(uniforms.activeLocation, terrainFogActive() ? 1.0F : 0.0F);
+    }
+
+    private static ProgramUniforms currentProgramUniforms() {
+        int program = GL11.glGetInteger(GL20C.GL_CURRENT_PROGRAM);
+        if (program <= 0) return null;
+        return PROGRAM_UNIFORMS.computeIfAbsent(program, id -> new ProgramUniforms(
+                GL20C.glGetUniformLocation(id, "roxyTerrainFogEnd"),
+                GL20C.glGetUniformLocation(id, "roxyTerrainFogColour"),
+                GL20C.glGetUniformLocation(id, "roxyTerrainFogActive")
+        ));
+    }
+
+    private record ProgramUniforms(int endLocation, int colourLocation, int activeLocation) {
     }
 
     public static void clearTerrainFog() {

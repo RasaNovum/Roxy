@@ -4,14 +4,20 @@ public final class RoxyTerrainFogShader {
     private RoxyTerrainFogShader() {}
 
     public static String patch(String path, String source) {
-        if (path.equals("/assets/voxy/shaders/lod/gl46/quads3.vert")) return patchVertex(source);
-        if (path.equals("/assets/voxy/shaders/lod/gl46/quads.frag")) return patchFragment(source);
-        if (path.equals("/assets/voxy/shaders/post/ssao.comp")) return patchSsao(source);
-        if (path.equals("/assets/voxy/shaders/post/blit_texture_depth_cutout.frag")) return patchBlit(source);
+        if (path == null || source == null) return source;
+        if (path.equals("/assets/voxy/shaders/lod/gl46/quads3.vert")) return patchVertex(normalize(source));
+        if (path.equals("/assets/voxy/shaders/lod/gl46/quads.frag")) return patchFragment(normalize(source));
+        if (path.equals("/assets/voxy/shaders/post/ssao.comp")) return patchSsao(normalize(source));
+        if (path.equals("/assets/voxy/shaders/post/blit_texture_depth_cutout.frag")) return patchBlit(normalize(source));
         return source;
     }
 
+    private static String normalize(String source) {
+        return source.indexOf('\r') < 0 ? source : source.replace("\r\n", "\n").replace('\r', '\n');
+    }
+
     private static String patchVertex(String source) {
+        if (source.contains("roxyFogPoint")) return source;
         source = replaceOnce(source, "layout(location = 0) out flat uvec4 interData;", """
                 layout(location = 0) out flat uvec4 interData;
                 #ifdef TRANSLUCENT
@@ -26,6 +32,7 @@ public final class RoxyTerrainFogShader {
     }
 
     private static String patchFragment(String source) {
+        if (source.contains("roxyTerrainFogEnd")) return source;
         source = replaceOnce(source, "layout(location = 0) in flat uvec4 interData;", """
                 layout(location = 0) in flat uvec4 interData;
                 #ifdef TRANSLUCENT
@@ -47,6 +54,7 @@ public final class RoxyTerrainFogShader {
     }
 
     private static String patchSsao(String source) {
+        if (source.contains("roxyTerrainFogEnd")) return source;
         source = replaceOnce(source, "layout(binding = 2) uniform sampler2D depthTex;", """
                 layout(binding = 2) uniform sampler2D depthTex;
                 layout(location = 40) uniform vec4 roxyTerrainFogEnd;
@@ -57,7 +65,7 @@ public final class RoxyTerrainFogShader {
                         }
                         if (roxyTerrainFogColour.a > 0.0) {
                 #ifdef BETTER_SSAO
-                            vec3 roxyFogPoint = transpose(mat3(MV)) * rev3d(invProj, vec3(point, depth));
+                            vec3 roxyFogPoint = inverse(mat3(MV)) * rev3d(invProj, vec3(point, depth));
                 #else
                             vec3 roxyFogPoint = rev3d(invMVP, vec3(point, depth));
                 #endif
@@ -69,6 +77,7 @@ public final class RoxyTerrainFogShader {
     }
 
     private static String patchBlit(String source) {
+        if (source.contains("roxyTerrainFogActive")) return source;
         source = replaceOnce(source, "#ifdef EMIT_COLOUR\nlayout(binding = 3) uniform sampler2D colourTex;", """
                 #ifdef EMIT_COLOUR
                 layout(binding = 3) uniform sampler2D colourTex;
@@ -77,7 +86,7 @@ public final class RoxyTerrainFogShader {
                     if (colour.a == 0.0) {
                         discard;
                     }
-                    if (roxyTerrainFogActive > 0.5 && colour.a < 1.0) colour.rgb /= colour.a;""");
+                    if (roxyTerrainFogActive > 0.5 && colour.a < 1.0) colour.rgb = clamp(colour.rgb / colour.a, 0.0, 1.0);""");
     }
 
     private static String replaceOnce(String source, String marker, String replacement) {

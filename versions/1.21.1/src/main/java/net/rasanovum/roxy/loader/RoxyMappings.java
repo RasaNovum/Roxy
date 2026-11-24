@@ -291,23 +291,32 @@ public final class RoxyMappings {
     public String mapMemberReference(String reference, String defaultOwner) {
         if (reference == null || reference.isBlank()) return reference;
 
+        int openParen = reference.indexOf('(');
+        int colonIdx = reference.indexOf(':');
+        int memberBoundary = reference.length();
+        if (openParen >= 0 && openParen < memberBoundary) memberBoundary = openParen;
+        if (colonIdx >= 0 && colonIdx < memberBoundary) memberBoundary = colonIdx;
+
         String owner = defaultOwner;
         String member = reference;
         String prefix = "";
+        boolean dottedOwner = false;
         int separator = reference.indexOf(';');
-        if (reference.startsWith("L") && separator >= 0) {
-            prefix = "L";
-            owner = reference.substring(1, separator);
+        if (separator >= 0 && separator < memberBoundary) {
+            if (reference.startsWith("L")) {
+                prefix = "L";
+                owner = reference.substring(1, separator);
+            } else {
+                prefix = "owner;";
+                owner = reference.substring(0, separator);
+            }
             member = reference.substring(separator + 1);
-        } else if (separator >= 0) {
-            owner = reference.substring(0, separator);
-            member = reference.substring(separator + 1);
-            prefix = "owner;";
         } else {
-            int dot = reference.indexOf('.');
-            int paren = reference.indexOf('(');
-            if (dot > 0 && (paren < 0 || dot < paren)) {
-                owner = reference.substring(0, dot);
+            int dot = memberBoundary > 0 ? reference.lastIndexOf('.', memberBoundary - 1) : -1;
+            if (dot > 0) {
+                String rawOwner = reference.substring(0, dot);
+                dottedOwner = rawOwner.indexOf('.') >= 0;
+                owner = dottedOwner ? rawOwner.replace('.', '/') : rawOwner;
                 member = reference.substring(dot + 1);
                 prefix = "owner.";
             }
@@ -336,12 +345,12 @@ public final class RoxyMappings {
             if (mappedName.equals(name)) mappedName = mapFieldNameWithoutDescriptor(owner, name);
         }
 
-        String mappedOwner = mapClass(owner);
+        String mappedOwner = owner == null ? null : mapClass(owner);
         String mappedMember = mappedName + (descriptor == null ? "" : (open >= 0 ? descriptor : ":" + descriptor));
         return switch (prefix) {
             case "L" -> "L" + mappedOwner + ";" + mappedMember;
             case "owner;" -> mappedOwner + ";" + mappedMember;
-            case "owner." -> mappedOwner + "." + mappedMember;
+            case "owner." -> (dottedOwner ? mappedOwner.replace('/', '.') : mappedOwner) + "." + mappedMember;
             default -> mappedMember;
         };
     }

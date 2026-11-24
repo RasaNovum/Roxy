@@ -17,7 +17,8 @@ public final class RoxyTfcImport {
     private static volatile ChunkCapture chunkCapture;
     private static volatile boolean chunkCaptureAbsent;
 
-    private record ChunkCapture(Method get, Field[] layers, Method[] corners, Method accept,
+    private record ChunkCapture(Method get, Object empty, Method getStatus, Field statusField,
+                                Field[] layers, Method[] corners, Method accept,
                                 Method instance, Method identifier, Method nullable) {}
 
     private RoxyTfcImport() {}
@@ -31,6 +32,23 @@ public final class RoxyTfcImport {
                 ClassLoader loader = RoxyTfcImport.class.getClassLoader();
                 Class<?> data = Class.forName("net.dries007.tfc.world.chunkdata.ChunkData", false, loader);
                 Class<?> layer = Class.forName("net.dries007.tfc.world.chunkdata.LerpFloatLayer", false, loader);
+                Object empty = null;
+                try {
+                    Field emptyField = data.getField("EMPTY");
+                    empty = emptyField.get(null);
+                } catch (NoSuchFieldException ignored) {
+                }
+                Method getStatus = null;
+                Field statusField = null;
+                try {
+                    getStatus = data.getMethod("getStatus");
+                } catch (NoSuchMethodException ignored) {
+                    try {
+                        statusField = data.getDeclaredField("status");
+                        statusField.setAccessible(true);
+                    } catch (NoSuchFieldException ignoredField) {
+                    }
+                }
                 String[] names = {"rainfallLayer", "rainVarianceLayer", "baseGroundwaterLayer", "temperatureLayer"};
                 Field[] fields = new Field[4];
                 for (int i = 0; i < 4; i++) {
@@ -38,7 +56,7 @@ public final class RoxyTfcImport {
                     fields[i].setAccessible(true);
                 }
                 Class<?> identifier = Class.forName("me.cortex.voxy.commonImpl.WorldIdentifier", false, loader);
-                access = new ChunkCapture(data.getMethod("get", ChunkAccess.class), fields,
+                access = new ChunkCapture(data.getMethod("get", ChunkAccess.class), empty, getStatus, statusField, fields,
                         new Method[]{layer.getMethod("value00"), layer.getMethod("value01"),
                                 layer.getMethod("value10"), layer.getMethod("value11")},
                         Class.forName("net.rasanovum.roxy.tfc.TfcVoxyBridge", true, loader)
@@ -56,6 +74,7 @@ public final class RoxyTfcImport {
                 if (targetEngine == null) return;
             }
             Object data = access.get.invoke(null, chunk);
+            if (data == null || data == access.empty || !isReadyChunkData(access, data)) return;
             float[] snapshot = new float[16];
             for (int i = 0; i < 4; i++) {
                 Object layer = access.layers[i].get(data);
@@ -75,6 +94,20 @@ public final class RoxyTfcImport {
                 LoggerFactory.getLogger("Roxy").warn("TFC generated chunk climate capture unavailable; terrain ingestion will continue", failure);
             }
         }
+    }
+
+    private static boolean isReadyChunkData(ChunkCapture access, Object data) throws ReflectiveOperationException {
+        Object status = null;
+        if (access.getStatus != null) {
+            status = access.getStatus.invoke(data);
+        } else if (access.statusField != null) {
+            status = access.statusField.get(data);
+        } else {
+            return true;
+        }
+        if (status == null) return false;
+        String name = status instanceof Enum<?> e ? e.name() : status.toString();
+        return "PARTIAL".equals(name) || "FULL".equals(name) || "CLIENT".equals(name);
     }
 
     public static float[] decode(Object value) {

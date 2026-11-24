@@ -5,20 +5,24 @@ import org.lwjgl.opengl.GL20;
 import org.lwjgl.opengl.GL30;
 import org.lwjgl.opengl.GL45;
 
+import java.util.ArrayDeque;
+
 public final class RoxyFramebufferBridge {
-    private static final int DRAW_FRAMEBUFFER_BINDING = 0x8CA6;
-    private static final int READ_FRAMEBUFFER_BINDING = 0x8CAA;
-    private static final ThreadLocal<FramebufferState> SAVED_STATE = new ThreadLocal<>();
-    private static final ThreadLocal<Boolean> ADAPTER_BOUND = new ThreadLocal<>();
+    private static final ThreadLocal<ArrayDeque<FramebufferState>> SAVED_STATES = ThreadLocal.withInitial(ArrayDeque::new);
+    private static int cachedMaxDrawBuffers;
     private static int adapterFramebuffer;
 
     private RoxyFramebufferBridge() {
     }
 
     public static long prepareVoxySource() {
-        int drawFramebuffer = GL11.glGetInteger(DRAW_FRAMEBUFFER_BINDING);
-        int readFramebuffer = GL11.glGetInteger(READ_FRAMEBUFFER_BINDING);
-        int maxDrawBuffers = GL11.glGetInteger(GL20.GL_MAX_DRAW_BUFFERS);
+        int drawFramebuffer = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+        int readFramebuffer = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
+        int maxDrawBuffers = cachedMaxDrawBuffers;
+        if (maxDrawBuffers <= 0) {
+            maxDrawBuffers = Math.max(1, GL11.glGetInteger(GL20.GL_MAX_DRAW_BUFFERS));
+            cachedMaxDrawBuffers = maxDrawBuffers;
+        }
         int[] drawBuffers = new int[maxDrawBuffers];
         for (int index = 0; index < maxDrawBuffers; index++) {
             drawBuffers[index] = GL11.glGetInteger(GL20.GL_DRAW_BUFFER0 + index);
@@ -27,39 +31,65 @@ public final class RoxyFramebufferBridge {
         int[] scissorBox = new int[4];
         GL11.glGetIntegerv(GL11.GL_VIEWPORT, viewport);
         GL11.glGetIntegerv(GL11.GL_SCISSOR_BOX, scissorBox);
-        SAVED_STATE.set(new FramebufferState(drawFramebuffer, drawBuffers, viewport, scissorBox,
-                GL11.glIsEnabled(GL11.GL_SCISSOR_TEST)));
-        boolean adapterBound = drawFramebuffer != 0 && bindAdapter(drawBuffers);
-        ADAPTER_BOUND.set(adapterBound);
+        boolean scissorEnabled = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
+        AdapterBinding binding = drawFramebuffer != 0 ? bindAdapter(drawBuffers) : null;
+        boolean adapterBound = binding != null;
+        SAVED_STATES.get().push(new FramebufferState(
+                drawFramebuffer,
+                drawBuffers,
+                viewport,
+                scissorBox,
+                scissorEnabled,
+                adapterBound
+        ));
         if (adapterBound) {
-            GL11.glViewport(0, 0, textureWidth(), textureHeight());
+            if (scissorEnabled) GL11.glDisable(GL11.GL_SCISSOR_TEST);
+            int width = Math.max(1, GL45.glGetTextureLevelParameteri(binding.depthTexture, binding.depthLevel, GL11.GL_TEXTURE_WIDTH));
+            int height = Math.max(1, GL45.glGetTextureLevelParameteri(binding.depthTexture, binding.depthLevel, GL11.GL_TEXTURE_HEIGHT));
+            GL11.glViewport(0, 0, width, height);
         }
         return (Integer.toUnsignedLong(readFramebuffer) << 32) | Integer.toUnsignedLong(drawFramebuffer);
     }
 
-    private static boolean bindAdapter(int[] drawBuffers) {
-        int colorAttachment = GL11.GL_NONE;
-        for (int drawBuffer : drawBuffers) {
-            if (drawBuffer >= GL30.GL_COLOR_ATTACHMENT0 && drawBuffer < GL30.GL_COLOR_ATTACHMENT0 + 32) {
-                colorAttachment = drawBuffer;
-                break;
-            }
-        }
-        if (colorAttachment == GL11.GL_NONE) return false;
+    private static AdapterBinding bindAdapter(int[] drawBuffers) {
+        int colorAttachment = firstColorAttachment(drawBuffers);
+        if (colorAttachment == GL11.GL_NONE) return null;
 
         int depthTexture = attachmentTexture(GL30.GL_DEPTH_ATTACHMENT);
         int colorTexture = attachmentTexture(colorAttachment);
-        if (depthTexture == 0 || colorTexture == 0) return false;
+        if (depthTexture == 0 || colorTexture == 0) return null;
 
-        if (adapterFramebuffer == 0) adapterFramebuffer = GL45.glCreateFramebuffers();
-        GL45.glNamedFramebufferTexture(adapterFramebuffer, GL30.GL_DEPTH_ATTACHMENT, depthTexture, 0);
-        GL45.glNamedFramebufferTexture(adapterFramebuffer, GL30.GL_COLOR_ATTACHMENT0, colorTexture, 0);
+        int depthLevel = attachmentLevel(GL30.GL_DEPTH_ATTACHMENT);
+        int colorLevel = attachmentLevel(colorAttachment);
+        int stencilTexture = attachmentTexture(GL30.GL_STENCIL_ATTACHMENT);
+        int stencilLevel = stencilTexture != 0 ? attachmentLevel(GL30.GL_STENCIL_ATTACHMENT) : 0;
+
+        if (adapterFramebuffer == 0 || !GL30.glIsFramebuffer(adapterFramebuffer)) {
+            adapterFramebuffer = GL45.glCreateFramebuffers();
+        }
+        if (stencilTexture == depthTexture && stencilLevel == depthLevel) {
+            GL45.glNamedFramebufferTexture(adapterFramebuffer, GL30.GL_DEPTH_STENCIL_ATTACHMENT, depthTexture, depthLevel);
+        } else {
+            GL45.glNamedFramebufferTexture(adapterFramebuffer, GL30.GL_STENCIL_ATTACHMENT, stencilTexture, stencilLevel);
+            GL45.glNamedFramebufferTexture(adapterFramebuffer, GL30.GL_DEPTH_ATTACHMENT, depthTexture, depthLevel);
+        }
+        GL45.glNamedFramebufferTexture(adapterFramebuffer, GL30.GL_COLOR_ATTACHMENT0, colorTexture, colorLevel);
         GL45.glNamedFramebufferDrawBuffer(adapterFramebuffer, GL30.GL_COLOR_ATTACHMENT0);
         if (GL45.glCheckNamedFramebufferStatus(adapterFramebuffer, GL30.GL_DRAW_FRAMEBUFFER)
-                != GL30.GL_FRAMEBUFFER_COMPLETE) return false;
+                != GL30.GL_FRAMEBUFFER_COMPLETE) return null;
         GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, adapterFramebuffer);
         GL20.glDrawBuffers(GL30.GL_COLOR_ATTACHMENT0);
-        return true;
+        return new AdapterBinding(depthTexture, depthLevel);
+    }
+
+    private static int firstColorAttachment(int[] drawBuffers) {
+        if (drawBuffers == null) return GL11.GL_NONE;
+        for (int drawBuffer : drawBuffers) {
+            if (drawBuffer >= GL30.GL_COLOR_ATTACHMENT0 && drawBuffer < GL30.GL_COLOR_ATTACHMENT0 + 32) {
+                return drawBuffer;
+            }
+        }
+        return GL11.GL_NONE;
     }
 
     private static int attachmentTexture(int attachment) {
@@ -70,29 +100,27 @@ public final class RoxyFramebufferBridge {
                 GL30.GL_DRAW_FRAMEBUFFER, attachment, GL30.GL_FRAMEBUFFER_ATTACHMENT_OBJECT_NAME);
     }
 
-    private static int textureWidth() {
-        int texture = attachmentTexture(GL30.GL_DEPTH_ATTACHMENT);
-        return Math.max(1, GL45.glGetTextureLevelParameteri(texture, 0, GL11.GL_TEXTURE_WIDTH));
-    }
-
-    private static int textureHeight() {
-        int texture = attachmentTexture(GL30.GL_DEPTH_ATTACHMENT);
-        return Math.max(1, GL45.glGetTextureLevelParameteri(texture, 0, GL11.GL_TEXTURE_HEIGHT));
+    private static int attachmentLevel(int attachment) {
+        return GL30.glGetFramebufferAttachmentParameteri(
+                GL30.GL_DRAW_FRAMEBUFFER, attachment, GL30.GL_FRAMEBUFFER_ATTACHMENT_TEXTURE_LEVEL);
     }
 
     public static void useMainColorAttachment() {
-        if (Boolean.TRUE.equals(ADAPTER_BOUND.get())) return;
-        if (GL11.glGetInteger(DRAW_FRAMEBUFFER_BINDING) != 0) {
-            GL20.glDrawBuffers(GL30.GL_COLOR_ATTACHMENT0);
+        ArrayDeque<FramebufferState> stack = SAVED_STATES.get();
+        FramebufferState top = stack.peek();
+        if (top != null && top.adapterBound) return;
+        if (GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING) != 0) {
+            int colorAttachment = top == null ? GL11.GL_NONE : firstColorAttachment(top.drawBuffers);
+            GL20.glDrawBuffers(colorAttachment != GL11.GL_NONE ? colorAttachment : GL30.GL_COLOR_ATTACHMENT0);
         }
     }
 
     public static void restoreFramebuffer(long framebuffers) {
         int drawFramebuffer = (int) framebuffers;
         GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, drawFramebuffer);
-        FramebufferState state = SAVED_STATE.get();
-        SAVED_STATE.remove();
-        ADAPTER_BOUND.remove();
+        ArrayDeque<FramebufferState> stack = SAVED_STATES.get();
+        FramebufferState state = stack.poll();
+        if (stack.isEmpty()) SAVED_STATES.remove();
         if (state != null && state.drawFramebuffer == drawFramebuffer && drawFramebuffer != 0) {
             GL20.glDrawBuffers(state.drawBuffers);
         }
@@ -105,12 +133,16 @@ public final class RoxyFramebufferBridge {
         GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, (int) (framebuffers >>> 32));
     }
 
+    private record AdapterBinding(int depthTexture, int depthLevel) {
+    }
+
     private record FramebufferState(
             int drawFramebuffer,
             int[] drawBuffers,
             int[] viewport,
             int[] scissorBox,
-            boolean scissorEnabled
+            boolean scissorEnabled,
+            boolean adapterBound
     ) {
     }
 }

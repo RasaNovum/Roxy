@@ -16,7 +16,7 @@ plugins {
 }
 
 group = "net.rasanovum"
-version = "0.4.3-d-1"
+version = "0.5.0"
 
 val roxyZink = providers.gradleProperty("roxyZink").map(String::toBoolean).orElse(false)
 val macRuntime = providers.gradleProperty("roxyMacOSRuntime")
@@ -147,7 +147,6 @@ prism {
                 compileOnly("maven.modrinth:sodium:mc1.21.1-0.8.12-neoforge")
                 runtimeOnly("maven.modrinth:sodium:mc1.21.1-0.8.12-neoforge")
                 compileOnly("net.neoforged.fancymodloader:loader:4.0.42")
-                compileOnly("org.sinytra.forgified-fabric-api:fabric-api-base:0.4.42+d1308ded19")
             }
         }
     }
@@ -183,6 +182,10 @@ project(":1.21.11") {
             from({ roxyIntermediary.files.map { zipTree(it) } }) {
                 include("mappings/mappings.tiny")
                 eachFile { path = "roxy/mappings/intermediary-1.21.11.tiny" }
+            }
+            from(rootProject.gradle.gradleUserHomeDir.resolve("caches/neoformruntime/artifacts/minecraft_1.21.11_client_mappings.txt")) {
+                into("roxy/mappings")
+                rename { "client-1.21.11.txt" }
             }
         }
         tasks.named<JavaExec>("runClient") {

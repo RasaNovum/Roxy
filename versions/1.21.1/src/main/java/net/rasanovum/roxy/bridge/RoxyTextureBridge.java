@@ -1,10 +1,10 @@
 package net.rasanovum.roxy.bridge;
 
 import org.lwjgl.opengl.GL11;
+import org.lwjgl.opengl.GL12;
 import org.lwjgl.opengl.GL15C;
-import org.lwjgl.opengl.GL30C;
+import org.lwjgl.opengl.GL21C;
 
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
 public final class RoxyTextureBridge {
@@ -29,66 +29,56 @@ public final class RoxyTextureBridge {
                     .invoke(textureManager, location);
 
             int textureId = (Integer) texture.getClass().getMethod("getId").invoke(texture);
-            int width = readDimension(texture, "width", "getWidth");
-            int height = readDimension(texture, "height", "getHeight");
-            if (width <= 0 || height <= 0) {
-                throw new IllegalStateException("Block atlas has invalid dimensions: " + width + "x" + height);
-            }
-
-            int[] pixels = new int[width * height];
-            readTexture(textureId, width, pixels);
+            TextureData data = readTexture(textureId);
 
             Method setSamplerTexture = rasterizer.getClass().getMethod(
                     "setSamplerTexture", int[].class, int.class, int.class
             );
-            setSamplerTexture.invoke(rasterizer, pixels, width, height);
+            setSamplerTexture.invoke(rasterizer, data.pixels, data.width, data.height);
         } catch (ReflectiveOperationException exception) {
             throw new IllegalStateException("Unable to read Minecraft 1.21.1's block atlas", exception);
         }
     }
 
-    private static void readTexture(int textureId, int width, int[] pixels) {
-        int framebuffer = GL11.glGetInteger(36006);
-        int pixelPackBuffer = GL11.glGetInteger(35053);
-        int texture = GL11.glGetInteger(32873);
-        int rowLength = GL11.glGetInteger(3330);
-        int imageHeight = GL11.glGetInteger(32876);
-        int skipRows = GL11.glGetInteger(3331);
-        int skipPixels = GL11.glGetInteger(3332);
-        int alignment = GL11.glGetInteger(3333);
+    private static TextureData readTexture(int textureId) {
+        int pixelPackBuffer = GL11.glGetInteger(GL21C.GL_PIXEL_PACK_BUFFER_BINDING);
+        int texture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+        int rowLength = GL11.glGetInteger(GL11.GL_PACK_ROW_LENGTH);
+        int imageHeight = GL11.glGetInteger(GL12.GL_PACK_IMAGE_HEIGHT);
+        int skipRows = GL11.glGetInteger(GL11.GL_PACK_SKIP_ROWS);
+        int skipPixels = GL11.glGetInteger(GL11.GL_PACK_SKIP_PIXELS);
+        int alignment = GL11.glGetInteger(GL11.GL_PACK_ALIGNMENT);
+        int swapBytes = GL11.glGetInteger(GL11.GL_PACK_SWAP_BYTES);
+        int lsbFirst = GL11.glGetInteger(GL11.GL_PACK_LSB_FIRST);
         try {
             GL11.glFlush();
-            GL30C.glBindFramebuffer(36160, 0);
-            GL15C.glBindBuffer(35051, 0);
-            GL11.glPixelStorei(3330, width);
-            GL11.glPixelStorei(32876, 0);
-            GL11.glPixelStorei(3331, 0);
-            GL11.glPixelStorei(3332, 0);
-            GL11.glPixelStorei(3333, 4);
-            GL11.glBindTexture(3553, textureId);
-            GL11.glGetTexImage(3553, 0, 6408, 5121, pixels);
+            GL15C.glBindBuffer(GL21C.GL_PIXEL_PACK_BUFFER, 0);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, textureId);
+            int width = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_WIDTH);
+            int height = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0, GL11.GL_TEXTURE_HEIGHT);
+            if (width <= 0 || height <= 0 || (long) width * (long) height > Integer.MAX_VALUE) {
+                throw new IllegalStateException("Block atlas has invalid OpenGL dimensions: " + width + "x" + height);
+            }
+            int[] pixels = new int[width * height];
+            GL11.glPixelStorei(GL11.GL_PACK_ROW_LENGTH, width);
+            GL11.glPixelStorei(GL12.GL_PACK_IMAGE_HEIGHT, 0);
+            GL11.glPixelStorei(GL11.GL_PACK_SKIP_ROWS, 0);
+            GL11.glPixelStorei(GL11.GL_PACK_SKIP_PIXELS, 0);
+            GL11.glPixelStorei(GL11.GL_PACK_ALIGNMENT, 4);
+            GL11.glPixelStorei(GL11.GL_PACK_SWAP_BYTES, 0);
+            GL11.glPixelStorei(GL11.GL_PACK_LSB_FIRST, 0);
+            GL11.glGetTexImage(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, pixels);
+            return new TextureData(pixels, width, height);
         } finally {
-            GL11.glPixelStorei(3330, rowLength);
-            GL11.glPixelStorei(32876, imageHeight);
-            GL11.glPixelStorei(3331, skipRows);
-            GL11.glPixelStorei(3332, skipPixels);
-            GL11.glPixelStorei(3333, alignment);
-            GL11.glBindTexture(3553, texture);
-            GL15C.glBindBuffer(35051, pixelPackBuffer);
-            GL30C.glBindFramebuffer(36160, framebuffer);
-        }
-    }
-
-    private static int readDimension(Object texture, String fieldName, String methodName)
-            throws ReflectiveOperationException {
-        try {
-            Field field = texture.getClass().getDeclaredField(fieldName);
-            field.setAccessible(true);
-            return field.getInt(texture);
-        } catch (NoSuchFieldException ignored) {
-            Method method = texture.getClass().getDeclaredMethod(methodName);
-            method.setAccessible(true);
-            return (Integer) method.invoke(texture);
+            GL11.glPixelStorei(GL11.GL_PACK_ROW_LENGTH, rowLength);
+            GL11.glPixelStorei(GL12.GL_PACK_IMAGE_HEIGHT, imageHeight);
+            GL11.glPixelStorei(GL11.GL_PACK_SKIP_ROWS, skipRows);
+            GL11.glPixelStorei(GL11.GL_PACK_SKIP_PIXELS, skipPixels);
+            GL11.glPixelStorei(GL11.GL_PACK_ALIGNMENT, alignment);
+            GL11.glPixelStorei(GL11.GL_PACK_SWAP_BYTES, swapBytes);
+            GL11.glPixelStorei(GL11.GL_PACK_LSB_FIRST, lsbFirst);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
+            GL15C.glBindBuffer(GL21C.GL_PIXEL_PACK_BUFFER, pixelPackBuffer);
         }
     }
 
@@ -107,5 +97,8 @@ public final class RoxyTextureBridge {
             }
         }
         throw new IllegalStateException("Unable to locate Minecraft's client class loader");
+    }
+
+    private record TextureData(int[] pixels, int width, int height) {
     }
 }

@@ -1,6 +1,7 @@
 package net.rasanovum.roxyhost;
 
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
@@ -17,7 +18,7 @@ import net.rasanovum.roxy.loader.RoxyCrashReportHeader;
 import net.rasanovum.roxy.client.RoxyClientWarnings;
 import net.rasanovum.roxy.tfc.TfcCompatConfig;
 
-@Mod("voxy")
+@Mod(value = "voxy", dist = Dist.CLIENT)
 public final class RoxyVoxyNeoForge {
     public RoxyVoxyNeoForge(IEventBus modBus) {
         RoxyCrashReportHeader.register();

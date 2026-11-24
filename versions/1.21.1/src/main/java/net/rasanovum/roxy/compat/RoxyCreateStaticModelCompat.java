@@ -121,8 +121,8 @@ public final class RoxyCreateStaticModelCompat {
             Class<?> bakedQuad = Class.forName("net.minecraft.client.renderer.block.model.BakedQuad", false, loader);
             Class<?> bakedModel = Class.forName("net.minecraft.client.resources.model.BakedModel", false, loader);
             Method getQuads = bakedModel.getMethod("getQuads", blockState, direction, random);
-            Constructor<?> quadConstructor = findQuadConstructor(bakedQuad, blockState.getClass().getClassLoader());
-            Object[] directions = Class.forName("net.minecraft.core.Direction", false, loader).getEnumConstants();
+            Constructor<?> quadConstructor = findQuadConstructor(bakedQuad, loader);
+            Object[] directions = direction.getEnumConstants();
             directions = Arrays.copyOf(directions, directions.length + 1);
             directions[directions.length - 1] = null;
             current = new Access(partialFor, partialGet, getQuads, quadConstructor, directions);

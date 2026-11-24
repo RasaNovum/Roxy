@@ -3,6 +3,7 @@ package net.rasanovum.roxy;
 import net.rasanovum.roxy.loader.RoxyFabricRuntime;
 import net.rasanovum.roxy.loader.RoxyCrashReportHeader;
 import net.rasanovum.roxy.client.RoxyClientWarnings;
+import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
@@ -11,7 +12,7 @@ import net.neoforged.neoforge.common.NeoForge;
 
 import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 
-@Mod("roxy")
+@Mod(value = "roxy", dist = Dist.CLIENT)
 public final class RoxyNeoForge {
     public RoxyNeoForge(IEventBus modBus) {
         RoxyCrashReportHeader.register();

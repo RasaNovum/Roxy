@@ -243,14 +243,19 @@ public final class RoxyVoxyRenderPatch {
             Object task,
             boolean created
     ) {
-        if (renderGenerationService == null || task == null || !created) return;
+        if (renderGenerationService == null || task == null || !created || position == Long.MIN_VALUE) return;
         synchronized (RENDER_LOCK) {
             SERVICE_SEQUENCES.putIfAbsent(renderGenerationService, REPAIR_SEQUENCE.get());
             SERVICE_WORLDS.putIfAbsent(renderGenerationService, WORLD_GENERATION.get());
+            if (TASK_EPOCHS.containsKey(task)) return;
+            TaskPositionKey positionKey = new TaskPositionKey(renderGenerationService, position);
             long epoch = RESULT_EPOCH.incrementAndGet();
             TASK_EPOCHS.put(task, epoch);
-            LATEST_EPOCHS.put(new TaskPositionKey(renderGenerationService, position), epoch);
-            QUEUED_TASKS.put(new TaskPositionKey(renderGenerationService, position), Boolean.TRUE);
+            Long latest = LATEST_EPOCHS.get(positionKey);
+            if (latest == null || epoch > latest) LATEST_EPOCHS.put(positionKey, epoch);
+            if (!IN_FLIGHT_TASKS.containsKey(new TaskKey(renderGenerationService, position, task))) {
+                QUEUED_TASKS.put(positionKey, Boolean.TRUE);
+            }
         }
     }
 
@@ -322,6 +327,10 @@ public final class RoxyVoxyRenderPatch {
     }
 
     public static void beginRenderTask(Object renderGenerationService, Object task) {
+        if (renderGenerationService == null || task == null) {
+            TASK_STAMP.remove();
+            return;
+        }
         long sequence = REPAIR_SEQUENCE.get();
         long world = WORLD_GENERATION.get();
         long epoch = Long.MIN_VALUE;
@@ -336,13 +345,25 @@ public final class RoxyVoxyRenderPatch {
                         ignored -> WORLD_GENERATION.get()
                 );
                 long position = taskPosition(task);
-                QUEUED_TASKS.remove(new TaskPositionKey(renderGenerationService, position));
+                if (position == Long.MIN_VALUE) {
+                    TASK_STAMP.remove();
+                    return;
+                }
+                TaskPositionKey positionKey = new TaskPositionKey(renderGenerationService, position);
+                QUEUED_TASKS.remove(positionKey);
                 TaskKey key = new TaskKey(renderGenerationService, position, task);
                 Long knownEpoch = TASK_EPOCHS.get(task);
-                if (knownEpoch != null) epoch = knownEpoch;
+                if (knownEpoch != null) {
+                    epoch = knownEpoch;
+                } else {
+                    epoch = RESULT_EPOCH.incrementAndGet();
+                    TASK_EPOCHS.put(task, epoch);
+                    Long latest = LATEST_EPOCHS.get(positionKey);
+                    if (latest == null || epoch > latest) LATEST_EPOCHS.put(positionKey, epoch);
+                }
                 TaskState state = new TaskState(world);
                 if (IN_FLIGHT_TASKS.put(key, state) == null) {
-                    IN_FLIGHT_COUNTS.merge(key.positionKey(), 1, Integer::sum);
+                    IN_FLIGHT_COUNTS.merge(positionKey, 1, Integer::sum);
                 }
                 TASK_STAMP.set(new TaskStamp(renderGenerationService, position, sequence, world, task, state, epoch));
             }
@@ -581,9 +602,9 @@ public final class RoxyVoxyRenderPatch {
     }
 
     private static void decrementInFlight(TaskPositionKey positionKey) {
-        int remaining = IN_FLIGHT_COUNTS.get(positionKey) - 1;
-        if (remaining == 0) IN_FLIGHT_COUNTS.remove(positionKey);
-        else IN_FLIGHT_COUNTS.put(positionKey, remaining);
+        Integer current = IN_FLIGHT_COUNTS.get(positionKey);
+        if (current == null || current <= 1) IN_FLIGHT_COUNTS.remove(positionKey);
+        else IN_FLIGHT_COUNTS.put(positionKey, current - 1);
     }
 
     private static boolean hasPendingTaskLocked(TaskPositionKey positionKey) {

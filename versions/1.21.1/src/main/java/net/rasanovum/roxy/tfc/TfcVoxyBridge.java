@@ -151,9 +151,11 @@ public final class TfcVoxyBridge {
         if(uploader==null) {
             if(factory!=null && factory.owner==owner) {
                 RecolorPlan plan=factory.pendingByRequest.get(request);
-                if(plan!=null)cancelRecolor(factory,plan);
-                else if(request-FIRST_VARIANT<factory.variants.size())
-                    fallbackFailedVariant(factory,factory.variants.get(request-FIRST_VARIANT));
+                if(plan!=null)factory.clientActions.add(()->cancelRecolor(factory,plan));
+                else if(request-FIRST_VARIANT<factory.variants.size()) {
+                    Variant failed=factory.variants.get(request-FIRST_VARIANT);
+                    factory.clientActions.add(()->fallbackFailedVariant(factory,failed));
+                }
             }
             return 0;
         }
@@ -196,27 +198,29 @@ public final class TfcVoxyBridge {
                     || !TfcVoxyUploadPatch.sameModelBytes(uploader,plan.previous.modelBytes)
                     || !TfcVoxyUploadPatch.sameTextureAlpha(uploader,plan.previous.textureAlpha))
                 return discardUpload(factory,baked,uploader,candidate,plan);
-            List<Map.Entry<?,?>> entries=modelEntries(factory);
-            Map.Entry<?,?> newEntry=modelEntryForRequest(entries,request,candidate,plan.previous.modelEntryKey);
-            candidateEntryKey=newEntry==null?null:newEntry.getKey();
-            Map.Entry<?,?> oldEntry=entries.stream().filter(entry->entry.getKey()==plan.previous.modelEntryKey).findFirst().orElse(null);
-            if(newEntry==null || ((Number)newEntry.getValue()).intValue()!=candidate || oldEntry==null
-                    || ((Number)oldEntry.getValue()).intValue()!=plan.previous.modelId
-                    || newEntry.getKey()==oldEntry.getKey()
-                    || factory.modelIdOwners.get(plan.previous.modelId)!=plan.previous)
-                return discardUpload(factory,baked,uploader,candidate,plan);
-            @SuppressWarnings("unchecked") Map<Object,Integer> mutable=(Map<Object,Integer>)field(owner,"modelTexture2id");
-            mutable.remove(oldEntry.getKey());
-            mutable.put(newEntry.getKey(),plan.previous.modelId);
-            fieldSet(uploader,"modelId",plan.previous.modelId);
-            factory.mappings[request]=plan.previous.modelId;
-            baked.modelId=plan.previous.modelId;
-            baked.modelBytes=plan.previous.modelBytes;
-            baked.textureAlpha=TfcVoxyUploadPatch.textureAlphaBytes(uploader);
-            baked.modelEntryKey=newEntry.getKey();
-            factory.modelIdOwners.put(plan.previous.modelId,baked);
-            plan.uploading=true;
-            return 0;
+            synchronized(factory.paletteLock) {
+                List<Map.Entry<?,?>> entries=modelEntriesLocked(factory);
+                Map.Entry<?,?> newEntry=modelEntryForRequest(entries,request,candidate,plan.previous.modelEntryKey);
+                candidateEntryKey=newEntry==null?null:newEntry.getKey();
+                Map.Entry<?,?> oldEntry=entries.stream().filter(entry->entry.getKey()==plan.previous.modelEntryKey).findFirst().orElse(null);
+                if(newEntry==null || ((Number)newEntry.getValue()).intValue()!=candidate || oldEntry==null
+                        || ((Number)oldEntry.getValue()).intValue()!=plan.previous.modelId
+                        || newEntry.getKey()==oldEntry.getKey()
+                        || factory.modelIdOwners.get(plan.previous.modelId)!=plan.previous)
+                    return discardUpload(factory,baked,uploader,candidate,plan);
+                @SuppressWarnings("unchecked") Map<Object,Integer> mutable=(Map<Object,Integer>)field(owner,"modelTexture2id");
+                mutable.remove(oldEntry.getKey());
+                mutable.put(newEntry.getKey(),plan.previous.modelId);
+                fieldSet(uploader,"modelId",plan.previous.modelId);
+                factory.mappings[request]=plan.previous.modelId;
+                baked.modelId=plan.previous.modelId;
+                baked.modelBytes=plan.previous.modelBytes;
+                baked.textureAlpha=TfcVoxyUploadPatch.textureAlphaBytes(uploader);
+                baked.modelEntryKey=newEntry.getKey();
+                factory.modelIdOwners.put(plan.previous.modelId,baked);
+                plan.uploading=true;
+                return 0;
+            }
         } catch(ReflectiveOperationException | RuntimeException | LinkageError failure) {
             warn(failure);
             return discardUpload(factory,baked,uploader,candidate,factory.pendingByRequest.get(request),candidateEntryKey);
@@ -227,31 +231,36 @@ public final class TfcVoxyBridge {
     }
     private static int discardUpload(Factory factory,Variant baked,Object uploader,int candidate,RecolorPlan plan,Object candidateEntryKey) {
         try {
-            @SuppressWarnings("unchecked") Map<Object,Integer> raw=(Map<Object,Integer>)field(factory.owner,"modelTexture2id");
-            int request=baked==null?0:baked.request;
-            Map.Entry<?,?> generated=null;
-            List<Map.Entry<?,?>> entries=modelEntries(factory);
-            if(plan!=null)generated=candidateEntryKey==null
-                    ?modelEntryForRequest(entries,request,plan.previous.modelEntryKey)
-                    :entries.stream().filter(entry->entry.getKey()==candidateEntryKey
-                            && entry.getKey()!=plan.previous.modelEntryKey).findFirst().orElse(null);
-            else if(candidate>=0)generated=modelEntryForRequest(entries,request,candidate,null);
-            if(generated!=null)raw.remove(generated.getKey());
+            synchronized(factory.paletteLock) {
+                @SuppressWarnings("unchecked") Map<Object,Integer> raw=(Map<Object,Integer>)field(factory.owner,"modelTexture2id");
+                int request=baked==null?0:baked.request;
+                Map.Entry<?,?> generated=null;
+                List<Map.Entry<?,?>> entries=modelEntriesLocked(factory);
+                if(plan!=null)generated=candidateEntryKey==null
+                        ?modelEntryForRequest(entries,request,plan.previous.modelEntryKey)
+                        :entries.stream().filter(entry->entry.getKey()==candidateEntryKey
+                                && entry.getKey()!=plan.previous.modelEntryKey).findFirst().orElse(null);
+                else if(candidate>=0)generated=modelEntryForRequest(entries,request,candidate,null);
+                if(generated!=null)raw.remove(generated.getKey());
+                if(plan!=null) {
+                    if(plan.replacement.revision==revision)plan.previous.lastRecoloredRevision=revision;
+                    raw.put(plan.previous.modelEntryKey,plan.previous.modelId);
+                    factory.mappings[plan.previous.request]=plan.previous.modelId;
+                    factory.variants.set(plan.previous.request-FIRST_VARIANT,plan.previous);
+                    factory.modelIdOwners.put(plan.previous.modelId,plan.previous);
+                    factory.uploaded.add(plan.previous.modelId);
+                    factory.uploadedGenerations.put(plan.previous.request,plan.previous.generation);
+                    factory.pendingByRequest.remove(plan.previous.request,plan);
+                    factory.pendingByFamily.remove(plan.previous.family,plan);
+                    factory.pendingPalette.remove(plan.replacement.appearance(),plan);
+                } else if(baked!=null) {
+                    factory.modelIdOwners.remove(candidate,baked);
+                }
+            }
             if(plan!=null) {
-                if(plan.replacement.revision==revision)plan.previous.lastRecoloredRevision=revision;
-                raw.put(plan.previous.modelEntryKey,plan.previous.modelId);
-                factory.mappings[plan.previous.request]=plan.previous.modelId;
-                factory.variants.set(plan.previous.request-FIRST_VARIANT,plan.previous);
-                factory.modelIdOwners.put(plan.previous.modelId,plan.previous);
-                factory.uploaded.add(plan.previous.modelId);
-                factory.uploadedGenerations.put(plan.previous.request,plan.previous.generation);
-                factory.pendingByRequest.remove(plan.previous.request,plan);
-                factory.pendingByFamily.remove(plan.previous.family,plan);
-                factory.pendingPalette.remove(plan.replacement.appearance(),plan);
-                restorePlanEntries(factory,plan);
+                factory.clientActions.add(()->restorePlanEntries(factory,plan));
             } else if(baked!=null) {
-                factory.modelIdOwners.remove(candidate,baked);
-                fallbackFailedVariant(factory,baked);
+                factory.clientActions.add(()->fallbackFailedVariant(factory,baked));
             }
             return 1;
         } catch(ReflectiveOperationException | RuntimeException failure) { warn(failure);return 1; }
@@ -929,9 +938,12 @@ public final class TfcVoxyBridge {
                 if(entry.retired)continue;
                 evaluate(factory,entry);
             }
+            Runnable clientAction;
+            while((clientAction=factory.clientActions.poll())!=null)clientAction.run();
             int waiting=factory.waiting.size();
             for(int i=0;i<Math.min(64,waiting);i++) {
-                Entry entry=factory.waiting.removeFirst();
+                Entry entry=factory.waiting.pollFirst();
+                if(entry==null)break;
                 if(!commitReady(factory,entry))factory.waiting.addLast(entry);
             }
             prune(factory);
@@ -1516,6 +1528,11 @@ public final class TfcVoxyBridge {
         field.set(object,value);
     }
     private static List<Map.Entry<?,?>> modelEntries(Factory factory) throws ReflectiveOperationException {
+        synchronized(factory.paletteLock) {
+            return modelEntriesLocked(factory);
+        }
+    }
+    private static List<Map.Entry<?,?>> modelEntriesLocked(Factory factory) throws ReflectiveOperationException {
         Object value=field(factory.owner,"modelTexture2id");
         if(!(value instanceof Map<?,?> map))throw new IllegalStateException("Unexpected Voxy model palette");
         return new ArrayList<>(map.entrySet());
@@ -1669,6 +1686,8 @@ public final class TfcVoxyBridge {
         final Map<GeometryFamily,RecolorPlan> pendingByFamily=new ConcurrentHashMap<>();
         final Map<Integer,Variant> modelIdOwners=new ConcurrentHashMap<>();
         final ConcurrentLinkedDeque<Entry> waiting=new ConcurrentLinkedDeque<>();
+        final Object paletteLock=new Object();
+        final Queue<Runnable> clientActions=new ConcurrentLinkedQueue<>();
         final Set<Integer> uploaded=ConcurrentHashMap.newKeySet();
         final Map<Integer,Long> uploadedGenerations=new ConcurrentHashMap<>();
         final Set<Integer> uploading=new HashSet<>();

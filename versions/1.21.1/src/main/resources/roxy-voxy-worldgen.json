@@ -4,12 +4,12 @@
   "package": "net.rasanovum.roxy.mixin",
   "compatibilityLevel": "JAVA_21",
   "mixins": [
-    "RoxyChunkyNeoForgeWorldMixin",
-    "RoxyChunksmithVoxyRadiusMixin",
-    "RoxyChunksmithVoxyTargetMixin",
-    "RoxyMinecraftLevelMixin"
+    "RoxyChunkyNeoForgeWorldMixin"
   ],
   "client": [
+    "RoxyChunksmithVoxyRadiusMixin",
+    "RoxyChunksmithVoxyTargetMixin",
+    "RoxyMinecraftLevelMixin",
     "RoxyCopycatsBlockEntityPacketMixin",
     "RoxyVoxyWorldgenSectionMixin",
     "RoxyVoxyIngestSnapshotMixin"

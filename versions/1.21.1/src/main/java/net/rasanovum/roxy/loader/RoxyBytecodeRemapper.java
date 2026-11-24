@@ -36,6 +36,7 @@ public final class RoxyBytecodeRemapper {
     private static final String MODIFY_CONSTANT = "Lorg/spongepowered/asm/mixin/injection/ModifyConstant;";
     private static final String BLOCK_COLORS = "net/minecraft/client/color/block/BlockColors";
     private static final String COLOR_COMPAT = "net/rasanovum/roxy/bridge/RoxyColorBridge";
+    private static final String POSE_STACK_COMPAT = "net/rasanovum/roxy/bridge/RoxyPoseStackBridge";
     private static final String COLOR_HELPER_NEW = "net/minecraft/class_9848";
     private static final String FABRIC_METADATA = "net/fabricmc/loader/api/metadata/ModMetadata";
     private static final String FABRIC_CUSTOM_VALUE = "net/fabricmc/loader/api/metadata/CustomValue";
@@ -1038,7 +1039,7 @@ public final class RoxyBytecodeRemapper {
 
     private static byte[] patchMinecraftVersionBridges(byte[] input) {
         ClassReader reader = new ClassReader(input);
-        ClassWriter writer = new ClassWriter(reader, 0);
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
         reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
             @Override
             public MethodVisitor visitMethod(
@@ -1121,6 +1122,7 @@ public final class RoxyBytecodeRemapper {
                             super.visitMethodInsn(opcode, owner, "getRenderLayer", descriptor, false);
                         } else if (opcode == Opcodes.INVOKESTATIC
                                 && owner.equals(ITEM_BLOCK_RENDER_TYPES)
+                                && (name.equals("getChunkRenderType") || name.equals("method_23679"))
                                 && descriptor.equals("(L" + BLOCK_STATE + ";)L" + RENDER_TYPE + ";")) {
                             super.visitInsn(Opcodes.DUP);
                             super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
@@ -1217,12 +1219,24 @@ public final class RoxyBytecodeRemapper {
                                 && owner.equals(POSE_STACK)
                                 && name.equals("mulPose")
                                 && descriptor.equals("(" + QUATERNION_FC + ")V")) {
-                            super.visitMethodInsn(opcode, owner, name, "(" + QUATERNION_F + ")V", isInterface);
+                            super.visitMethodInsn(
+                                    Opcodes.INVOKESTATIC,
+                                    POSE_STACK_COMPAT,
+                                    "mulPoseQuaternion",
+                                    "(Ljava/lang/Object;" + QUATERNION_FC + ")V",
+                                    false
+                            );
                         } else if (opcode == Opcodes.INVOKEVIRTUAL
                                 && owner.equals(POSE_STACK)
                                 && name.equals("mulPose")
                                 && descriptor.equals("(" + MATRIX4FC + ")V")) {
-                            super.visitMethodInsn(opcode, owner, name, "(" + MATRIX4F + ")V", isInterface);
+                            super.visitMethodInsn(
+                                    Opcodes.INVOKESTATIC,
+                                    POSE_STACK_COMPAT,
+                                    "mulPoseMatrix",
+                                    "(Ljava/lang/Object;" + MATRIX4FC + ")V",
+                                    false
+                            );
                         } else {
                             super.visitMethodInsn(opcode, owner, name, descriptor, isInterface);
                         }
@@ -3640,6 +3654,8 @@ public final class RoxyBytecodeRemapper {
                 );
                 method.visitVarInsn(Opcodes.ASTORE, 5);
                 method.visitLabel(render);
+                method.visitVarInsn(Opcodes.ALOAD, 5);
+                method.visitJumpInsn(Opcodes.IFNULL, done);
                 method.visitMethodInsn(
                         Opcodes.INVOKESTATIC,
                         "net/rasanovum/roxy/bridge/RoxyFramebufferBridge",
@@ -3649,6 +3665,12 @@ public final class RoxyBytecodeRemapper {
                 );
                 method.visitVarInsn(Opcodes.LSTORE, 6);
                 Label sourceReady = new Label();
+                Label renderStart = new Label();
+                Label renderEnd = new Label();
+                Label renderFailed = new Label();
+                Label renderDone = new Label();
+                method.visitTryCatchBlock(renderStart, renderEnd, renderFailed, null);
+                method.visitLabel(renderStart);
                 method.visitVarInsn(Opcodes.LLOAD, 6);
                 method.visitInsn(Opcodes.L2I);
                 method.visitJumpInsn(Opcodes.IFNE, sourceReady);
@@ -3682,12 +3704,6 @@ public final class RoxyBytecodeRemapper {
                         "()V",
                         false
                 );
-                Label renderStart = new Label();
-                Label renderEnd = new Label();
-                Label renderFailed = new Label();
-                Label renderDone = new Label();
-                method.visitTryCatchBlock(renderStart, renderEnd, renderFailed, null);
-                method.visitLabel(renderStart);
                 method.visitVarInsn(Opcodes.ALOAD, 4);
                 method.visitVarInsn(Opcodes.ALOAD, 5);
                 method.visitMethodInsn(
@@ -3870,6 +3886,8 @@ public final class RoxyBytecodeRemapper {
                         false
                 );
                 method.visitVarInsn(Opcodes.LSTORE, 12);
+                method.visitTryCatchBlock(renderStart, renderEnd, renderFailed, null);
+                method.visitLabel(renderStart);
                 method.visitVarInsn(Opcodes.LLOAD, 12);
                 method.visitInsn(Opcodes.L2I);
                 method.visitJumpInsn(Opcodes.IFNE, sourceReady);
@@ -3903,8 +3921,6 @@ public final class RoxyBytecodeRemapper {
                         "()V",
                         false
                 );
-                method.visitTryCatchBlock(renderStart, renderEnd, renderFailed, null);
-                method.visitLabel(renderStart);
                 method.visitVarInsn(Opcodes.ALOAD, 10);
                 method.visitVarInsn(Opcodes.ALOAD, 11);
                 method.visitMethodInsn(
@@ -5165,80 +5181,82 @@ public final class RoxyBytecodeRemapper {
                     };
                 }
                 if (!name.equals("processJob") || !descriptor.equals(processDescriptor)) return method;
-                return new MethodVisitor(Opcodes.ASM9, method) {
+                return new org.objectweb.asm.tree.MethodNode(Opcodes.ASM9, access, name, descriptor, signature, exceptions) {
                     @Override
-                    public void visitInsn(int opcode) {
-                        if (retryQueueAddPending && opcode == Opcodes.POP) {
-                            super.visitInsn(opcode);
-                            super.visitVarInsn(Opcodes.ALOAD, 0);
-                            super.visitVarInsn(Opcodes.ALOAD, 3);
-                            super.visitMethodInsn(
-                                    Opcodes.INVOKESTATIC,
-                                    VOXY_RENDER_COMPAT,
-                                    "recordRenderTaskRetry",
-                                    "(Ljava/lang/Object;Ljava/lang/Object;)V",
-                                    false
-                            );
-                            retryQueueAddPending = false;
-                            return;
-                        }
-                        if (opcode == Opcodes.ATHROW) {
-                            super.visitInsn(Opcodes.ICONST_1);
-                            super.visitMethodInsn(
-                                    Opcodes.INVOKESTATIC,
-                                    VOXY_RENDER_COMPAT,
-                                    "finishRenderTask",
-                                    "(Z)V",
-                                    false
-                            );
-                        } else if (opcode == Opcodes.RETURN) {
-                            super.visitInsn(Opcodes.ICONST_0);
-                            super.visitMethodInsn(
-                                    Opcodes.INVOKESTATIC,
-                                    VOXY_RENDER_COMPAT,
-                                    "finishRenderTask",
-                                    "(Z)V",
-                                    false
-                            );
+                    public void visitEnd() {
+                        boolean retryQueueAddPending = false;
+                        for (org.objectweb.asm.tree.AbstractInsnNode insn = instructions.getFirst(); insn != null; ) {
+                            org.objectweb.asm.tree.AbstractInsnNode next = insn.getNext();
+                            if (insn instanceof org.objectweb.asm.tree.MethodInsnNode call) {
+                                if (call.getOpcode() == Opcodes.INVOKEVIRTUAL
+                                        && call.owner.equals("java/util/concurrent/PriorityBlockingQueue")
+                                        && call.name.equals("poll")
+                                        && call.desc.equals("()Ljava/lang/Object;")) {
+                                    org.objectweb.asm.tree.InsnList hook = new org.objectweb.asm.tree.InsnList();
+                                    hook.add(new org.objectweb.asm.tree.InsnNode(Opcodes.DUP));
+                                    hook.add(new org.objectweb.asm.tree.VarInsnNode(Opcodes.ALOAD, 0));
+                                    hook.add(new org.objectweb.asm.tree.InsnNode(Opcodes.SWAP));
+                                    hook.add(new org.objectweb.asm.tree.MethodInsnNode(
+                                            Opcodes.INVOKESTATIC,
+                                            VOXY_RENDER_COMPAT,
+                                            "beginRenderTask",
+                                            "(Ljava/lang/Object;Ljava/lang/Object;)V",
+                                            false
+                                    ));
+                                    instructions.insert(call, hook);
+                                } else if (call.getOpcode() == Opcodes.INVOKEVIRTUAL
+                                        && call.owner.equals("java/util/concurrent/PriorityBlockingQueue")
+                                        && call.name.equals("add")
+                                        && call.desc.equals("(Ljava/lang/Object;)Z")) {
+                                    retryQueueAddPending = true;
+                                }
+                            } else if (insn.getOpcode() == Opcodes.POP && retryQueueAddPending) {
+                                retryQueueAddPending = false;
+                                org.objectweb.asm.tree.InsnList hook = new org.objectweb.asm.tree.InsnList();
+                                hook.add(new org.objectweb.asm.tree.VarInsnNode(Opcodes.ALOAD, 0));
+                                hook.add(new org.objectweb.asm.tree.VarInsnNode(Opcodes.ALOAD, 3));
+                                hook.add(new org.objectweb.asm.tree.MethodInsnNode(
+                                        Opcodes.INVOKESTATIC,
+                                        VOXY_RENDER_COMPAT,
+                                        "recordRenderTaskRetry",
+                                        "(Ljava/lang/Object;Ljava/lang/Object;)V",
+                                        false
+                                ));
+                                instructions.insert(insn, hook);
+                            } else if (insn.getOpcode() == Opcodes.RETURN) {
+                                org.objectweb.asm.tree.InsnList hook = new org.objectweb.asm.tree.InsnList();
+                                hook.add(new org.objectweb.asm.tree.InsnNode(Opcodes.ICONST_0));
+                                hook.add(new org.objectweb.asm.tree.MethodInsnNode(
+                                        Opcodes.INVOKESTATIC,
+                                        VOXY_RENDER_COMPAT,
+                                        "finishRenderTask",
+                                        "(Z)V",
+                                        false
+                                ));
+                                instructions.insertBefore(insn, hook);
                             }
-                            super.visitInsn(opcode);
+                            insn = next;
                         }
-
-                    @Override
-                    public void visitMethodInsn(
-                            int opcode,
-                            String owner,
-                            String methodName,
-                            String methodDescriptor,
-                            boolean isInterface
-                    ) {
-                        if (opcode == Opcodes.INVOKEVIRTUAL
-                                && owner.equals("java/util/concurrent/PriorityBlockingQueue")
-                                && methodName.equals("poll")
-                                && methodDescriptor.equals("()Ljava/lang/Object;")) {
-                            super.visitMethodInsn(opcode, owner, methodName, methodDescriptor, isInterface);
-                            visitInsn(Opcodes.DUP);
-                            visitVarInsn(Opcodes.ALOAD, 0);
-                            visitInsn(Opcodes.SWAP);
-                            visitMethodInsn(
+                        if (instructions.size() > 0) {
+                            org.objectweb.asm.tree.LabelNode tryStart = new org.objectweb.asm.tree.LabelNode();
+                            org.objectweb.asm.tree.LabelNode tryEnd = new org.objectweb.asm.tree.LabelNode();
+                            org.objectweb.asm.tree.LabelNode catchHandler = new org.objectweb.asm.tree.LabelNode();
+                            instructions.insert(tryStart);
+                            instructions.add(tryEnd);
+                            instructions.add(catchHandler);
+                            instructions.add(new org.objectweb.asm.tree.InsnNode(Opcodes.ICONST_1));
+                            instructions.add(new org.objectweb.asm.tree.MethodInsnNode(
                                     Opcodes.INVOKESTATIC,
                                     VOXY_RENDER_COMPAT,
-                                    "beginRenderTask",
-                                    "(Ljava/lang/Object;Ljava/lang/Object;)V",
+                                    "finishRenderTask",
+                                    "(Z)V",
                                     false
-                            );
-                        } else if (opcode == Opcodes.INVOKEVIRTUAL
-                                && owner.equals("java/util/concurrent/PriorityBlockingQueue")
-                                && methodName.equals("add")
-                                && methodDescriptor.equals("(Ljava/lang/Object;)Z")) {
-                            super.visitMethodInsn(opcode, owner, methodName, methodDescriptor, isInterface);
-                            retryQueueAddPending = true;
-                        } else {
-                            super.visitMethodInsn(opcode, owner, methodName, methodDescriptor, isInterface);
+                            ));
+                            instructions.add(new org.objectweb.asm.tree.InsnNode(Opcodes.ATHROW));
+                            tryCatchBlocks.add(new org.objectweb.asm.tree.TryCatchBlockNode(tryStart, tryEnd, catchHandler, null));
                         }
+                        accept(method);
                     }
-
-                    private boolean retryQueueAddPending;
                 };
             }
         }, 0);

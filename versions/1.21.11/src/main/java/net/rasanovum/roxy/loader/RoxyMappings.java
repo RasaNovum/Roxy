@@ -1,7 +1,5 @@
 package net.rasanovum.roxy.loader;
 
-import net.neoforged.fml.loading.FMLEnvironment;
-
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStream;
@@ -21,6 +19,7 @@ import java.util.stream.Stream;
 public final class RoxyMappings {
     private static final String MINECRAFT_VERSION = "1.21.11";
     private static final String INTERMEDIARY_RESOURCE = "roxy/mappings/intermediary-1.21.11.tiny";
+    private static final String MOJMAP_RESOURCE = "roxy/mappings/client-1.21.11.txt";
 
     private final Map<String, String> classes;
     private final Map<MemberKey, String> fields;
@@ -45,16 +44,19 @@ public final class RoxyMappings {
     }
 
     public static RoxyMappings load() throws IOException {
-        boolean production = isProduction();
+        Path neoFormMappings = explicitNeoFormMapping();
+        MojmapMappings mojmap = neoFormMappings != null
+                ? MojmapMappings.read(neoFormMappings)
+                : readBundledOrCachedMojmap();
         Path intermediaryPath = findIntermediaryMapping();
         if (intermediaryPath != null) {
             try (InputStream input = Files.newInputStream(intermediaryPath)) {
-                return parseTiny(input, production ? null : findNeoFormMapping());
+                return parseTiny(input, mojmap);
             }
         }
 
         ClassLoader loader = Thread.currentThread().getContextClassLoader();
-        InputStream resource = loader.getResourceAsStream(INTERMEDIARY_RESOURCE);
+        InputStream resource = loader == null ? null : loader.getResourceAsStream(INTERMEDIARY_RESOURCE);
         if (resource == null) {
             resource = RoxyMappings.class.getClassLoader().getResourceAsStream(INTERMEDIARY_RESOURCE);
         }
@@ -62,25 +64,28 @@ public final class RoxyMappings {
             throw new IOException("Roxy: missing Fabric intermediary mapping " + INTERMEDIARY_RESOURCE);
         }
         try (InputStream mappingResource = resource) {
-            return parseTiny(mappingResource, production ? null : findNeoFormMapping());
+            return parseTiny(mappingResource, mojmap);
         }
     }
 
-    private static boolean isProduction() {
-        String override = System.getProperty("roxy.runtimeNamespace", "");
-        if (override.equalsIgnoreCase("official")) return true;
-        if (override.equalsIgnoreCase("mojmap")) return false;
-        try {
-            return FMLEnvironment.isProduction();
-        } catch (Throwable ignored) {
-            return false;
+    private static MojmapMappings readBundledOrCachedMojmap() throws IOException {
+        InputStream input = RoxyMappings.class.getResourceAsStream("/" + MOJMAP_RESOURCE);
+        if (input != null) {
+            try (InputStream resource = input) {
+                return MojmapMappings.read(resource);
+            }
         }
+        Path cached = findCachedNeoFormMapping();
+        if (cached != null) {
+            return MojmapMappings.read(cached);
+        }
+        throw new IOException("Roxy: missing bundled NeoForge 1.21.11 runtime mappings");
     }
 
-    private static RoxyMappings parseTiny(InputStream input, Path neoFormMappings) throws IOException {
-        MojmapMappings mojmap = neoFormMappings == null ? null : MojmapMappings.read(neoFormMappings);
+    private static RoxyMappings parseTiny(InputStream input, MojmapMappings mojmap) throws IOException {
         Map<String, String> classes = new HashMap<>();
         Map<String, String> officialToIntermediary = new HashMap<>();
+        Map<String, String> targetToIntermediary = new HashMap<>();
         Map<MemberKey, String> fields = new HashMap<>();
         Map<MemberKey, String> methods = new HashMap<>();
         List<TinyMember> members = new ArrayList<>();
@@ -100,6 +105,7 @@ public final class RoxyMappings {
                             : mojmap.officialToMojmap.getOrDefault(officialOwner, officialOwner);
                     classes.put(intermediaryOwner, targetOwner);
                     officialToIntermediary.put(officialOwner, intermediaryOwner);
+                    targetToIntermediary.put(targetOwner, intermediaryOwner);
                 } else if (parts.length >= 5 && parts[0].isEmpty() && (parts[1].equals("f") || parts[1].equals("m"))) {
                     if (officialOwner != null && intermediaryOwner != null) {
                         members.add(new TinyMember(
@@ -108,15 +114,17 @@ public final class RoxyMappings {
                                 intermediaryOwner,
                                 parts[2],
                                 parts[3],
-                            parts[4]
+                                parts[4]
                         ));
                     }
                 } else if (parts.length >= 5 && (parts[0].equals("FIELD") || parts[0].equals("METHOD"))) {
                     String owner = parts[1];
                     String officialOwnerForMember = owner;
                     String intermediaryOwnerForMember = officialToIntermediary.get(owner);
+                    if (intermediaryOwnerForMember == null) {
+                        intermediaryOwnerForMember = targetToIntermediary.get(owner);
+                    }
                     if (intermediaryOwnerForMember == null && mojmap != null) {
-                        // Resolve merged-table owners before indexing inherited members.
                         officialOwnerForMember = mojmap.mojToOfficial.getOrDefault(
                                 owner.replace('/', '.'), owner
                         );
@@ -142,7 +150,6 @@ public final class RoxyMappings {
             if (mojmap != null) {
                 targetName = mojmap.members.get(new MemberKey(member.officialOwner, member.officialName, member.officialDescriptor));
                 if (targetName == null) {
-                    // Keep the official name when no Mojmap member name exists.
                     targetName = member.officialName;
                 }
             }
@@ -154,7 +161,12 @@ public final class RoxyMappings {
                 methods.put(key, targetName);
             }
         }
-        return new RoxyMappings(classes, fields, methods);
+        RoxyMappings mappings = new RoxyMappings(classes, fields, methods);
+        String component = mappings.mapClass("net/minecraft/class_2561");
+        if (!component.equals("net/minecraft/network/chat/Component")) {
+            throw new IOException("Roxy: invalid 1.21.11 runtime mappings: Component mapped to " + component);
+        }
+        return mappings;
     }
 
     private static Map<OwnerName, Set<String>> indexNames(Map<MemberKey, String> members) {
@@ -214,13 +226,16 @@ public final class RoxyMappings {
         }
     }
 
-    private static Path findNeoFormMapping() {
+    private static Path explicitNeoFormMapping() {
         String explicit = System.getProperty("roxy.neoformMappings");
         if (explicit != null && !explicit.isBlank()) {
             Path path = Paths.get(explicit);
             if (Files.isRegularFile(path)) return path;
         }
+        return null;
+    }
 
+    private static Path findCachedNeoFormMapping() {
         Path path = Paths.get(System.getProperty("user.home", ""), ".gradle/caches/neoformruntime/artifacts/minecraft_1.21.11_client_mappings.txt");
         return Files.isRegularFile(path) ? path : null;
     }
@@ -286,23 +301,32 @@ public final class RoxyMappings {
     public String mapMemberReference(String reference, String defaultOwner) {
         if (reference == null || reference.isBlank()) return reference;
 
+        int openParen = reference.indexOf('(');
+        int colonIdx = reference.indexOf(':');
+        int memberBoundary = reference.length();
+        if (openParen >= 0 && openParen < memberBoundary) memberBoundary = openParen;
+        if (colonIdx >= 0 && colonIdx < memberBoundary) memberBoundary = colonIdx;
+
         String owner = defaultOwner;
         String member = reference;
         String prefix = "";
+        boolean dottedOwner = false;
         int separator = reference.indexOf(';');
-        if (reference.startsWith("L") && separator >= 0) {
-            prefix = "L";
-            owner = reference.substring(1, separator);
+        if (separator >= 0 && separator < memberBoundary) {
+            if (reference.startsWith("L")) {
+                prefix = "L";
+                owner = reference.substring(1, separator);
+            } else {
+                prefix = "owner;";
+                owner = reference.substring(0, separator);
+            }
             member = reference.substring(separator + 1);
-        } else if (separator >= 0) {
-            owner = reference.substring(0, separator);
-            member = reference.substring(separator + 1);
-            prefix = "owner;";
         } else {
-            int dot = reference.indexOf('.');
-            int paren = reference.indexOf('(');
-            if (dot > 0 && (paren < 0 || dot < paren)) {
-                owner = reference.substring(0, dot);
+            int dot = memberBoundary > 0 ? reference.lastIndexOf('.', memberBoundary - 1) : -1;
+            if (dot > 0) {
+                String rawOwner = reference.substring(0, dot);
+                dottedOwner = rawOwner.indexOf('.') >= 0;
+                owner = dottedOwner ? rawOwner.replace('.', '/') : rawOwner;
                 member = reference.substring(dot + 1);
                 prefix = "owner.";
             }
@@ -331,12 +355,12 @@ public final class RoxyMappings {
             if (mappedName.equals(name)) mappedName = mapFieldNameWithoutDescriptor(owner, name);
         }
 
-        String mappedOwner = mapClass(owner);
+        String mappedOwner = owner == null ? null : mapClass(owner);
         String mappedMember = mappedName + (descriptor == null ? "" : (open >= 0 ? descriptor : ":" + descriptor));
         return switch (prefix) {
             case "L" -> "L" + mappedOwner + ";" + mappedMember;
             case "owner;" -> mappedOwner + ";" + mappedMember;
-            case "owner." -> mappedOwner + "." + mappedMember;
+            case "owner." -> (dottedOwner ? mappedOwner.replace('/', '.') : mappedOwner) + "." + mappedMember;
             default -> mappedMember;
         };
     }
@@ -378,8 +402,17 @@ public final class RoxyMappings {
         private final Map<String, String> mojToOfficial = new HashMap<>();
 
         private static MojmapMappings read(Path path) throws IOException {
+            try (InputStream input = Files.newInputStream(path)) {
+                return read(input);
+            }
+        }
+
+        private static MojmapMappings read(InputStream input) throws IOException {
             MojmapMappings result = new MojmapMappings();
-            List<String> lines = Files.readAllLines(path, StandardCharsets.UTF_8);
+            List<String> lines;
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+                lines = reader.lines().toList();
+            }
 
             // Collect class names first so second-pass descriptor conversion is reliable.
             for (String line : lines) {

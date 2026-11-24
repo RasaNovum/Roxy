@@ -77,7 +77,7 @@ public final class RoxyCopycatsCompat {
         Map<Object, Set<Long>> pending = drainPendingIngests();
         if (pending.isEmpty()) return;
         try {
-            ClassLoader loader = RoxyCopycatsCompat.class.getClassLoader();
+            ClassLoader loader = findGameLoader(pending);
             Class<?> minecraftType = Class.forName("net.minecraft.client.Minecraft", false, loader);
             Object minecraft = minecraftType.getMethod("getInstance").invoke(null);
             Object currentLevel = field(minecraft, "level");
@@ -90,6 +90,27 @@ public final class RoxyCopycatsCompat {
             }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
             logIngestFailure(failure);
+        }
+    }
+
+    private static ClassLoader findGameLoader(Map<Object, Set<Long>> pending) {
+        for (Object level : pending.keySet()) {
+            if (level == null) continue;
+            ClassLoader candidate = level.getClass().getClassLoader();
+            if (canLoadMinecraft(candidate)) return candidate;
+        }
+        ClassLoader context = Thread.currentThread().getContextClassLoader();
+        if (canLoadMinecraft(context)) return context;
+        return RoxyCopycatsCompat.class.getClassLoader();
+    }
+
+    private static boolean canLoadMinecraft(ClassLoader loader) {
+        if (loader == null) return false;
+        try {
+            Class.forName("net.minecraft.client.Minecraft", false, loader);
+            return true;
+        } catch (ClassNotFoundException | LinkageError ignored) {
+            return false;
         }
     }
 

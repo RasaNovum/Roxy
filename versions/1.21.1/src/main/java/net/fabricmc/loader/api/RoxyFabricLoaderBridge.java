@@ -1,5 +1,8 @@
 package net.fabricmc.loader.api;
 
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import net.fabricmc.api.EnvType;
 import net.fabricmc.loader.api.metadata.CustomValue;
 import net.fabricmc.loader.api.metadata.ModMetadata;
@@ -7,26 +10,39 @@ import net.neoforged.fml.ModList;
 import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforgespi.language.IModInfo;
-import net.rasanovum.roxy.loader.RoxyFabricLoaderImpl;
 
+import java.io.FilterInputStream;
 import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.lang.reflect.InvocationTargetException;
+import java.net.URISyntaxException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.net.URISyntaxException;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 final class RoxyFabricLoaderBridge implements FabricLoader {
     static final RoxyFabricLoaderBridge INSTANCE = new RoxyFabricLoaderBridge();
+
+    private final Map<String, List<Object>> entrypointCache = new ConcurrentHashMap<>();
 
     private RoxyFabricLoaderBridge() {
     }
 
     @Override
     public boolean isModLoaded(String modId) {
+        if (modId == null) return false;
         ModList modList = ModList.get();
         return (modList != null && modList.isLoaded(modId))
-                || modId.equals("voxy");
+                || "voxy".equals(modId);
     }
 
     @Override
@@ -36,25 +52,125 @@ final class RoxyFabricLoaderBridge implements FabricLoader {
 
     @Override
     public Optional<ModContainer> getModContainer(String modId) {
+        if (modId == null) return Optional.empty();
         ModList modList = ModList.get();
         if (modList != null) {
             Optional<ModContainer> loaded = modList.getModContainerById(modId).map(RoxyModContainer::new);
             if (loaded.isPresent()) return loaded;
         }
-        if (!modId.equals("voxy")) return Optional.empty();
+        if (!"voxy".equals(modId)) return Optional.empty();
         return Optional.of(new DiskModContainer(
                 findVoxyFile().orElse(Path.of("voxy.jar"))
         ));
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     public <T> List<T> getEntrypoints(String key, Class<T> type) {
-        return RoxyFabricLoaderImpl.INSTANCE.getEntrypoints(key, type);
+        if (key == null || type == null) return List.of();
+        List<Object> instances = entrypointCache.computeIfAbsent(key, RoxyFabricLoaderBridge::instantiateEntrypoints);
+        List<T> result = new ArrayList<>();
+        for (Object instance : instances) {
+            if (type.isInstance(instance)) result.add((T) instance);
+        }
+        return List.copyOf(result);
     }
 
     @Override
     public Path getConfigDir() {
         return FMLPaths.CONFIGDIR.get();
+    }
+
+    private static List<Object> instantiateEntrypoints(String key) {
+        Path modFile = resolveVoxyModFile();
+        if (modFile == null) return List.of();
+
+        List<Object> instances = new ArrayList<>();
+        ClassLoader loader = Thread.currentThread().getContextClassLoader();
+        if (loader == null) loader = RoxyFabricLoaderBridge.class.getClassLoader();
+        for (String className : readEntrypointNames(modFile, key)) {
+            try {
+                Class<?> entrypointClass = Class.forName(className, true, loader);
+                instances.add(entrypointClass.getDeclaredConstructor().newInstance());
+            } catch (ReflectiveOperationException | LinkageError exception) {
+                Throwable cause = exception instanceof InvocationTargetException invocation
+                        && invocation.getCause() != null ? invocation.getCause() : exception;
+                if (cause instanceof Error error) throw error;
+                throw new RuntimeException("Roxy: unable to create Voxy " + key + " entrypoint " + className, cause);
+            }
+        }
+        return List.copyOf(instances);
+    }
+
+    private static Path resolveVoxyModFile() {
+        ModList modList = ModList.get();
+        if (modList != null) {
+            Path modFile = modList.getModContainerById("voxy")
+                    .map(container -> container.getModInfo().getOwningFile().getFile().getFilePath())
+                    .orElse(null);
+            if (modFile != null && Files.exists(modFile)) return modFile;
+        }
+        return findVoxyFile().orElse(null);
+    }
+
+    private static List<String> readEntrypointNames(Path modFile, String key) {
+        try (InputStream input = openEntry(modFile, "fabric.mod.json")) {
+            if (input == null) return List.of();
+            JsonObject metadata = JsonParser.parseReader(
+                    new InputStreamReader(input, StandardCharsets.UTF_8)
+            ).getAsJsonObject();
+            JsonObject entrypoints = metadata.getAsJsonObject("entrypoints");
+            if (entrypoints == null) return List.of();
+            JsonElement value = entrypoints.get(key);
+            if (value == null || !value.isJsonArray()) return List.of();
+
+            List<String> names = new ArrayList<>();
+            for (JsonElement entry : value.getAsJsonArray()) {
+                if (entry.isJsonPrimitive()) {
+                    names.add(entry.getAsString());
+                } else if (entry.isJsonObject()) {
+                    JsonElement className = entry.getAsJsonObject().get("value");
+                    if (className != null && className.isJsonPrimitive()) names.add(className.getAsString());
+                }
+            }
+            return names;
+        } catch (IOException | RuntimeException exception) {
+            return List.of();
+        }
+    }
+
+    private static InputStream openEntry(Path file, String name) throws IOException {
+        if (Files.isDirectory(file)) {
+            Path target = file.resolve(name);
+            return Files.isRegularFile(target) ? Files.newInputStream(target) : null;
+        }
+
+        ZipFile zip = new ZipFile(file.toFile());
+        try {
+            ZipEntry entry = zip.getEntry(name);
+            if (entry == null) {
+                zip.close();
+                return null;
+            }
+            InputStream input = zip.getInputStream(entry);
+            return new FilterInputStream(input) {
+                @Override
+                public void close() throws IOException {
+                    try {
+                        super.close();
+                    } finally {
+                        zip.close();
+                    }
+                }
+            };
+        } catch (IOException | RuntimeException exception) {
+            try {
+                zip.close();
+            } catch (IOException suppressed) {
+                exception.addSuppressed(suppressed);
+            }
+            throw exception;
+        }
     }
 
     private record RoxyModContainer(net.neoforged.fml.ModContainer delegate) implements ModContainer {
@@ -81,10 +197,10 @@ final class RoxyFabricLoaderBridge implements FabricLoader {
         public CustomValue getCustomValue(String key) {
             Object value = info.getModProperties().get(key);
             String string = value == null ? "" : value.toString();
-            if (key.equals("commit") && string.isBlank()) {
+            if ("commit".equals(key) && string.isBlank()) {
                 string = "roxycompat0000000000000000000000000000000";
             }
-            if (value == null && !key.equals("commit")) return null;
+            if (value == null && !"commit".equals(key)) return null;
             String result = string;
             return () -> result;
         }
@@ -114,7 +230,7 @@ final class RoxyFabricLoaderBridge implements FabricLoader {
 
         @Override
         public CustomValue getCustomValue(String key) {
-            return key.equals("commit")
+            return "commit".equals(key)
                     ? () -> "roxycompat0000000000000000000000000000000"
                     : null;
         }
@@ -123,6 +239,7 @@ final class RoxyFabricLoaderBridge implements FabricLoader {
     private static Optional<Path> findVoxyFile() {
         try {
             ClassLoader loader = Thread.currentThread().getContextClassLoader();
+            if (loader == null) loader = RoxyFabricLoaderBridge.class.getClassLoader();
             Class<?> voxy = Class.forName("me.cortex.voxy.commonImpl.VoxyCommon", false, loader);
             if (voxy.getProtectionDomain().getCodeSource() != null) {
                 Path codeSource = Path.of(voxy.getProtectionDomain().getCodeSource().getLocation().toURI());
@@ -147,7 +264,7 @@ final class RoxyFabricLoaderBridge implements FabricLoader {
                 Optional<Path> match = files
                         .filter(Files::isRegularFile)
                         .filter(path -> {
-                            String name = path.getFileName().toString().toLowerCase(java.util.Locale.ROOT);
+                            String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
                             return name.startsWith("voxy-") && name.endsWith(".jar");
                         })
                         .findFirst();
