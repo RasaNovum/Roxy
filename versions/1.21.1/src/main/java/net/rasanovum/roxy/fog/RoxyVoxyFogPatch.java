@@ -70,7 +70,8 @@ public final class RoxyVoxyFogPatch {
         extendedFogMode = 0;
         if (!noFluid) return;
         if (RoxyBetterFogCompat.available()) return;
-        if (originalStart < 0.0F || originalEnd < viewDistance - 0.01F) {
+        boolean fogMod = RoxyFogModCompat.fogActive();
+        if (shouldPreserveEnvironmentalBaseline(fogMod, originalStart, originalEnd, viewDistance)) {
             trace("preserved environmental baseline", originalStart, originalEnd, start, end, start, end, 0.0F);
             return;
         }
@@ -119,7 +120,6 @@ public final class RoxyVoxyFogPatch {
                         return;
                     }
                 }
-                boolean fogMod = RoxyFogModCompat.fogActive();
                 RoxyFogRange range = fogMod ? RoxyFogRange.extendModified(start, end, viewDistance, lodDistance)
                         : RoxyFogRange.extend(originalStart, originalEnd, originalShape, start, end, shape, viewDistance, lodDistance);
                 if (range != null && RoxyFogModCompat.supportedModPresent()) {
@@ -148,6 +148,15 @@ public final class RoxyVoxyFogPatch {
                 LOGGER.warn("Unable to apply the Roxy terrain fog range", exception);
             }
         }
+    }
+
+    static boolean shouldPreserveEnvironmentalBaseline(
+            boolean fogModActive,
+            float originalStart,
+            float originalEnd,
+            float viewDistance
+    ) {
+        return !fogModActive && (originalStart < 0.0F || originalEnd < viewDistance - 0.01F);
     }
 
     private static void trace(String result, float baselineStart, float baselineEnd, float eventStart,

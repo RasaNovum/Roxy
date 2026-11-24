@@ -196,7 +196,7 @@ public final class RoxyMappings {
                         members.add(new TinyMember(
                                 parts[0].equals("FIELD"),
                                 officialOwnerForMember,
-                                intermediaryOwnerForMember == null ? "" : intermediaryOwnerForMember,
+                                intermediaryOwnerForMember == null ? owner : intermediaryOwnerForMember,
                                 parts[2],
                                 parts[3],
                                 parts[4]
@@ -472,7 +472,7 @@ public final class RoxyMappings {
                 int arrow = line.indexOf(" -> ");
                 if (arrow <= 0) continue;
                 String moj = line.substring(0, arrow).strip();
-                String official = line.substring(arrow + 4, line.length() - 1).strip();
+                String official = line.substring(arrow + 4, line.length() - 1).strip().replace('.', '/');
                 result.mojToOfficial.put(moj, official);
                 result.officialToMojmap.put(official, moj.replace('.', '/'));
             }
@@ -484,7 +484,7 @@ public final class RoxyMappings {
                     int arrow = line.indexOf(" -> ");
                     if (arrow > 0) {
                         String moj = line.substring(0, arrow).strip();
-                        String official = line.substring(arrow + 4, line.length() - 1).strip();
+                        String official = line.substring(arrow + 4, line.length() - 1).strip().replace('.', '/');
                         current = new ClassEntry(moj, official);
                         continue;
                     }

@@ -18,7 +18,7 @@ plugins {
 }
 
 group = "net.rasanovum"
-version = "0.5.0"
+version = "0.5.0-d-1"
 
 val roxyZink = providers.gradleProperty("roxyZink").map(String::toBoolean).orElse(false)
 val macRuntime = providers.gradleProperty("roxyMacOSRuntime")
@@ -251,7 +251,7 @@ fun Project.registerRuntimeMappingsTask(mcVersion: String, intermediaryConfig: C
                 val arrow = line.indexOf(" -> ")
                 if (arrow <= 0) continue
                 val moj = line.substring(0, arrow).trim()
-                val official = line.substring(arrow + 4, line.length - 1).trim()
+                val official = line.substring(arrow + 4, line.length - 1).trim().replace('.', '/')
                 mojToOfficial[moj] = official
                 officialToMojmap[official] = moj.replace('.', '/')
             }
@@ -262,7 +262,7 @@ fun Project.registerRuntimeMappingsTask(mcVersion: String, intermediaryConfig: C
                 if (!line.startsWith(" ") && line.endsWith(":")) {
                     val arrow = line.indexOf(" -> ")
                     if (arrow > 0) {
-                        currentOfficial = line.substring(arrow + 4, line.length - 1).trim()
+                        currentOfficial = line.substring(arrow + 4, line.length - 1).trim().replace('.', '/')
                         continue
                     }
                 }
@@ -339,9 +339,7 @@ fun Project.registerRuntimeMappingsTask(mcVersion: String, intermediaryConfig: C
                                 oOwner = mojToOfficial[owner.replace('/', '.')] ?: owner
                                 iOwner = officialToIntermediary[oOwner]
                             }
-                            if (iOwner != null) {
-                                tinyMembers.add(TinyMember(parts[0] == "FIELD", oOwner, iOwner, parts[2], parts[3], parts[4]))
-                            }
+                            tinyMembers.add(TinyMember(parts[0] == "FIELD", oOwner, iOwner ?: owner, parts[2], parts[3], parts[4]))
                         }
                     }
                 }
