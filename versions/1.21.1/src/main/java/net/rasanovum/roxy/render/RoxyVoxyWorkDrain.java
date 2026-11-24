@@ -58,6 +58,10 @@ public final class RoxyVoxyWorkDrain {
         if (manager == activeManager) producing = true;
     }
 
+    public static synchronized void endProduction(Object manager) {
+        if (manager == activeManager) producing = false;
+    }
+
     public static synchronized void publishResult(Object manager) {
         if (manager != activeManager) return;
         producing = false;

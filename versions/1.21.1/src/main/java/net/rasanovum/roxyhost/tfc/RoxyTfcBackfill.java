@@ -53,7 +53,8 @@ public final class RoxyTfcBackfill {
     }
 
     public static synchronized void disable() {
-        if (!enabled && near.isEmpty() && far.isEmpty() && missing.isEmpty() && inFlight.isEmpty()) return;
+        if (!enabled && world == null && near.isEmpty() && far.isEmpty() && missing.isEmpty() && inFlight.isEmpty()) return;
+        world = null;
         epoch++;
         near.clear(); far.clear(); missing.clear(); inFlight.clear(); enabled = false;
     }

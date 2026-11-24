@@ -6,10 +6,16 @@ import net.rasanovum.roxy.tfc.TfcVoxyBridge;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
+import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
 import java.util.concurrent.ConcurrentHashMap;
@@ -19,6 +25,19 @@ import java.util.function.Consumer;
 
 public final class RoxyVoxyRenderPatch {
     private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
+    private static final ClassValue<MethodHandle> FREE_HANDLES = new ClassValue<>() {
+        @Override
+        protected MethodHandle computeValue(Class<?> type) {
+            try {
+                Method method = type.getMethod("free");
+                method.trySetAccessible();
+                return MethodHandles.lookup().unreflect(method)
+                        .asType(MethodType.methodType(void.class, Object.class));
+            } catch (ReflectiveOperationException exception) {
+                throw new IllegalStateException(exception);
+            }
+        }
+    };
     private static final AtomicLong WORLD_GENERATION = new AtomicLong();
     private static final AtomicLong REPAIR_SEQUENCE = new AtomicLong();
     private static final AtomicLong STALE_RESULT_COUNT = new AtomicLong();
@@ -378,36 +397,40 @@ public final class RoxyVoxyRenderPatch {
 
     public static void flushPendingRenderTasks() {
         synchronized (PUBLICATION_LOCK) {
-            int flushed = 0;
-            while (flushed < 32) {
-                Object renderGenerationService;
-                long world;
-                long position;
-                synchronized (RENDER_LOCK) {
-                    renderGenerationService = activeRenderGenerationService;
-                    if (renderGenerationService == null) return;
-                    PendingTaskKey pending = null;
-                    world = WORLD_GENERATION.get();
-                    for (PendingTaskKey candidate : PENDING_RENDER_TASKS.keySet()) {
-                        if (candidate.world == world) {
-                            pending = candidate;
-                            break;
-                        }
+            Object renderGenerationService;
+            long world;
+            List<Long> batch = new ArrayList<>(32);
+            synchronized (RENDER_LOCK) {
+                renderGenerationService = activeRenderGenerationService;
+                if (renderGenerationService == null) return;
+                world = WORLD_GENERATION.get();
+                Iterator<PendingTaskKey> iterator = PENDING_RENDER_TASKS.keySet().iterator();
+                int handled = 0;
+                while (handled < 32 && iterator.hasNext()) {
+                    PendingTaskKey candidate = iterator.next();
+                    if (candidate.world != world) {
+                        PENDING_RENDER_TASKS.remove(candidate);
+                        continue;
                     }
-                    if (pending == null || !PENDING_RENDER_TASKS.remove(pending)) return;
-                    position = pending.position;
+                    if (!PENDING_RENDER_TASKS.remove(candidate)) continue;
+                    long position = candidate.position;
                     TaskPositionKey positionKey = new TaskPositionKey(renderGenerationService, position);
                     if (hasInFlightTask(positionKey)) {
                         DIRTY_POSITIONS.put(positionKey, Boolean.TRUE);
-                        flushed++;
+                        handled++;
                         continue;
                     }
                     if (QUEUED_TASKS.containsKey(positionKey)) {
-                        flushed++;
+                        handled++;
                         continue;
                     }
+                    batch.add(position);
+                    handled++;
                 }
+            }
 
+            for (int index = 0; index < batch.size(); index++) {
+                long position = batch.get(index);
                 boolean enqueued = enqueueCurrentMesh(renderGenerationService, position);
                 synchronized (RENDER_LOCK) {
                     if (world == WORLD_GENERATION.get()
@@ -416,6 +439,11 @@ public final class RoxyVoxyRenderPatch {
                             QUEUED_TASKS.remove(new TaskPositionKey(renderGenerationService, position));
                         }
                         rememberPendingPositionLocked(position);
+                        if (!enqueued) {
+                            for (int remaining = index + 1; remaining < batch.size(); remaining++) {
+                                rememberPendingPositionLocked(batch.get(remaining));
+                            }
+                        }
                     } else if (enqueued) {
                         long count = REPLACED_TASK_REQUEUE_COUNT.incrementAndGet();
                         if (count <= 8 || count % 100 == 0) {
@@ -428,7 +456,6 @@ public final class RoxyVoxyRenderPatch {
                     }
                 }
                 if (!enqueued) return;
-                flushed++;
             }
         }
     }
@@ -436,9 +463,9 @@ public final class RoxyVoxyRenderPatch {
     @SuppressWarnings("unchecked")
     public static void acceptIfCurrent(Consumer<?> consumer, Object result) {
         TaskStamp taskStamp = TASK_STAMP.get();
+        boolean discard;
+        boolean requeue = false;
         synchronized (PUBLICATION_LOCK) {
-            boolean discard;
-            boolean requeue = false;
             synchronized (RENDER_LOCK) {
                 discard = !isCurrentTaskLocked(taskStamp) || !resultMatchesTask(taskStamp, result);
                 if (discard) {
@@ -465,28 +492,32 @@ public final class RoxyVoxyRenderPatch {
                 }
             }
 
-            if (discard) {
-                free(result);
-                if (requeue) requeue(taskStamp);
+            if (!discard) {
+                try {
+                    ((Consumer<Object>) consumer).accept(result);
+                    if (taskStamp != null && RoxyCompatConfig.tfcEnabled()) {
+                        TfcVoxyBridge.meshAccepted(taskStamp.position);
+                    }
+                } catch (RuntimeException | Error exception) {
+                    synchronized (RENDER_LOCK) {
+                        retainFailedTaskLocked(taskStamp);
+                    }
+                    throw exception;
+                } finally {
+                    boolean completionRequeue;
+                    synchronized (RENDER_LOCK) {
+                        completionRequeue = finishRenderTaskLocked(taskStamp);
+                    }
+                    if (completionRequeue) requeue(taskStamp);
+                }
                 return;
             }
+        }
 
-            try {
-                ((Consumer<Object>) consumer).accept(result);
-                if (taskStamp != null && RoxyCompatConfig.tfcEnabled()) {
-                    TfcVoxyBridge.meshAccepted(taskStamp.position);
-                }
-            } catch (RuntimeException | Error exception) {
-                synchronized (RENDER_LOCK) {
-                    retainFailedTaskLocked(taskStamp);
-                }
-                throw exception;
-            } finally {
-                boolean completionRequeue;
-                synchronized (RENDER_LOCK) {
-                    completionRequeue = finishRenderTaskLocked(taskStamp);
-                }
-                if (completionRequeue) requeue(taskStamp);
+        free(result);
+        if (requeue) {
+            synchronized (PUBLICATION_LOCK) {
+                requeue(taskStamp);
             }
         }
     }
@@ -582,7 +613,7 @@ public final class RoxyVoxyRenderPatch {
         boolean queued = QUEUED_TASKS.containsKey(positionKey);
         boolean dirty = DIRTY_POSITIONS.remove(positionKey) != null;
         if (!queued && !dirty && !hasPendingTaskLocked(positionKey)) {
-            LATEST_EPOCHS.remove(positionKey, taskStamp.epoch);
+            LATEST_EPOCHS.remove(positionKey);
         }
         return dirty && !queued;
     }
@@ -594,7 +625,12 @@ public final class RoxyVoxyRenderPatch {
                 new TaskKey(taskStamp.renderGenerationService, taskStamp.position, taskStamp.task),
                 taskStamp.state
         )) decrementInFlight(positionKey);
-        if (!hasInFlightTask(positionKey)) DIRTY_POSITIONS.remove(positionKey);
+        if (!hasInFlightTask(positionKey)) {
+            DIRTY_POSITIONS.remove(positionKey);
+            if (!QUEUED_TASKS.containsKey(positionKey) && !hasPendingTaskLocked(positionKey)) {
+                LATEST_EPOCHS.remove(positionKey);
+            }
+        }
     }
 
     private static boolean hasInFlightTask(TaskPositionKey positionKey) {
@@ -608,11 +644,7 @@ public final class RoxyVoxyRenderPatch {
     }
 
     private static boolean hasPendingTaskLocked(TaskPositionKey positionKey) {
-        long world = WORLD_GENERATION.get();
-        for (PendingTaskKey pending : PENDING_RENDER_TASKS.keySet()) {
-            if (pending.world == world && pending.position == positionKey.position) return true;
-        }
-        return false;
+        return PENDING_RENDER_TASKS.containsKey(new PendingTaskKey(WORLD_GENERATION.get(), positionKey.position));
     }
 
     private static long taskPosition(Object task) throws ReflectiveOperationException {
@@ -859,10 +891,14 @@ public final class RoxyVoxyRenderPatch {
     private static void free(Object result) {
         if (result == null) return;
         try {
-            Method method = result.getClass().getMethod("free");
-            method.setAccessible(true);
-            method.invoke(result);
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+            FREE_HANDLES.get(result.getClass()).invokeExact(result);
+        } catch (Error error) {
+            if (error instanceof LinkageError) {
+                LOGGER.warn("Unable to free a discarded Voxy render result", error);
+                return;
+            }
+            throw error;
+        } catch (Throwable exception) {
             LOGGER.warn("Unable to free a discarded Voxy render result", exception);
         }
     }

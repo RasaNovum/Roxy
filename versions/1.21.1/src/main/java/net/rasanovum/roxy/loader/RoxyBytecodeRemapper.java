@@ -4512,6 +4512,16 @@ public final class RoxyBytecodeRemapper {
                         @Override
                         public void visitInsn(int opcode) {
                             sawZero = opcode == Opcodes.ICONST_0;
+                            if (opcode == Opcodes.RETURN || opcode == Opcodes.ATHROW) {
+                                super.visitVarInsn(Opcodes.ALOAD, 0);
+                                super.visitMethodInsn(
+                                        Opcodes.INVOKESTATIC,
+                                        "net/rasanovum/roxy/render/RoxyVoxyWorkDrain",
+                                        "endProduction",
+                                        "(Ljava/lang/Object;)V",
+                                        false
+                                );
+                            }
                             super.visitInsn(opcode);
                         }
 
@@ -4534,6 +4544,7 @@ public final class RoxyBytecodeRemapper {
 
                         @Override
                         public void visitJumpInsn(int opcode, Label label) {
+                            boolean clearOnCasFailure = false;
                             if (workCounterDecremented && opcode == Opcodes.IFNE && productionStart == null) {
                                 productionStart = label;
                                 workCounterDecremented = false;
@@ -4545,8 +4556,19 @@ public final class RoxyBytecodeRemapper {
                             if (publicationPending && opcode == Opcodes.IFNE) {
                                 publicationPending = false;
                                 publicationSuccess = label;
+                                clearOnCasFailure = true;
                             }
                             super.visitJumpInsn(opcode, label);
+                            if (clearOnCasFailure) {
+                                super.visitVarInsn(Opcodes.ALOAD, 0);
+                                super.visitMethodInsn(
+                                        Opcodes.INVOKESTATIC,
+                                        "net/rasanovum/roxy/render/RoxyVoxyWorkDrain",
+                                        "endProduction",
+                                        "(Ljava/lang/Object;)V",
+                                        false
+                                );
+                            }
                         }
 
                         @Override

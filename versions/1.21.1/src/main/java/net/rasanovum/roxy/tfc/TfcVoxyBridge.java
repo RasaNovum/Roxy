@@ -84,7 +84,9 @@ public final class TfcVoxyBridge {
             if(!(boolean)api.available.invoke(null,factory.getClass().getClassLoader()))return mappings;
             int[] expanded=Arrays.copyOf(mappings,FIRST_VARIANT+MAX_VARIANTS);
             Arrays.fill(expanded,FIRST_VARIANT,expanded.length,-1);
-            active=new Factory(factory,expanded,api.level.invoke(null));
+            Object currentLevel=api.level.invoke(null);
+            ensureWorld(currentLevel);
+            active=new Factory(factory,expanded,currentLevel);
             compatWasEnabled=true;
             REFRESH.reset();
             forceMeshes=false;progressWasWorking=false;
@@ -467,9 +469,12 @@ public final class TfcVoxyBridge {
     }
 
     private static void trackUnknown(Factory factory,long chunk,long section) {
-        if(factory.unknown.size()>=MAX_CONTEXTS)return;
-        Set<Long> sections=factory.unknown.computeIfAbsent(chunk,ignored->ConcurrentHashMap.newKeySet());
-        if(sections.size()<64)sections.add(section);
+        if(factory.unknown.size()>=MAX_CONTEXTS && !factory.unknown.containsKey(chunk))return;
+        factory.unknown.compute(chunk,(key,sections)->{
+            Set<Long> set=sections!=null?sections:ConcurrentHashMap.newKeySet();
+            if(set.size()<64)set.add(section);
+            return set;
+        });
     }
 
     private static void deferNear(Factory factory,Cell cell,Object state,long section) {
@@ -521,19 +526,25 @@ public final class TfcVoxyBridge {
     }
 
     private static void addChunkIndex(Factory factory,Entry entry) {
-        factory.byChunk.computeIfAbsent(TfcClimateStore.key(entry.cell.x,entry.cell.z),key->ConcurrentHashMap.newKeySet()).add(entry);
+        factory.byChunk.compute(TfcClimateStore.key(entry.cell.x,entry.cell.z),(key,entries)->{
+            Set<Entry> set=entries!=null?entries:ConcurrentHashMap.newKeySet();
+            set.add(entry);
+            return set;
+        });
     }
 
     private static void removeChunkIndex(Factory factory,Entry entry) {
         long chunk=TfcClimateStore.key(entry.cell.x,entry.cell.z);
-        var entries=factory.byChunk.get(chunk);
-        if(entries!=null) {
+        boolean[] emptied=new boolean[1];
+        factory.byChunk.computeIfPresent(chunk,(key,entries)->{
             entries.remove(entry);
             if(entries.isEmpty()) {
-                factory.byChunk.remove(chunk,entries);
-                if(removedProgressSet.add(chunk))removedProgressChunks.add(chunk);
+                emptied[0]=true;
+                return null;
             }
-        }
+            return entries;
+        });
+        if(emptied[0] && removedProgressSet.add(chunk))removedProgressChunks.add(chunk);
     }
 
     private static void resetAdmissionScan(Factory factory) {
@@ -631,7 +642,6 @@ public final class TfcVoxyBridge {
         copy.nativeModel=source.nativeModel;
         copy.variant=source.variant;
         copy.appearance=source.appearance;
-        if(copy.variant!=null)copy.variant.entries.add(copy);
         copy.needsRefresh=source.needsRefresh;
         int count=0;
         for(long section:source.sections) {
@@ -643,9 +653,10 @@ public final class TfcVoxyBridge {
     }
 
     private static Entry evictContext(Factory factory,Entry victim) {
-        Entry copy=evictedCopy(victim);
+        Entry copy;
         synchronized(factory.contexts) {
             if(!factory.contexts.remove(victim.cell,victim))return null;
+            copy=evictedCopy(victim);
         }
         removeChunkIndex(factory,victim);
         cancelQueued(factory,victim);
@@ -704,15 +715,19 @@ public final class TfcVoxyBridge {
             Entry victim=factory.evictionBest;
             synchronized(factory.contexts) {
                 Entry copy=evictContext(factory,victim);
-                if(copy!=null && promoteDeferred(factory,target)) {
+                if(copy!=null) {
+                    boolean promoted=promoteDeferred(factory,target);
                     synchronized(factory.deferred) {
                         copy.deferred=true;
                         factory.deferred.put(copy.cell,copy);
+                        if(copy.variant!=null)copy.variant.entries.add(copy);
                         addChunkIndex(factory,copy);
                         factory.deferredFarthest=null;
                     }
-                    resetAdmissionScan(factory);
-                    return;
+                    if(promoted) {
+                        resetAdmissionScan(factory);
+                        return;
+                    }
                 }
             }
         }
@@ -883,10 +898,10 @@ public final class TfcVoxyBridge {
             if(factory.unknownScan!=null)for(int i=0;i<128;i++) {
                 if(!factory.unknownScan.hasNext()){factory.unknownScan=null;break;}
                 var unknown=factory.unknownScan.next();long chunk=unknown.getKey();
-                if(!withinRadius((int)(chunk>>32),(int)chunk)) {factory.unknown.remove(chunk,unknown.getValue());continue;}
+                if(!withinRadius((int)(chunk>>32),(int)chunk)) {factory.unknown.remove(chunk);continue;}
                 if(climate.contains((int)(chunk>>32),(int)chunk)) {
-                    for(long key:unknown.getValue())REFRESH.request(key);
-                    factory.unknown.remove(chunk,unknown.getValue());
+                    Set<Long> sections=factory.unknown.remove(chunk);
+                    if(sections!=null)for(long key:sections)REFRESH.request(key);
                 } else adapter.requestClimate.invoke(null,level,(int)(chunk>>32),(int)chunk);
             }
             if(factory.fallbackSweep==null)factory.fallbackSweep=factory.fallbacks.values().iterator();
@@ -961,7 +976,7 @@ public final class TfcVoxyBridge {
     public static synchronized boolean updateEnabledState(Object level) {
         boolean enabled=TfcCompatConfig.enabled();
         compatFastEnabled=enabled;
-        if(enabled)ensureWorld(level);
+        if(enabled || level==null)ensureWorld(level);
         if(!configSeen) {
             configSeen=true;
             if(!enabled && compatWasEnabled) {
@@ -1093,7 +1108,7 @@ public final class TfcVoxyBridge {
         }
         if(!progressScan.hasNext())progressScan=null;
         int pending=REFRESH.pendingCount();
-        boolean working=forceMeshes||sweep!=null||dirtyNext!=null||!dirtyChunks.isEmpty()||!factory.queue.isEmpty()||!factory.farQueue.isEmpty()||!factory.fallbackQueue.isEmpty()||!factory.waiting.isEmpty()||hasNearDeferred(factory)||pending>0||progressDone<progressChunks.size();
+        boolean working=forceMeshes||sweep!=null||dirtyNext!=null||!dirtyChunks.isEmpty()||!factory.queue.isEmpty()||!factory.farQueue.isEmpty()||!factory.fallbackQueue.isEmpty()||!factory.waiting.isEmpty()||!factory.orphanedRefreshes.isEmpty()||hasNearDeferred(factory)||pending>0||progressDone<progressChunks.size();
         progress=new long[]{revision,progressDone,progressChunks.size(),factory.unknown.size(),working?1:0,(System.nanoTime()-progressStarted)/1_000_000,pending,
                 progressScan==null?1:0};
         if(progressWasWorking&&!working)LOG.debug("TFC LoD refresh queues drained: revision={}, sampled chunks={}/{}, unavailable climate={}, submitted={}, accepted={}, changed={}, unchanged={}",
@@ -1139,6 +1154,14 @@ public final class TfcVoxyBridge {
         } catch(ReflectiveOperationException | RuntimeException failure) { warn(failure);return false; }
     }
 
+    private static void rollbackAddedVariant(Factory factory,Appearance key,GeometryFamily family,List<Variant> familyList,Variant variant) {
+        factory.palette.remove(key,variant);
+        familyList.remove(variant);
+        if(familyList.isEmpty())factory.families.remove(family,familyList);
+        int lastIndex=factory.variants.size()-1;
+        if(lastIndex>=0 && factory.variants.get(lastIndex)==variant)factory.variants.remove(lastIndex);
+    }
+
     private static void evaluate(Factory factory,Entry entry) throws ReflectiveOperationException {
         if(!outdated(entry) || entry.retired || factory!=active || desiredCalendar==null)return;
         float[] snapshot=entry.fallback?null:climate.get(entry.cell.x,entry.cell.z);
@@ -1165,10 +1188,22 @@ public final class TfcVoxyBridge {
                 try {
                     variant=new Variant(entry.state,appearance[0],colour0,colour1,FIRST_VARIANT+factory.variants.size(),
                             ++factory.nextVariantGeneration,revision,entry.nativeModel);
+                    List<Variant> familyList=factory.families.computeIfAbsent(family,ignored->new CopyOnWriteArrayList<>());
                     factory.variants.add(variant);
-                    factory.families.computeIfAbsent(family,ignored->new CopyOnWriteArrayList<>()).add(variant);
+                    familyList.add(variant);
                     factory.palette.put(key,variant);
-                    factory.add.invoke(factory.owner,variant.request);
+                    boolean added;
+                    try {
+                        added=!Boolean.FALSE.equals(factory.add.invoke(factory.owner,variant.request));
+                    } catch(ReflectiveOperationException | RuntimeException failure) {
+                        rollbackAddedVariant(factory,key,family,familyList,variant);
+                        throw failure;
+                    }
+                    if(!added) {
+                        rollbackAddedVariant(factory,key,family,familyList,variant);
+                        enqueue(factory,entry);
+                        return;
+                    }
                     LockSupport.unpark(factory.worker);
                 } finally { factory.enqueue.unlock(); }
             } else {
@@ -1303,6 +1338,10 @@ public final class TfcVoxyBridge {
     private static void processRecolors(Factory factory) {
         int enqueueAttempts=0;
         int requests=128;
+        while(requests>0 && !factory.orphanedRefreshes.isEmpty()) {
+            REFRESH.request(factory.orphanedRefreshes.removeFirst());
+            requests--;
+        }
         for(RecolorPlan plan:new ArrayList<>(factory.pendingByRequest.values())) {
             if(plan.replacement.revision!=revision && !plan.queued && !plan.uploading) {
                 cancelRecolor(factory,plan);
@@ -1312,6 +1351,7 @@ public final class TfcVoxyBridge {
                 REFRESH.request(plan.refreshSections.get(plan.requested++));
                 requests--;
             }
+            if(plan.requested<plan.refreshSections.size())continue;
             if(plan.queued || plan.uploading || enqueueAttempts>=4)continue;
             enqueueAttempts++;
             factory.recolorEnqueueAttempts++;
@@ -1400,6 +1440,9 @@ public final class TfcVoxyBridge {
     }
 
     private static void restorePlanEntries(Factory factory,RecolorPlan plan) {
+        while(plan.requested<plan.refreshSections.size()) {
+            factory.orphanedRefreshes.addLast(plan.refreshSections.get(plan.requested++));
+        }
         Variant previous=plan.previous,replacement=plan.replacement;
         boolean stale=plan.replacement.revision!=revision;
         List<Variant> family=factory.families.get(previous.family);
@@ -1433,11 +1476,16 @@ public final class TfcVoxyBridge {
                 retireEntry(entry);
                 factory.contexts.remove(entry.cell,entry);
                 long chunk=TfcClimateStore.key(entry.cell.x,entry.cell.z);
-                var entries=factory.byChunk.get(chunk);
-                if(entries!=null) {
+                boolean[] emptied=new boolean[1];
+                factory.byChunk.computeIfPresent(chunk,(key,entries)->{
                     entries.remove(entry);
-                    if(entries.isEmpty()){factory.byChunk.remove(chunk,entries);removeProgressChunk(chunk);}
-                }
+                    if(entries.isEmpty()) {
+                        emptied[0]=true;
+                        return null;
+                    }
+                    return entries;
+                });
+                if(emptied[0])removeProgressChunk(chunk);
             }
         }
         if(!pruning.hasNext())pruning=null;
@@ -1496,6 +1544,7 @@ public final class TfcVoxyBridge {
             }
             factory.fallbackSweep=null;factory.unknownScan=null;
             factory.waiting.clear();
+            factory.orphanedRefreshes.clear();
         }
         progress=new long[8];progressScan=null;progressChunks.clear();progressDone=0;clearRemovedProgress();
         forceMeshes=false;sweep=null;sweepOrder=List.of();sweepDirty=false;lastSweepRebuildTick=Long.MIN_VALUE;sweepNext=null;dirtyEntries=null;dirtyNext=null;pruning=null;
@@ -1686,6 +1735,7 @@ public final class TfcVoxyBridge {
         final Map<GeometryFamily,RecolorPlan> pendingByFamily=new ConcurrentHashMap<>();
         final Map<Integer,Variant> modelIdOwners=new ConcurrentHashMap<>();
         final ConcurrentLinkedDeque<Entry> waiting=new ConcurrentLinkedDeque<>();
+        final ArrayDeque<Long> orphanedRefreshes=new ArrayDeque<>();
         final Object paletteLock=new Object();
         final Queue<Runnable> clientActions=new ConcurrentLinkedQueue<>();
         final Set<Integer> uploaded=ConcurrentHashMap.newKeySet();

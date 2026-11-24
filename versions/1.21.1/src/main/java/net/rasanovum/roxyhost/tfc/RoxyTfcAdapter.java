@@ -51,8 +51,8 @@ public final class RoxyTfcAdapter {
     private static Method chunkPosition;
     private static Method climateModel;
     private static Class<?> overworldClimate;
-    private static boolean snapshotHookInstalled;
-    private static boolean calendarHookInstalled;
+    private static volatile boolean snapshotHookInstalled;
+    private static volatile boolean calendarHookInstalled;
 
     private RoxyTfcAdapter() {}
 

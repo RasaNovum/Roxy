@@ -1,9 +1,13 @@
 package net.rasanovum.roxy.patch;
 
+import net.rasanovum.roxy.render.RoxyVoxyWorkDrain;
 import net.rasanovum.roxy.shader.RoxyVoxyRequestShader;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Map;
@@ -30,11 +34,36 @@ public final class RoxyVoxyRequestPatch {
     private static final long SWEEP_INTERVAL_NANOS = 2_000_000_000L;
     private static final ConcurrentMap<Class<?>, NodeAccess> NODE_ACCESS = new ConcurrentHashMap<>();
     private static final ConcurrentMap<Class<?>, AsyncAccess> ASYNC_ACCESS = new ConcurrentHashMap<>();
-    private static final ConcurrentMap<Class<?>, Method> MAP_PUT = new ConcurrentHashMap<>();
-    private static final ConcurrentMap<Class<?>, Method> WATCHER_GET = new ConcurrentHashMap<>();
-    private static final ConcurrentMap<Class<?>, Method> WATCHER_WATCH = new ConcurrentHashMap<>();
-    private static final ConcurrentMap<Class<?>, Method> REQUEST_POSITION = new ConcurrentHashMap<>();
-    private static final ConcurrentMap<Class<?>, Method> PROCESS_REQUEST = new ConcurrentHashMap<>();
+    private static final ClassValue<MethodHandle> MAP_PUT = new ClassValue<>() {
+        @Override
+        protected MethodHandle computeValue(Class<?> type) {
+            return resolveHandle(type, "put", MethodType.methodType(int.class, Object.class, long.class, int.class), long.class, int.class);
+        }
+    };
+    private static final ClassValue<MethodHandle> WATCHER_GET = new ClassValue<>() {
+        @Override
+        protected MethodHandle computeValue(Class<?> type) {
+            return resolveHandle(type, "get", MethodType.methodType(int.class, Object.class, long.class), long.class);
+        }
+    };
+    private static final ClassValue<MethodHandle> WATCHER_WATCH = new ClassValue<>() {
+        @Override
+        protected MethodHandle computeValue(Class<?> type) {
+            return resolveHandle(type, "watch", MethodType.methodType(boolean.class, Object.class, long.class, int.class), long.class, int.class);
+        }
+    };
+    private static final ClassValue<MethodHandle> REQUEST_POSITION = new ClassValue<>() {
+        @Override
+        protected MethodHandle computeValue(Class<?> type) {
+            return resolveHandle(type, "getPosition", MethodType.methodType(long.class, Object.class));
+        }
+    };
+    private static final ClassValue<MethodHandle> PROCESS_REQUEST = new ClassValue<>() {
+        @Override
+        protected MethodHandle computeValue(Class<?> type) {
+            return resolveHandle(type, "processRequest", MethodType.methodType(void.class, Object.class, long.class), long.class);
+        }
+    };
     private static final ConcurrentMap<Object, ConcurrentMap<Long, Long>> PENDING = new ConcurrentHashMap<>();
     private static final Map<Object, Long> ASYNC_GENERATIONS = new WeakHashMap<>();
     private static final Object MANAGER_LOCK = new Object();
@@ -83,6 +112,9 @@ public final class RoxyVoxyRequestPatch {
     public static void registerAsyncNodeManager(Object asyncNodeManager) {
         if (asyncNodeManager == null) return;
         synchronized (MANAGER_LOCK) {
+            if (activeAsyncNodeManager != asyncNodeManager) {
+                PENDING.clear();
+            }
             long generation = REQUEST_GENERATION.get();
             ASYNC_GENERATIONS.put(asyncNodeManager, generation);
             activeAsyncNodeManager = asyncNodeManager;
@@ -93,6 +125,7 @@ public final class RoxyVoxyRequestPatch {
     public static void defer(Object nodeManager, long position) {
         if (nodeManager == null) return;
         synchronized (MANAGER_LOCK) {
+            if (managerRegistrationRequired) return;
             WatchdogState state = watchdogState;
             if (state != null && state.nodeManager != nodeManager) return;
             ConcurrentMap<Long, Long> pending = PENDING.computeIfAbsent(
@@ -126,16 +159,14 @@ public final class RoxyVoxyRequestPatch {
             if (!pending.remove(position, generation)) return;
         }
         try {
-            Method processRequest = PROCESS_REQUEST.computeIfAbsent(
-                    nodeManager.getClass(),
-                    RoxyVoxyRequestPatch::resolveProcessRequest
-            );
+            MethodHandle processRequest = PROCESS_REQUEST.get(nodeManager.getClass());
             long count = RETRIED.incrementAndGet();
             if (count <= 8 || count % 100 == 0) {
                 LOGGER.debug("Retried deferred Voxy node request at {} ({} total)", position, count);
             }
-            processRequest.invoke(nodeManager, position);
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+            processRequest.invokeExact(nodeManager, position);
+        } catch (Throwable exception) {
+            rethrowNonLinkageError(exception);
             synchronized (MANAGER_LOCK) {
                 WatchdogState state = watchdogState;
                 if (REQUEST_GENERATION.get() == generation
@@ -154,6 +185,7 @@ public final class RoxyVoxyRequestPatch {
 
     public static void processAsync(Object asyncNodeManager) {
         if (asyncNodeManager == null) return;
+        RoxyVoxyWorkDrain.endProduction(asyncNodeManager);
         try {
             WatchdogState state;
             long generation;
@@ -169,16 +201,18 @@ public final class RoxyVoxyRequestPatch {
                 state = watchdogState;
                 if (state == null || state.asyncNodeManager != asyncNodeManager) {
                     AsyncAccess async = asyncAccess(asyncNodeManager);
-                    Object nodeManager = async.manager.get(asyncNodeManager);
+                    Object nodeManager = async.manager.invokeExact(asyncNodeManager);
                     if (nodeManager == null) return;
+                    Thread thread = (Thread) async.thread.invokeExact(asyncNodeManager);
                     state = new WatchdogState(
                             asyncNodeManager,
                             nodeManager,
-                            (Thread) async.thread.get(asyncNodeManager),
+                            thread,
                             async.nodeAccess,
                             new SweepState()
                     );
                     watchdogState = state;
+                    PENDING.keySet().removeIf(key -> key != nodeManager);
                     LOGGER.info("Voxy request-state watchdog active");
                     initialized = true;
                 }
@@ -191,7 +225,8 @@ public final class RoxyVoxyRequestPatch {
             if (now < state.sweep.nextSweepAt) return;
             state.sweep.nextSweepAt = now + SWEEP_INTERVAL_NANOS;
             if (sweep(state, state.sweep)) state.sweep.maintenanceChanged = true;
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+        } catch (Throwable exception) {
+            rethrowNonLinkageError(exception);
             logAccessFailure("Voxy request-state watchdog is unavailable", exception);
         }
     }
@@ -223,19 +258,22 @@ public final class RoxyVoxyRequestPatch {
     public static void processGpuRequest(Object nodeManager, long position) {
         if (RoxyVoxyRequestShader.retriesEnabled()) try {
             NodeAccess access = nodeAccess(nodeManager);
-            int encoded = (int) access.mapGet.invoke(access.activeSectionMap.get(nodeManager), position);
+            Object map = access.activeSectionMap.invokeExact(nodeManager);
+            int encoded = (int) access.mapGet.invokeExact(map, position);
             if (encoded == -1 || isRequestEntry(encoded)) return;
             int nodeId = encoded & NODE_ID_MASK;
-            Object nodeData = access.nodeData.get(nodeManager);
-            if ((boolean) access.nodeIsRequestInFlight.invoke(nodeData, nodeId)
+            Object nodeData = access.nodeData.invokeExact(nodeManager);
+            if ((boolean) access.nodeIsRequestInFlight.invokeExact(nodeData, nodeId)
                     && repairInFlightRequest(nodeManager, position, nodeId)) return;
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+        } catch (Throwable exception) {
+            rethrowNonLinkageError(exception);
             logAccessFailure("Unable to inspect a repeated Voxy GPU request", exception);
         }
         try {
-            PROCESS_REQUEST.computeIfAbsent(nodeManager.getClass(), RoxyVoxyRequestPatch::resolveProcessRequest)
-                    .invoke(nodeManager, position);
-        } catch (ReflectiveOperationException exception) {
+            PROCESS_REQUEST.get(nodeManager.getClass()).invokeExact(nodeManager, position);
+        } catch (RuntimeException | Error exception) {
+            throw exception;
+        } catch (Throwable exception) {
             throw new IllegalStateException("Unable to process a Voxy GPU request", exception);
         }
     }
@@ -243,14 +281,16 @@ public final class RoxyVoxyRequestPatch {
     public static boolean repairInFlightRequest(Object nodeManager, long position, int nodeId) {
         try {
             NodeAccess access = nodeAccess(nodeManager);
-            Object nodeData = access.nodeData.get(nodeManager);
-            int requestId = (int) access.nodeGetRequest.invoke(nodeData, nodeId);
+            Object nodeData = access.nodeData.invokeExact(nodeManager);
+            int requestId = (int) access.nodeGetRequest.invokeExact(nodeData, nodeId);
             if (requestId == REQUEST_ID_MASK) return false;
-            Object request = access.childGetOrNull.invoke(access.childRequests.get(nodeManager), requestId);
+            Object childRequests = access.childRequests.invokeExact(nodeManager);
+            Object request = access.childGetOrNull.invokeExact(childRequests, requestId);
             if (request != null && isLiveRequest(nodeManager, access, position, requestId, request)) return true;
             clearStaleRequest(nodeManager, access, position, nodeId, requestId, true);
             return false;
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+        } catch (Throwable exception) {
+            rethrowNonLinkageError(exception);
             logCleanupFailure("Unable to repair a stranded Voxy request", exception);
             return true;
         }
@@ -263,14 +303,15 @@ public final class RoxyVoxyRequestPatch {
     public static void verifyNodeState(Object nodeManager, long position) {
         try {
             NodeAccess access = nodeAccess(nodeManager);
-            Object map = access.activeSectionMap.get(nodeManager);
-            int encoded = (int) access.mapGet.invoke(map, position);
+            Object map = access.activeSectionMap.invokeExact(nodeManager);
+            int encoded = (int) access.mapGet.invokeExact(map, position);
             if (encoded == -1 || (encoded & NODE_TYPE_MASK) == NODE_TYPE_REQUEST) return;
             int nodeId = encoded & NODE_ID_MASK;
-            Object nodeData = access.nodeData.get(nodeManager);
-            boolean inFlight = (boolean) access.nodeIsRequestInFlight.invoke(nodeData, nodeId);
+            Object nodeData = access.nodeData.invokeExact(nodeManager);
+            boolean inFlight = (boolean) access.nodeIsRequestInFlight.invokeExact(nodeData, nodeId);
             if (inFlight) repairInFlightRequest(nodeManager, position, nodeId);
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+        } catch (Throwable exception) {
+            rethrowNonLinkageError(exception);
             logAccessFailure("Unable to verify Voxy request state", exception);
         }
     }
@@ -292,11 +333,12 @@ public final class RoxyVoxyRequestPatch {
                 clearPending(nodeManager, request.position);
                 cleanupRequest(nodeManager, access, request.position, request.requestId, false);
             }
-            Object nodeData = access.nodeData.get(nodeManager);
-            access.nodeSetRequest.invoke(nodeData, nodeId, REQUEST_ID_MASK);
-            access.invalidateNode.invoke(nodeManager, nodeId);
+            Object nodeData = access.nodeData.invokeExact(nodeManager);
+            access.nodeSetRequest.invokeExact(nodeData, nodeId, REQUEST_ID_MASK);
+            access.invalidateNode.invokeExact(nodeManager, nodeId);
             LOGGER.warn("Recovered a failed Voxy leaf request and left it eligible for retry", failure);
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+        } catch (Throwable exception) {
+            rethrowNonLinkageError(exception);
             logCleanupFailure("Unable to roll back a failed Voxy leaf request", exception);
         } finally {
             LEAF_REQUEST.remove();
@@ -305,63 +347,67 @@ public final class RoxyVoxyRequestPatch {
 
     public static int putChildMapping(Object map, long position, int value) {
         try {
-            Method put = MAP_PUT.computeIfAbsent(map.getClass(), RoxyVoxyRequestPatch::resolveMapPut);
-            int previous = (int) put.invoke(map, position, value);
+            MethodHandle put = MAP_PUT.get(map.getClass());
+            int previous = (int) put.invokeExact(map, position, value);
             if (previous != -1) {
-                put.invoke(map, position, previous);
+                int ignored = (int) put.invokeExact(map, position, previous);
                 if (previous == value) return -1;
             }
             return previous;
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+        } catch (Throwable exception) {
+            rethrowNonLinkageError(exception);
             logAccessFailure("Unable to preserve a Voxy active-map collision", exception);
+            if (exception instanceof RuntimeException runtime) throw runtime;
             throw new IllegalStateException("Unable to preserve a Voxy active-map collision", exception);
         }
     }
 
     public static boolean watchChild(Object watcher, long position, int flags) {
         try {
-            Method get = WATCHER_GET.computeIfAbsent(watcher.getClass(), RoxyVoxyRequestPatch::resolveWatcherGet);
-            int current = (int) get.invoke(watcher, position);
+            MethodHandle get = WATCHER_GET.get(watcher.getClass());
+            int current = (int) get.invokeExact(watcher, position);
             if ((current & flags) == flags) return true;
-            Method watch = WATCHER_WATCH.computeIfAbsent(watcher.getClass(), RoxyVoxyRequestPatch::resolveWatcherWatch);
-            return (boolean) watch.invoke(watcher, position, flags);
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+            MethodHandle watch = WATCHER_WATCH.get(watcher.getClass());
+            return (boolean) watch.invokeExact(watcher, position, flags);
+        } catch (Throwable exception) {
+            rethrowNonLinkageError(exception);
             logAccessFailure("Unable to update a Voxy section watcher", exception);
             return false;
         }
     }
 
-    private static boolean sweep(WatchdogState target, SweepState state)
-            throws ReflectiveOperationException {
+    private static boolean sweep(WatchdogState target, SweepState state) throws Throwable {
         if (watchdogState != target) return false;
         Object nodeManager = target.nodeManager;
         NodeAccess access = target.nodeAccess;
-        Object nodeData = access.nodeData.get(nodeManager);
-        int end = (int) access.nodeEnd.invoke(nodeData);
+        Object nodeData = access.nodeData.invokeExact(nodeManager);
+        int end = (int) access.nodeEnd.invokeExact(nodeData);
         if (end <= 0) {
             state.cursor = 0;
             return false;
         }
 
+        Object childRequests = access.childRequests.invokeExact(nodeManager);
         int repaired = 0;
         for (int scanned = 0; scanned < Math.min(end, SWEEP_SLICE); scanned++) {
             if (watchdogState != target) return repaired > 0;
             if (state.cursor >= end) state.cursor = 0;
             int nodeId = state.cursor++;
-            if (!(boolean) access.nodeExists.invoke(nodeData, nodeId)) continue;
-            if (!(boolean) access.nodeIsRequestInFlight.invoke(nodeData, nodeId)) continue;
-            long position = (long) access.nodePosition.invoke(nodeData, nodeId);
+            if (!(boolean) access.nodeExists.invokeExact(nodeData, nodeId)) continue;
+            if (!(boolean) access.nodeIsRequestInFlight.invokeExact(nodeData, nodeId)) continue;
+            long position = (long) access.nodePosition.invokeExact(nodeData, nodeId);
             if (position == -1L) continue;
-            int requestId = (int) access.nodeGetRequest.invoke(nodeData, nodeId);
-            Object request = access.childGetOrNull.invoke(access.childRequests.get(nodeManager), requestId);
+            int requestId = (int) access.nodeGetRequest.invokeExact(nodeData, nodeId);
+            Object request = access.childGetOrNull.invokeExact(childRequests, requestId);
             if (request != null && isLiveRequest(nodeManager, access, position, requestId, request)) continue;
 
             try {
                 state.maintenanceChanged = true;
                 clearStaleRequest(nodeManager, access, position, nodeId, requestId, true);
                 repaired++;
-                access.processRequest.invoke(nodeManager, position);
-            } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+                access.processRequest.invokeExact(nodeManager, position);
+            } catch (Throwable exception) {
+                rethrowNonLinkageError(exception);
                 logCleanupFailure("Voxy request-state watchdog could not repair a request", exception);
             }
         }
@@ -378,17 +424,17 @@ public final class RoxyVoxyRequestPatch {
             int nodeId,
             int requestId,
             boolean decrementRequestCount
-    ) throws ReflectiveOperationException {
+    ) throws Throwable {
         clearPending(nodeManager, position);
-        Object childRequests = access.childRequests.get(nodeManager);
+        Object childRequests = access.childRequests.invokeExact(nodeManager);
         Object request = requestId == REQUEST_ID_MASK
                 ? null
-                : access.childGetOrNull.invoke(childRequests, requestId);
+                : access.childGetOrNull.invokeExact(childRequests, requestId);
         boolean sameOwner = request == null || requestPosition(request) == position;
         if (sameOwner) cleanupRequest(nodeManager, access, position, requestId, decrementRequestCount);
-        Object nodeData = access.nodeData.get(nodeManager);
-        access.nodeSetRequest.invoke(nodeData, nodeId, REQUEST_ID_MASK);
-        access.invalidateNode.invoke(nodeManager, nodeId);
+        Object nodeData = access.nodeData.invokeExact(nodeManager);
+        access.nodeSetRequest.invokeExact(nodeData, nodeId, REQUEST_ID_MASK);
+        access.invalidateNode.invokeExact(nodeManager, nodeId);
     }
 
     private static void clearPending(Object nodeManager, long position) {
@@ -403,33 +449,33 @@ public final class RoxyVoxyRequestPatch {
             long position,
             int requestId,
             boolean decrementRequestCount
-    ) throws ReflectiveOperationException {
+    ) throws Throwable {
         if (requestId != REQUEST_ID_MASK) {
-            Object map = access.activeSectionMap.get(nodeManager);
-            Object watcher = access.watcher.get(nodeManager);
+            Object map = access.activeSectionMap.invokeExact(nodeManager);
+            Object watcher = access.watcher.invokeExact(nodeManager);
             for (int child = 0; child < 8; child++) {
-                long childPosition = (long) access.makeChildPos.invoke(null, position, child);
-                int encoded = (int) access.mapGet.invoke(map, childPosition);
+                long childPosition = (long) access.makeChildPos.invokeExact(position, child);
+                int encoded = (int) access.mapGet.invokeExact(map, childPosition);
                 if ((encoded & NODE_TYPE_MASK) != NODE_TYPE_REQUEST
                         || (encoded & REQUEST_TYPE_MASK) != REQUEST_TYPE_CHILD
                         || (encoded & NODE_ID_MASK) != requestId) continue;
-                access.mapRemove.invoke(map, childPosition);
-                access.watcherUnwatch.invoke(watcher, childPosition, DEFAULT_UPDATE_FLAGS);
+                access.mapRemove.invokeExact(map, childPosition);
+                access.watcherUnwatch.invokeExact(watcher, childPosition, DEFAULT_UPDATE_FLAGS);
             }
-            Object childRequest = access.childGetOrNull.invoke(access.childRequests.get(nodeManager), requestId);
+            Object childRequests = access.childRequests.invokeExact(nodeManager);
+            Object childRequest = access.childGetOrNull.invokeExact(childRequests, requestId);
             if (childRequest != null && requestPosition(childRequest) == position) {
-                access.childRelease.invoke(access.childRequests.get(nodeManager), requestId);
+                access.childRelease.invokeExact(childRequests, requestId);
                 if (decrementRequestCount) {
-                    int count = access.activeNodeRequestCount.getInt(nodeManager);
-                    if (count > 0) access.activeNodeRequestCount.setInt(nodeManager, count - 1);
+                    int count = (int) access.getActiveNodeRequestCount.invokeExact(nodeManager);
+                    if (count > 0) access.setActiveNodeRequestCount.invokeExact(nodeManager, count - 1);
                 }
             }
         }
     }
 
-    private static long requestPosition(Object request) throws ReflectiveOperationException {
-        Method method = REQUEST_POSITION.computeIfAbsent(request.getClass(), RoxyVoxyRequestPatch::resolveRequestPosition);
-        return (long) method.invoke(request);
+    private static long requestPosition(Object request) throws Throwable {
+        return (long) REQUEST_POSITION.get(request.getClass()).invokeExact(request);
     }
 
     private static boolean isLiveRequest(
@@ -438,7 +484,7 @@ public final class RoxyVoxyRequestPatch {
             long position,
             int requestId,
             Object request
-    ) throws ReflectiveOperationException {
+    ) throws Throwable {
         return requestPosition(request) == position;
     }
 
@@ -458,49 +504,40 @@ public final class RoxyVoxyRequestPatch {
         return previous == null ? resolved : previous;
     }
 
-    private static Method resolveMapPut(Class<?> type) {
+    private static MethodHandle resolveHandle(
+            Class<?> type,
+            String name,
+            MethodType adaptedType,
+            Class<?>... parameterTypes
+    ) {
         try {
-            return accessible(type.getMethod("put", long.class, int.class));
+            Method method = type.getMethod(name, parameterTypes);
+            method.setAccessible(true);
+            return MethodHandles.lookup().unreflect(method).asType(adaptedType);
         } catch (ReflectiveOperationException exception) {
             throw new IllegalStateException(exception);
         }
     }
 
-    private static Method resolveWatcherGet(Class<?> type) {
-        try {
-            return accessible(type.getMethod("get", long.class));
-        } catch (ReflectiveOperationException exception) {
-            throw new IllegalStateException(exception);
-        }
-    }
-
-    private static Method resolveWatcherWatch(Class<?> type) {
-        try {
-            return accessible(type.getMethod("watch", long.class, int.class));
-        } catch (ReflectiveOperationException exception) {
-            throw new IllegalStateException(exception);
-        }
-    }
-
-    private static Method resolveRequestPosition(Class<?> type) {
-        try {
-            return accessible(type.getMethod("getPosition"));
-        } catch (ReflectiveOperationException exception) {
-            throw new IllegalStateException(exception);
-        }
-    }
-
-    private static Method resolveProcessRequest(Class<?> type) {
-        try {
-            return accessible(type.getMethod("processRequest", long.class));
-        } catch (ReflectiveOperationException exception) {
-            throw new IllegalStateException(exception);
-        }
-    }
-
-    private static Method accessible(Method method) {
+    private static MethodHandle unreflectMethod(Method method, MethodType adaptedType) throws IllegalAccessException {
         method.setAccessible(true);
-        return method;
+        return MethodHandles.lookup().unreflect(method).asType(adaptedType);
+    }
+
+    private static MethodHandle unreflectGetter(Field field, MethodType adaptedType) throws IllegalAccessException {
+        field.setAccessible(true);
+        return MethodHandles.lookup().unreflectGetter(field).asType(adaptedType);
+    }
+
+    private static MethodHandle unreflectSetter(Field field, MethodType adaptedType) throws IllegalAccessException {
+        field.setAccessible(true);
+        return MethodHandles.lookup().unreflectSetter(field).asType(adaptedType);
+    }
+
+    private static void rethrowNonLinkageError(Throwable throwable) {
+        if (throwable instanceof Error error && !(error instanceof LinkageError)) {
+            throw error;
+        }
     }
 
     private static void wakeWatchdog() {
@@ -544,36 +581,39 @@ public final class RoxyVoxyRequestPatch {
     ) {
     }
 
-    private record AsyncAccess(Field thread, Field manager, NodeAccess nodeAccess) {
+    private record AsyncAccess(MethodHandle thread, MethodHandle manager, NodeAccess nodeAccess) {
         private static AsyncAccess resolve(Class<?> asyncNodeManager) throws ReflectiveOperationException {
             Field thread = asyncNodeManager.getDeclaredField("thread");
             Field manager = asyncNodeManager.getDeclaredField("manager");
-            thread.setAccessible(true);
-            manager.setAccessible(true);
-            return new AsyncAccess(thread, manager, NodeAccess.resolve(manager.getType()));
+            return new AsyncAccess(
+                    unreflectGetter(thread, MethodType.methodType(Thread.class, Object.class)),
+                    unreflectGetter(manager, MethodType.methodType(Object.class, Object.class)),
+                    NodeAccess.resolve(manager.getType())
+            );
         }
     }
 
     private record NodeAccess(
-            Field activeSectionMap,
-            Field nodeData,
-            Field childRequests,
-            Field watcher,
-            Field activeNodeRequestCount,
-            Method mapGet,
-            Method mapRemove,
-            Method nodeGetRequest,
-            Method nodeSetRequest,
-            Method nodeIsRequestInFlight,
-            Method nodeExists,
-            Method nodePosition,
-            Method nodeEnd,
-            Method childGetOrNull,
-            Method childRelease,
-            Method watcherUnwatch,
-            Method makeChildPos,
-            Method invalidateNode,
-            Method processRequest
+            MethodHandle activeSectionMap,
+            MethodHandle nodeData,
+            MethodHandle childRequests,
+            MethodHandle watcher,
+            MethodHandle getActiveNodeRequestCount,
+            MethodHandle setActiveNodeRequestCount,
+            MethodHandle mapGet,
+            MethodHandle mapRemove,
+            MethodHandle nodeGetRequest,
+            MethodHandle nodeSetRequest,
+            MethodHandle nodeIsRequestInFlight,
+            MethodHandle nodeExists,
+            MethodHandle nodePosition,
+            MethodHandle nodeEnd,
+            MethodHandle childGetOrNull,
+            MethodHandle childRelease,
+            MethodHandle watcherUnwatch,
+            MethodHandle makeChildPos,
+            MethodHandle invalidateNode,
+            MethodHandle processRequest
     ) {
         private static NodeAccess resolve(Class<?> nodeManager) throws ReflectiveOperationException {
             Field activeSectionMap = nodeManager.getDeclaredField("activeSectionMap");
@@ -581,43 +621,33 @@ public final class RoxyVoxyRequestPatch {
             Field childRequests = nodeManager.getDeclaredField("childRequests");
             Field watcher = nodeManager.getDeclaredField("watcher");
             Field activeNodeRequestCount = nodeManager.getDeclaredField("activeNodeRequestCount");
-            for (Field field : new Field[]{
-                    activeSectionMap,
-                    nodeData,
-                    childRequests,
-                    watcher,
-                    activeNodeRequestCount
-            }) field.setAccessible(true);
 
             Class<?> nodeStore = nodeData.getType();
             Class<?> allocationList = childRequests.getType();
             Class<?> map = activeSectionMap.getType();
             Class<?> watcherType = watcher.getType();
-            Method makeChildPos = nodeManager.getDeclaredMethod("makeChildPos", long.class, int.class);
-            makeChildPos.setAccessible(true);
-            Method invalidateNode = nodeManager.getDeclaredMethod("invalidateNode", int.class);
-            invalidateNode.setAccessible(true);
 
             return new NodeAccess(
-                    activeSectionMap,
-                    nodeData,
-                    childRequests,
-                    watcher,
-                    activeNodeRequestCount,
-                    accessible(map.getMethod("get", long.class)),
-                    accessible(map.getMethod("remove", long.class)),
-                    accessible(nodeStore.getMethod("getNodeRequest", int.class)),
-                    accessible(nodeStore.getMethod("setNodeRequest", int.class, int.class)),
-                    accessible(nodeStore.getMethod("isNodeRequestInFlight", int.class)),
-                    accessible(nodeStore.getMethod("nodeExists", int.class)),
-                    accessible(nodeStore.getMethod("nodePosition", int.class)),
-                    accessible(nodeStore.getMethod("getEndNodeId")),
-                    accessible(allocationList.getMethod("getOrNull", int.class)),
-                    accessible(allocationList.getMethod("release", int.class)),
-                    accessible(watcherType.getMethod("unwatch", long.class, int.class)),
-                    makeChildPos,
-                    invalidateNode,
-                    accessible(nodeManager.getMethod("processRequest", long.class))
+                    unreflectGetter(activeSectionMap, MethodType.methodType(Object.class, Object.class)),
+                    unreflectGetter(nodeData, MethodType.methodType(Object.class, Object.class)),
+                    unreflectGetter(childRequests, MethodType.methodType(Object.class, Object.class)),
+                    unreflectGetter(watcher, MethodType.methodType(Object.class, Object.class)),
+                    unreflectGetter(activeNodeRequestCount, MethodType.methodType(int.class, Object.class)),
+                    unreflectSetter(activeNodeRequestCount, MethodType.methodType(void.class, Object.class, int.class)),
+                    unreflectMethod(map.getMethod("get", long.class), MethodType.methodType(int.class, Object.class, long.class)),
+                    unreflectMethod(map.getMethod("remove", long.class), MethodType.methodType(void.class, Object.class, long.class)),
+                    unreflectMethod(nodeStore.getMethod("getNodeRequest", int.class), MethodType.methodType(int.class, Object.class, int.class)),
+                    unreflectMethod(nodeStore.getMethod("setNodeRequest", int.class, int.class), MethodType.methodType(void.class, Object.class, int.class, int.class)),
+                    unreflectMethod(nodeStore.getMethod("isNodeRequestInFlight", int.class), MethodType.methodType(boolean.class, Object.class, int.class)),
+                    unreflectMethod(nodeStore.getMethod("nodeExists", int.class), MethodType.methodType(boolean.class, Object.class, int.class)),
+                    unreflectMethod(nodeStore.getMethod("nodePosition", int.class), MethodType.methodType(long.class, Object.class, int.class)),
+                    unreflectMethod(nodeStore.getMethod("getEndNodeId"), MethodType.methodType(int.class, Object.class)),
+                    unreflectMethod(allocationList.getMethod("getOrNull", int.class), MethodType.methodType(Object.class, Object.class, int.class)),
+                    unreflectMethod(allocationList.getMethod("release", int.class), MethodType.methodType(void.class, Object.class, int.class)),
+                    unreflectMethod(watcherType.getMethod("unwatch", long.class, int.class), MethodType.methodType(void.class, Object.class, long.class, int.class)),
+                    unreflectMethod(nodeManager.getDeclaredMethod("makeChildPos", long.class, int.class), MethodType.methodType(long.class, long.class, int.class)),
+                    unreflectMethod(nodeManager.getDeclaredMethod("invalidateNode", int.class), MethodType.methodType(void.class, Object.class, int.class)),
+                    unreflectMethod(nodeManager.getMethod("processRequest", long.class), MethodType.methodType(void.class, Object.class, long.class))
             );
         }
     }

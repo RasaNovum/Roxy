@@ -1,19 +1,25 @@
 package net.rasanovum.roxy.patch;
 
 import net.rasanovum.roxy.compat.RoxyVoxyRendererReloadCompat;
+import net.rasanovum.roxy.util.RoxyClassLoaders;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.concurrent.TimeUnit;
 
 public final class RoxyVoxyLifecycle {
     private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
-    private static final long TICK_INTERVAL_MILLIS = 250L;
+    private static final long TICK_INTERVAL_NANOS = TimeUnit.MILLISECONDS.toNanos(250L);
+    private static final long ERROR_LOG_INTERVAL_NANOS = TimeUnit.SECONDS.toNanos(60L);
     private static volatile Methods methods;
     private static volatile boolean resolutionFailed;
-    private static long lastTickAt;
+    private static long lastTickAtNanos;
+    private static boolean hasTicked;
+    private static long lastErrorLogAtNanos;
+    private static boolean hasLoggedError;
     private static Object instance;
     private static Object engine;
     private static Object renderer;
@@ -24,13 +30,19 @@ public final class RoxyVoxyLifecycle {
     }
 
     public static void tick() {
-        long now = System.currentTimeMillis();
-        if (now - lastTickAt < TICK_INTERVAL_MILLIS) return;
-        lastTickAt = now;
+        if (resolutionFailed) return;
+        long now = System.nanoTime();
+        if (hasTicked && now - lastTickAtNanos < TICK_INTERVAL_NANOS) return;
+        hasTicked = true;
+        lastTickAtNanos = now;
+
+        Methods resolved = resolveMethods();
+        if (resolved == null) return;
+
         try {
-            Methods resolved = methods();
             Object currentInstance = resolved.voxyInstance.invoke(null);
             Object minecraft = resolved.minecraftInstance.invoke(null);
+            if (minecraft == null) return;
             Object currentLevel = resolved.level.get(minecraft);
             if (currentInstance != null) RoxyVoxyRendererReloadCompat.processPending();
             Object currentEngine = currentLevel == null ? null : resolved.worldEngine.invoke(null, currentLevel);
@@ -48,6 +60,7 @@ public final class RoxyVoxyLifecycle {
             }
 
             Object levelRenderer = resolved.levelRenderer.get(minecraft);
+            if (levelRenderer == null) return;
             Object currentRenderer = resolved.getRenderSystem.invoke(levelRenderer);
             boolean worldChanged = currentInstance != instance || currentEngine != engine;
             boolean rendererChanged = currentRenderer != renderer;
@@ -70,19 +83,37 @@ public final class RoxyVoxyLifecycle {
                 RoxyVoxyRenderPatch.flushPendingRenderTasks();
             }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
-            if (!resolutionFailed) {
-                resolutionFailed = true;
-                LOGGER.warn("Voxy render task lifecycle tracking is unavailable", exception);
+            if (!hasLoggedError || now - lastErrorLogAtNanos >= ERROR_LOG_INTERVAL_NANOS) {
+                hasLoggedError = true;
+                lastErrorLogAtNanos = now;
+                LOGGER.warn("Voxy render task lifecycle tick failed", exception);
             }
         }
     }
 
-    private static Methods methods() throws ReflectiveOperationException {
+    private static Methods resolveMethods() {
         Methods cached = methods;
-        if (cached != null) return cached;
+        if (cached != null || resolutionFailed) return cached;
         synchronized (RoxyVoxyLifecycle.class) {
-            if (methods == null) methods = Methods.resolve(Thread.currentThread().getContextClassLoader());
-            return methods;
+            cached = methods;
+            if (cached != null || resolutionFailed) return cached;
+            try {
+                ClassLoader loader = RoxyClassLoaders.tryFindLoaderFor("net.minecraft.client.Minecraft");
+                if (loader == null) {
+                    resolutionFailed = true;
+                    return null;
+                }
+                cached = Methods.resolve(loader);
+                methods = cached;
+                return cached;
+            } catch (ClassNotFoundException | NoSuchMethodException | NoSuchFieldException | LinkageError exception) {
+                resolutionFailed = true;
+                LOGGER.warn("Voxy render task lifecycle tracking is unavailable", exception);
+                return null;
+            } catch (ReflectiveOperationException | RuntimeException exception) {
+                LOGGER.warn("Voxy render task lifecycle resolution failed", exception);
+                return null;
+            }
         }
     }
 
@@ -95,7 +126,6 @@ public final class RoxyVoxyLifecycle {
             Method getRenderSystem
     ) {
         private static Methods resolve(ClassLoader loader) throws ReflectiveOperationException {
-            if (loader == null) loader = RoxyVoxyLifecycle.class.getClassLoader();
             Class<?> voxyCommon = Class.forName("me.cortex.voxy.commonImpl.VoxyCommon", false, loader);
             Class<?> minecraft = Class.forName("net.minecraft.client.Minecraft", false, loader);
             Class<?> levelClass = Class.forName("net.minecraft.world.level.Level", false, loader);

@@ -11,13 +11,13 @@ public final class TfcRefreshScheduler {
     private static final int MAX_TRACKED = 65_536;
     private final Map<Long, State> tracked = new LinkedHashMap<>();
     private final LinkedHashSet<Long> near = new LinkedHashSet<>(), far = new LinkedHashSet<>();
-    private final ArrayDeque<Long> pruning=new ArrayDeque<>();
+    private final LinkedHashSet<Long> pruning = new LinkedHashSet<>();
     private int pending;
     private long ticks;
     private long submittedCount, acceptedCount;
     private int cameraX, cameraZ;
     private Object renderer;
-    private Access access;
+    private volatile Access access;
     private boolean failed;
 
     public synchronized void camera(int x, int z) { cameraX=x; cameraZ=z; }
@@ -63,40 +63,44 @@ public final class TfcRefreshScheduler {
         if(currentRenderer==null)return;
         try {
             if(renderer!=currentRenderer){renderer=currentRenderer;access=Access.resolve(renderer);failed=false;}
-            if(access==null)return;
+            Access currentAccess = access;
+            if(currentAccess==null)return;
             ticks++;
-            boolean nativeIdle=(int)access.taskCount.invoke(access.service)==0;
+            boolean nativeIdle=(int)currentAccess.taskCount.invoke(currentAccess.service)==0;
             synchronized(this) {
                 for(int i=0,n=Math.min(128,pruning.size());i<n;i++) {
-                    long key=pruning.removeFirst();
+                    Long polled = poll(pruning);
+                    if(polled==null)break;
+                    long key=polled;
                     if(!tracked.containsKey(key))continue;
-                    if(!inRange(key)||!access.watched(key))remove(key);
+                    if(!inRange(key)||!currentAccess.watched(key))remove(key);
                     else {
                         State state=tracked.get(key);
-                        if(nativeIdle && state.inFlight && ticks-state.submittedTick>=200) {
+                        long elapsed = ticks - state.submittedTick;
+                        if(state.inFlight && ((nativeIdle && elapsed >= 200) || elapsed >= 1200)) {
                             state.inFlight=false;
                             queue(key,state);
                         }
-                        pruning.addLast(key);
+                        pruning.add(key);
                     }
                 }
             }
-            int budget=Math.min(16,Math.max(0,32-(int)access.taskCount.invoke(access.service)));
+            int budget=Math.min(16,Math.max(0,32-(int)currentAccess.taskCount.invoke(currentAccess.service)));
             for(int inspected=0,emitted=0;inspected<256 && emitted<budget;inspected++) {
-                if((int)access.taskCount.invoke(access.service)>=32)break;
+                if((int)currentAccess.taskCount.invoke(currentAccess.service)>=32)break;
                 Long key;
                 synchronized(this) {
                     key=poll(near);if(key==null)key=poll(far);if(key==null)break;
                     State state=tracked.get(key);
                     if(state==null)continue;
-                    if(!inRange(key) || !access.watched(key)){remove(key);continue;}
+                    if(!inRange(key) || !currentAccess.watched(key)){remove(key);continue;}
                     if(state.inFlight || state.desired<=state.completed)continue;
                     state.inFlight=true;
                     state.submitted=state.desired;
                     state.submittedTick=ticks;
                 }
-                access.clearCache.invoke(access.cache,key.longValue());
-                access.remesh.invoke(access.router,key.longValue());
+                currentAccess.clearCache.invoke(currentAccess.cache,key.longValue());
+                currentAccess.remesh.invoke(currentAccess.router,key.longValue());
                 synchronized(this){submittedCount++;}
                 emitted++;
             }
@@ -108,14 +112,21 @@ public final class TfcRefreshScheduler {
     private static Long poll(LinkedHashSet<Long> queue) {
         Iterator<Long> it=queue.iterator();if(!it.hasNext())return null;Long key=it.next();it.remove();return key;
     }
-    private void remove(long key){State s=tracked.remove(key);near.remove(key);far.remove(key);if(s!=null&&s.desired>s.completed)pending--;}
+    private void remove(long key){State s=tracked.remove(key);near.remove(key);far.remove(key);pruning.remove(key);if(s!=null&&s.desired>s.completed)pending--;}
     public synchronized void reset(){tracked.clear();near.clear();far.clear();pruning.clear();pending=0;ticks=0;submittedCount=0;acceptedCount=0;cameraX=0;cameraZ=0;renderer=null;access=null;failed=false;}
     public synchronized boolean complete(long key){State state=tracked.get(key);return state==null||state.desired==state.completed;}
     public synchronized long submittedCount(){return submittedCount;}
     public synchronized long acceptedCount(){return acceptedCount;}
     public synchronized int trackedCount(){return tracked.size();}
     public synchronized int pendingCount(){return pending;}
-    public boolean isWatched(long key){try{return inRange(key)&&(access==null||access.watched(key));}catch(ReflectiveOperationException e){return true;}}
+    public boolean isWatched(long key){
+        try {
+            Access currentAccess = access;
+            return inRange(key) && (currentAccess == null || currentAccess.watched(key));
+        } catch(ReflectiveOperationException | RuntimeException | LinkageError e) {
+            return true;
+        }
+    }
     private static final class State {long desired,completed,submitted,submittedTick;boolean inFlight;}
     private record Access(Object router,Object cache,Object service,Method watched,Method remesh,Method clearCache,Method taskCount) {
         boolean watched(long key)throws ReflectiveOperationException{return ((int)watched.invoke(router,key)&1)!=0;}
