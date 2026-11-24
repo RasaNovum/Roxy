@@ -85,9 +85,14 @@ public final class RoxyTfcTerrainRefresh {
         if (!minecraft.isSameThread()) return false;
         ClientLevel clientLevel = minecraft.level;
         if (clientLevel == null || minecraft.levelRenderer == null) return false;
+        if (!RoxyTfcAdapter.isOverworldClimate(clientLevel)) return false;
         int[] camera = camera(minecraft);
         if (!initialized || world != clientLevel) {
-            bindWorld(clientLevel, camera, lastCalendarTicks, lastCalendarDay, lastDaysInMonth);
+            long[] snap = RoxyTfcAdapter.calendarSnapshot();
+            long ticks = snap != null ? snap[0] : lastCalendarTicks;
+            long day = snap != null ? Math.floorDiv(ticks, CALENDAR_TICKS_PER_DAY) : lastCalendarDay;
+            long daysInMonth = snap != null ? snap[1] : lastDaysInMonth;
+            bindWorld(clientLevel, camera, ticks, day, daysInMonth);
         }
         requestSweep(minecraft, camera);
         return true;
@@ -128,7 +133,6 @@ public final class RoxyTfcTerrainRefresh {
         pending.clear();
         currentNonEmptySections = null;
         currentSectionCursor = 0;
-        rerunSweep = false;
     }
 
     private static void startSweep(Minecraft minecraft, int[] camera) {
@@ -175,13 +179,13 @@ public final class RoxyTfcTerrainRefresh {
                 for (int index = 0; index < sections.length; index++) {
                     currentNonEmptySections[index] = sections[index] != null && !sections[index].hasOnlyAir();
                 }
-            }
-
-            LevelChunk current = chunkCache.getChunk(currentChunkX, currentChunkZ, ChunkStatus.FULL, false);
-            if (current == null || current.isEmpty()) {
-                currentNonEmptySections = null;
-                currentSectionCursor = 0;
-                continue;
+            } else {
+                LevelChunk current = chunkCache.getChunk(currentChunkX, currentChunkZ, ChunkStatus.FULL, false);
+                if (current == null || current.isEmpty()) {
+                    currentNonEmptySections = null;
+                    currentSectionCursor = 0;
+                    continue;
+                }
             }
             currentSectionCursor = queueNonEmptySections(currentNonEmptySections, currentSectionCursor,
                     currentChunkX, currentMinSection, currentChunkZ, pending, MAX_PENDING_SECTIONS);

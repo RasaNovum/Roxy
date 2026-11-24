@@ -5,6 +5,8 @@ import cpw.mods.jarhandling.JarContents;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URI;
+import java.net.URLConnection;
+import java.util.Optional;
 
 final class RoxyJarContents {
     private RoxyJarContents() {
@@ -15,8 +17,10 @@ final class RoxyJarContents {
     }
 
     static InputStream openFile(JarContents contents, String path) throws IOException {
-        URI uri = contents.findFile(path.replace('\\', '/'))
-                .orElseThrow(() -> new IOException("Missing jar entry " + path));
-        return uri.toURL().openStream();
+        Optional<URI> uri = contents.findFile(path.replace('\\', '/'));
+        if (uri.isEmpty()) return null;
+        URLConnection connection = uri.get().toURL().openConnection();
+        connection.setUseCaches(false);
+        return connection.getInputStream();
     }
 }

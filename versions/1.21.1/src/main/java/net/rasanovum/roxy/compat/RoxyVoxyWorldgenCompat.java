@@ -32,6 +32,7 @@ public final class RoxyVoxyWorldgenCompat {
             queueField.setAccessible(true);
             lockField.setAccessible(true);
             Object lock = lockField.get(null);
+            if (lock == null) return;
             int cleared;
             synchronized (lock) {
                 Object queue = queueField.get(null);

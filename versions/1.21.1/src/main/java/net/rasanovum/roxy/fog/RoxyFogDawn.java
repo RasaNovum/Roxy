@@ -9,6 +9,7 @@ public final class RoxyFogDawn {
     }
 
     public static float sunriseInfluence(long time, float partialTick) {
+        if (!Float.isFinite(partialTick)) partialTick = 0.0F;
         long day = Math.floorMod(time, 24000L);
         return day >= 18000 ? ramp(day + partialTick) : 1;
     }

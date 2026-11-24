@@ -20,17 +20,17 @@ public final class RoxyChunkBoundaryMask {
     private static final String NVIDIUM_WORLD_RENDERER = "me.cortex.nvidium.NvidiumWorldRenderer";
     private static final String NVIDIUM_SECTION_MANAGER = "me.cortex.nvidium.managers.SectionManager";
 
-    private static Field managerField;
-    private static boolean acediumChecked;
-    private static boolean acediumAvailable;
-    private static boolean acediumActiveLogged;
-    private static boolean acediumFailureLogged;
-    private static Field acediumEnabledField;
-    private static Class<?> acediumGetterClass;
-    private static Method acediumGetRenderer;
-    private static Method acediumGetSectionManager;
-    private static Field acediumSection2IdField;
-    private static Field acediumHiddenSectionsField;
+    private static volatile Field managerField;
+    private static volatile boolean acediumChecked;
+    private static volatile boolean acediumAvailable;
+    private static volatile boolean acediumActiveLogged;
+    private static volatile boolean acediumFailureLogged;
+    private static volatile Field acediumEnabledField;
+    private static volatile Class<?> acediumGetterClass;
+    private static volatile Method acediumGetRenderer;
+    private static volatile Method acediumGetSectionManager;
+    private static volatile Field acediumSection2IdField;
+    private static volatile Field acediumHiddenSectionsField;
 
     private final Object renderer;
     private final Long2IntOpenHashMap positions;
@@ -126,6 +126,7 @@ public final class RoxyChunkBoundaryMask {
             return true;
         } catch (ReflectiveOperationException | LinkageError | RuntimeException exception) {
             visible.clear();
+            acediumAvailable = false;
             if (!acediumFailureLogged) {
                 acediumFailureLogged = true;
                 LOGGER.warn("Roxy: unable to read Acedium chunk sections for boundary mask; falling back to Sodium render lists", exception);

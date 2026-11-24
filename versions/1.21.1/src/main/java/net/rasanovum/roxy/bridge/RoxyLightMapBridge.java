@@ -15,9 +15,13 @@ public final class RoxyLightMapBridge {
         try {
             Accessors resolved = accessors();
             Object minecraft = resolved.minecraftInstance.invoke(null);
+            if (minecraft == null) throw new IllegalStateException("Minecraft instance is not available");
             Object gameRenderer = resolved.gameRenderer.get(minecraft);
+            if (gameRenderer == null) throw new IllegalStateException("GameRenderer is not available");
             Object lightTexture = resolved.lightTexture.get(gameRenderer);
+            if (lightTexture == null) throw new IllegalStateException("LightTexture is not available");
             Object dynamicTexture = resolved.dynamicTexture.get(lightTexture);
+            if (dynamicTexture == null) throw new IllegalStateException("Lightmap DynamicTexture is not available");
             return ((Number) resolved.textureId.invoke(dynamicTexture)).intValue();
         } catch (ReflectiveOperationException exception) {
             throw new IllegalStateException("Unable to access Minecraft 1.21.1's lightmap texture", exception);
@@ -31,10 +35,11 @@ public final class RoxyLightMapBridge {
             if (accessors != null) return accessors;
             ClassLoader loader = RoxyClassLoaders.findGameLoader();
             Class<?> minecraft = Class.forName("net.minecraft.client.Minecraft", false, loader);
-            Field gameRenderer = findField(minecraft, "net.minecraft.client.renderer.GameRenderer");
-            Field lightTexture = findField(gameRenderer.getType(), "net.minecraft.client.renderer.LightTexture");
+            Field gameRenderer = findField(minecraft, "gameRenderer", "net.minecraft.client.renderer.GameRenderer");
+            Field lightTexture = findField(gameRenderer.getType(), "lightTexture", "net.minecraft.client.renderer.LightTexture");
             Field dynamicTexture = findField(
                     lightTexture.getType(),
+                    "lightTexture",
                     "net.minecraft.client.renderer.texture.DynamicTexture"
             );
             accessors = new Accessors(
@@ -48,15 +53,23 @@ public final class RoxyLightMapBridge {
         }
     }
 
-    private static Field findField(Class<?> owner, String typeName) throws NoSuchFieldException {
+    private static Field findField(Class<?> owner, String preferredName, String typeName) throws NoSuchFieldException {
         Class<?> current = owner;
+        Field fallback = null;
         while (current != null) {
             for (Field field : current.getDeclaredFields()) {
                 if (!field.getType().getName().equals(typeName)) continue;
-                field.setAccessible(true);
-                return field;
+                if (field.getName().equals(preferredName)) {
+                    field.setAccessible(true);
+                    return field;
+                }
+                if (fallback == null) fallback = field;
             }
             current = current.getSuperclass();
+        }
+        if (fallback != null) {
+            fallback.setAccessible(true);
+            return fallback;
         }
         throw new NoSuchFieldException("Unable to find field of type " + typeName);
     }

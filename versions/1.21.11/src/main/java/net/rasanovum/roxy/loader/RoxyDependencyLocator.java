@@ -10,6 +10,8 @@ import net.neoforged.neoforgespi.locating.IDependencyLocator;
 import net.neoforged.neoforgespi.locating.IDiscoveryPipeline;
 import net.neoforged.neoforgespi.locating.IModFile;
 import net.neoforged.neoforgespi.locating.ModFileDiscoveryAttributes;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -25,6 +27,8 @@ import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
 
 public final class RoxyDependencyLocator implements IDependencyLocator {
+    private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
+    private static final String RELOCATED_JARS = "META-INF/roxy-jars/";
     private static final String MACOS_NATIVE_PATH_PROPERTY = "roxy.macos.nativePath";
     private static final List<String> MACOS_ARM64_NATIVE_JARS = List.of(
             "roxy-lwjgl-lmdb-natives-macos-arm64.jar",
@@ -41,19 +45,25 @@ public final class RoxyDependencyLocator implements IDependencyLocator {
 
     @Override
     public void scanMods(List<IModFile> loadedMods, IDiscoveryPipeline pipeline) {
-        boolean voxyLoaded = containsVoxy(loadedMods);
+        boolean voxyLoaded = false;
         for (IModFile mod : loadedMods) {
+            if (!voxyLoaded && hasModId(mod, "voxy")) voxyLoaded = true;
             JarContents contents = mod.getContents();
-            JsonArray jars = readJarsArray(contents);
-            if (jars == null) continue;
-            for (JsonElement entry : jars) {
+            JsonObject fabricMeta = readFabricMetadata(contents);
+            if (fabricMeta == null) continue;
+            if (!voxyLoaded && isVoxyFabricMetadata(fabricMeta)) voxyLoaded = true;
+            JsonElement jarsElement = fabricMeta.get("jars");
+            if (jarsElement == null || !jarsElement.isJsonArray()) continue;
+            for (JsonElement entry : jarsElement.getAsJsonArray()) {
                 if (!entry.isJsonObject()) continue;
                 JsonElement file = entry.getAsJsonObject().get("file");
                 if (file == null || !file.isJsonPrimitive()) continue;
                 String fileName = file.getAsString();
                 if (!isCurrentPlatformJar(fileName) || isMinecraftProvidedLibrary(fileName)) continue;
+                String relocatedPath = relocatedJarPath(fileName);
+                if (relocatedPath == null || !contents.containsFile(relocatedPath)) continue;
                 try {
-                    Path extracted = extract(contents, fileName);
+                    Path extracted = extract(contents, relocatedPath);
                     if (extracted == null) continue;
                     IModFile library = IModFile.create(
                             JarContents.ofPath(extracted),
@@ -61,26 +71,40 @@ public final class RoxyDependencyLocator implements IDependencyLocator {
                             IModFile.Type.GAMELIBRARY,
                             ModFileDiscoveryAttributes.DEFAULT);
                     pipeline.addModFile(library);
-                } catch (IOException ignored) {
+                } catch (IOException | RuntimeException exception) {
+                    LOGGER.warn("Roxy: failed to extract embedded dependency {}", relocatedPath, exception);
                 }
             }
         }
         if (voxyLoaded) addPreparedMacOsArm64Natives(loadedMods, pipeline);
     }
 
-    private static boolean containsVoxy(List<IModFile> loadedMods) {
-        for (IModFile mod : loadedMods) {
-            Path path = mod.getFilePath();
-            if (path != null && path.getFileName().toString().toLowerCase(Locale.ROOT).startsWith("voxy")) return true;
-            try (InputStream input = mod.getContents().openFile("fabric.mod.json")) {
-                if (input == null) continue;
-                JsonObject metadata = JsonParser.parseReader(new InputStreamReader(input, StandardCharsets.UTF_8)).getAsJsonObject();
-                JsonElement id = metadata.get("id");
-                if (id != null && id.isJsonPrimitive() && id.getAsString().equals("voxy")) return true;
-            } catch (IOException | RuntimeException ignored) {
+    private static boolean hasModId(IModFile mod, String targetId) {
+        try {
+            var infos = mod.getModInfos();
+            if (infos != null) {
+                for (var info : infos) {
+                    if (targetId.equals(info.getModId())) return true;
+                }
             }
+        } catch (RuntimeException ignored) {
         }
         return false;
+    }
+
+    private static boolean isVoxyFabricMetadata(JsonObject metadata) {
+        JsonElement id = metadata.get("id");
+        return id != null && id.isJsonPrimitive() && id.getAsString().equals("voxy");
+    }
+
+    private static String relocatedJarPath(String fileName) {
+        String normalized = fileName.replace('\\', '/');
+        while (normalized.startsWith("/")) normalized = normalized.substring(1);
+        if (normalized.startsWith(RELOCATED_JARS)) return normalized;
+        if (normalized.startsWith("META-INF/jars/")) {
+            return RELOCATED_JARS + normalized.substring("META-INF/jars/".length());
+        }
+        return null;
     }
 
     private static void addPreparedMacOsArm64Natives(List<IModFile> loadedMods, IDiscoveryPipeline pipeline) {
@@ -132,15 +156,19 @@ public final class RoxyDependencyLocator implements IDependencyLocator {
             String expectedEntry) {
         for (IModFile mod : loadedMods) {
             JarContents contents = mod.getContents();
-            JsonArray jars = readJarsArray(contents);
-            if (jars == null) continue;
-            for (JsonElement entry : jars) {
+            JsonObject fabricMeta = readFabricMetadata(contents);
+            JsonElement jarsElement = fabricMeta == null ? null : fabricMeta.get("jars");
+            if (jarsElement == null || !jarsElement.isJsonArray()) continue;
+            for (JsonElement entry : jarsElement.getAsJsonArray()) {
                 if (!entry.isJsonObject()) continue;
                 JsonElement file = entry.getAsJsonObject().get("file");
                 if (file == null || !file.isJsonPrimitive()) continue;
                 String fileName = file.getAsString();
                 if (!fileName.toLowerCase(Locale.ROOT).endsWith(fileNameHint)) continue;
-                try (InputStream nested = contents.openFile(fileName);
+                String relocatedPath = relocatedJarPath(fileName);
+                String lookupPath = relocatedPath != null && contents.containsFile(relocatedPath)
+                        ? relocatedPath : fileName;
+                try (InputStream nested = contents.openFile(lookupPath);
                      ZipInputStream zip = nested == null ? null : new ZipInputStream(nested)) {
                     if (zip == null) continue;
                     ZipEntry nestedEntry;
@@ -173,13 +201,11 @@ public final class RoxyDependencyLocator implements IDependencyLocator {
                 && (architecture.equals("aarch64") || architecture.equals("arm64"));
     }
 
-    private static JsonArray readJarsArray(JarContents contents) {
+    private static JsonObject readFabricMetadata(JarContents contents) {
         try (InputStream input = contents.openFile("fabric.mod.json")) {
             if (input == null) return null;
-            JsonObject metadata = JsonParser.parseReader(new InputStreamReader(input, StandardCharsets.UTF_8)).getAsJsonObject();
-            JsonElement jars = metadata.get("jars");
-            return jars != null && jars.isJsonArray() ? jars.getAsJsonArray() : null;
-        } catch (IOException | IllegalStateException e) {
+            return JsonParser.parseReader(new InputStreamReader(input, StandardCharsets.UTF_8)).getAsJsonObject();
+        } catch (IOException | RuntimeException e) {
             return null;
         }
     }
@@ -191,7 +217,17 @@ public final class RoxyDependencyLocator implements IDependencyLocator {
         Path output = Files.createTempFile("roxy-jij-", "-" + name);
         output.toFile().deleteOnExit();
         try (InputStream input = contents.openFile(normalized)) {
+            if (input == null) {
+                Files.deleteIfExists(output);
+                return null;
+            }
             Files.copy(input, output, StandardCopyOption.REPLACE_EXISTING);
+        } catch (IOException | RuntimeException exception) {
+            try {
+                Files.deleteIfExists(output);
+            } catch (IOException ignored) {
+            }
+            throw exception;
         }
         return output;
     }
@@ -206,7 +242,6 @@ public final class RoxyDependencyLocator implements IDependencyLocator {
     private static boolean isMinecraftProvidedLibrary(String path) {
         String normalized = path.replace('\\', '/').toLowerCase(Locale.ROOT);
         String fileName = normalized.substring(normalized.lastIndexOf('/') + 1);
-        // Minecraft 1.21.11 already supplies the org.lz4.java module.
         return fileName.startsWith("lz4-java-") && fileName.endsWith(".jar");
     }
 

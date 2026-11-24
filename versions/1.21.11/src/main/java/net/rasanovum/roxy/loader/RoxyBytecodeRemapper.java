@@ -15,7 +15,7 @@ import org.objectweb.asm.commons.MethodRemapper;
 import org.objectweb.asm.commons.Remapper;
 
 import java.util.HashMap;
-import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.Map;
 import java.util.Set;
 
@@ -236,7 +236,7 @@ public final class RoxyBytecodeRemapper {
                     @Override
                     public void visitTypeInsn(int opcode, String type) {
                         if (opcode == Opcodes.CHECKCAST && type.equals(GL_TEXTURE)) {
-                            visitMethodInsn(
+                            super.visitMethodInsn(
                                     Opcodes.INVOKESTATIC,
                                     GPU_COMPAT,
                                     "unwrapGlTexture",
@@ -306,7 +306,7 @@ public final class RoxyBytecodeRemapper {
                                 && owner.equals(BLOCK_COLORS)
                                 && name.equals("blockColors")
                                 && descriptor.equals("Lnet/minecraft/core/IdMapper;")) {
-                            visitMethodInsn(
+                            super.visitMethodInsn(
                                     Opcodes.INVOKESTATIC,
                                     COLOR_COMPAT,
                                     "getColorMapper",
@@ -414,22 +414,28 @@ public final class RoxyBytecodeRemapper {
 
         @Override
         public String mapFieldName(String owner, String name, String descriptor) {
-            MixinMember shadow = metadata.fieldsByName.get(name);
-            if (owner.equals(mixinClass) && shadow != null) {
-                String targetName = stripPrefix(name, shadow.prefix);
-                String mapped = mappings.mapFieldName(metadata.targetOwner(), targetName, shadow.descriptor);
-                return shadow.prefix + mapped;
+            if (owner.equals(mixinClass)) {
+                MixinMember shadow = metadata.fields.get(new MemberKey(name, descriptor));
+                if (shadow == null) shadow = metadata.fieldsByName.get(name);
+                if (shadow != null) {
+                    String targetName = stripPrefix(name, shadow.prefix);
+                    String mapped = mappings.mapFieldName(metadata.targetOwner(), targetName, shadow.descriptor);
+                    return shadow.prefix + mapped;
+                }
             }
             return mappings.mapFieldName(owner, name, descriptor);
         }
 
         @Override
         public String mapMethodName(String owner, String name, String descriptor) {
-            MixinMember shadow = metadata.methodsByName.get(name);
-            if (owner.equals(mixinClass) && shadow != null) {
-                String targetName = stripPrefix(name, shadow.prefix);
-                String mapped = mappings.mapMethodName(metadata.targetOwner(), targetName, shadow.descriptor);
-                return shadow.prefix + mapped;
+            if (owner.equals(mixinClass)) {
+                MixinMember shadow = metadata.methods.get(new MemberKey(name, descriptor));
+                if (shadow == null) shadow = metadata.methodsByName.get(name);
+                if (shadow != null) {
+                    String targetName = stripPrefix(name, shadow.prefix);
+                    String mapped = mappings.mapMethodName(metadata.targetOwner(), targetName, shadow.descriptor);
+                    return shadow.prefix + mapped;
+                }
             }
             return mappings.mapMethodName(owner, name, descriptor);
         }
@@ -457,6 +463,11 @@ public final class RoxyBytecodeRemapper {
         }
 
         @Override
+        protected AnnotationVisitor createAnnotationRemapper(String descriptor, AnnotationVisitor annotationVisitor) {
+            return new RoxyAnnotationRemapper(descriptor, annotationVisitor, remapper, metadata);
+        }
+
+        @Override
         public void visit(String name, Object value) {
             if (value instanceof String string) {
                 value = mapString(name, string);
@@ -466,33 +477,34 @@ public final class RoxyBytecodeRemapper {
 
         @Override
         public AnnotationVisitor visitArray(String name) {
-            AnnotationVisitor delegate = super.visitArray(name);
+            AnnotationVisitor delegate = av == null ? null : av.visitArray(name);
+            if (delegate == null) return null;
             return new AnnotationVisitor(Opcodes.ASM9, delegate) {
                 @Override
                 public void visit(String ignored, Object value) {
                     if (value instanceof String string) {
                         value = mapString(name, string);
                     }
-                    if (delegate != null) delegate.visit(ignored, value);
+                    delegate.visit(ignored, remapper.mapValue(value));
+                }
+
+                @Override
+                public void visitEnum(String ignored, String enumDescriptor, String value) {
+                    delegate.visitEnum(ignored, remapper.mapDesc(enumDescriptor), value);
                 }
 
                 @Override
                 public AnnotationVisitor visitAnnotation(String ignored, String nestedDescriptor) {
-                    AnnotationVisitor nested = delegate == null ? null : delegate.visitAnnotation(ignored, nestedDescriptor);
-                    return new RoxyAnnotationRemapper(nestedDescriptor, nested, remapper, metadata);
+                    AnnotationVisitor nested = delegate.visitAnnotation(ignored, remapper.mapDesc(nestedDescriptor));
+                    return nested == null ? null : new RoxyAnnotationRemapper(nestedDescriptor, nested, remapper, metadata);
                 }
 
                 @Override
-                public void visitEnd() {
-                    if (delegate != null) delegate.visitEnd();
+                public AnnotationVisitor visitArray(String ignored) {
+                    AnnotationVisitor nested = delegate.visitArray(ignored);
+                    return nested == null ? null : new RoxyAnnotationRemapper(null, nested, remapper, metadata);
                 }
             };
-        }
-
-        @Override
-        public AnnotationVisitor visitAnnotation(String name, String nestedDescriptor) {
-            AnnotationVisitor nested = super.visitAnnotation(name, nestedDescriptor);
-            return new RoxyAnnotationRemapper(nestedDescriptor, nested, remapper, metadata);
         }
 
         private String mapString(String name, String value) {
@@ -527,7 +539,7 @@ public final class RoxyBytecodeRemapper {
     }
 
     private static final class MixinMetadata {
-        private final Set<String> targets = new HashSet<>();
+        private final Set<String> targets = new LinkedHashSet<>();
         private final Map<MemberKey, MixinMember> fields = new HashMap<>();
         private final Map<MemberKey, MixinMember> methods = new HashMap<>();
         private final Map<String, MixinMember> fieldsByName = new HashMap<>();

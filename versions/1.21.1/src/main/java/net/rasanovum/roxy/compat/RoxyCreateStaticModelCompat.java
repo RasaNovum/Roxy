@@ -2,6 +2,7 @@ package net.rasanovum.roxy.compat;
 
 import java.lang.reflect.Constructor;
 import java.lang.reflect.InvocationHandler;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.util.ArrayList;
@@ -23,21 +24,20 @@ public final class RoxyCreateStaticModelCompat {
     private static final Map<Object, Map<Object, List<?>>> GEOMETRY = new LinkedHashMap<>(32, .75f, true);
     private static volatile boolean checked;
     private static volatile boolean installed;
-    private static volatile Object lastModel;
     private static volatile Access access;
     private static volatile boolean integrationFailureLogged;
 
     private RoxyCreateStaticModelCompat() {
     }
 
+    public static synchronized void clear() {
+        WRAPPERS.clear();
+        GEOMETRY.clear();
+    }
+
     public static Object wrap(Object state, Object model) {
         if (state == null || model == null || !isCreateLoaded() || !isBelt(state)) return model;
         synchronized (RoxyCreateStaticModelCompat.class) {
-            if (model != lastModel) {
-                WRAPPERS.clear();
-                GEOMETRY.clear();
-                lastModel = model;
-            }
             Key key = new Key(model, stateKey(state));
             Object cached = WRAPPERS.get(key);
             if (cached != null) return cached;
@@ -122,10 +122,26 @@ public final class RoxyCreateStaticModelCompat {
             Class<?> bakedModel = Class.forName("net.minecraft.client.resources.model.BakedModel", false, loader);
             Method getQuads = bakedModel.getMethod("getQuads", blockState, direction, random);
             Constructor<?> quadConstructor = findQuadConstructor(bakedQuad, loader);
-            Object[] directions = direction.getEnumConstants();
-            directions = Arrays.copyOf(directions, directions.length + 1);
+            Object[] enumDirections = direction.getEnumConstants();
+            Object[] directions = Arrays.copyOf(enumDirections, enumDirections.length + 1);
             directions[directions.length - 1] = null;
-            current = new Access(partialFor, partialGet, getQuads, quadConstructor, directions);
+            current = new Access(
+                    partialFor,
+                    partialGet,
+                    getQuads,
+                    quadConstructor,
+                    directions,
+                    enumDirections,
+                    bakedQuad.getMethod("getVertices"),
+                    bakedQuad.getMethod("getTintIndex"),
+                    bakedQuad.getMethod("getDirection"),
+                    bakedQuad.getMethod("getSprite"),
+                    bakedQuad.getMethod("isShade"),
+                    bakedQuad.getMethod("hasAmbientOcclusion"),
+                    direction.getMethod("getStepX"),
+                    direction.getMethod("getStepY"),
+                    direction.getMethod("getStepZ")
+            );
             access = current;
             return current;
         }
@@ -180,8 +196,7 @@ public final class RoxyCreateStaticModelCompat {
     }
 
     private static Object transform(Object quad, String facing, String slope, Access api) throws ReflectiveOperationException {
-        Method vertices = quad.getClass().getMethod("getVertices");
-        int[] original = (int[]) vertices.invoke(quad);
+        int[] original = (int[]) api.quadVertices.invoke(quad);
         int[] copy = original.clone();
         float x = ("upward".equals(slope) || "downward".equals(slope)) ? 90 : 0;
         if ("downward".equals(slope)) x += 180;
@@ -217,31 +232,27 @@ public final class RoxyCreateStaticModelCompat {
                         | ((ny & 0xFF) << 8) | ((nz & 0xFF) << 16);
             }
         }
-        int tint = (int) quad.getClass().getMethod("getTintIndex").invoke(quad);
-        Object direction = quad.getClass().getMethod("getDirection").invoke(quad);
-        direction = rotateDirection(direction, x, y, z);
-        Object sprite = quad.getClass().getMethod("getSprite").invoke(quad);
-        boolean shade = (Boolean) quad.getClass().getMethod("isShade").invoke(quad);
-        boolean ao = (Boolean) quad.getClass().getMethod("hasAmbientOcclusion").invoke(quad);
+        int tint = (int) api.quadTintIndex.invoke(quad);
+        Object direction = api.quadDirection.invoke(quad);
+        direction = rotateDirection(direction, x, y, z, api);
+        Object sprite = api.quadSprite.invoke(quad);
+        boolean shade = (Boolean) api.quadShade.invoke(quad);
+        boolean ao = (Boolean) api.quadAo.invoke(quad);
         return api.quadConstructor.newInstance(copy, tint, direction, sprite, shade, ao);
     }
 
-    private static Object rotateDirection(Object direction, float xDegrees, float yDegrees, float zDegrees)
+    private static Object rotateDirection(Object direction, float xDegrees, float yDegrees, float zDegrees, Access api)
             throws ReflectiveOperationException {
         if (direction == null) return null;
-        Class<?> type = direction.getClass();
-        Method stepX = type.getMethod("getStepX");
-        Method stepY = type.getMethod("getStepY");
-        Method stepZ = type.getMethod("getStepZ");
-        float[] rotated = rotateVector(((Number) stepX.invoke(direction)).floatValue(),
-                ((Number) stepY.invoke(direction)).floatValue(),
-                ((Number) stepZ.invoke(direction)).floatValue(), xDegrees, yDegrees, zDegrees);
+        float[] rotated = rotateVector(((Number) api.stepX.invoke(direction)).floatValue(),
+                ((Number) api.stepY.invoke(direction)).floatValue(),
+                ((Number) api.stepZ.invoke(direction)).floatValue(), xDegrees, yDegrees, zDegrees);
         Object best = direction;
         float score = -Float.MAX_VALUE;
-        for (Object candidate : type.getEnumConstants()) {
-            float dot = rotated[0] * ((Number) stepX.invoke(candidate)).floatValue()
-                    + rotated[1] * ((Number) stepY.invoke(candidate)).floatValue()
-                    + rotated[2] * ((Number) stepZ.invoke(candidate)).floatValue();
+        for (Object candidate : api.enumDirections) {
+            float dot = rotated[0] * ((Number) api.stepX.invoke(candidate)).floatValue()
+                    + rotated[1] * ((Number) api.stepY.invoke(candidate)).floatValue()
+                    + rotated[2] * ((Number) api.stepZ.invoke(candidate)).floatValue();
             if (dot > score) { score = dot; best = candidate; }
         }
         return best;
@@ -275,8 +286,23 @@ public final class RoxyCreateStaticModelCompat {
     private record Key(Object model, String state) {
     }
 
-    private record Access(Method partialFor, Method partialGet, Method getQuads,
-                          Constructor<?> quadConstructor, Object[] directions) {
+    private record Access(
+            Method partialFor,
+            Method partialGet,
+            Method getQuads,
+            Constructor<?> quadConstructor,
+            Object[] directions,
+            Object[] enumDirections,
+            Method quadVertices,
+            Method quadTintIndex,
+            Method quadDirection,
+            Method quadSprite,
+            Method quadShade,
+            Method quadAo,
+            Method stepX,
+            Method stepY,
+            Method stepZ
+    ) {
     }
 
     private static final class Handler implements InvocationHandler {
@@ -290,8 +316,14 @@ public final class RoxyCreateStaticModelCompat {
 
         @Override
         public Object invoke(Object proxy, Method method, Object[] args) throws Throwable {
-            Object result = method.invoke(delegate, args);
-            if (!"getQuads".equals(method.getName()) || args == null || args.length != 3 || !(result instanceof List<?> base)) {
+            Object result;
+            try {
+                result = method.invoke(delegate, args);
+            } catch (InvocationTargetException exception) {
+                throw exception.getCause() != null ? exception.getCause() : exception;
+            }
+            if (!"getQuads".equals(method.getName()) || args == null
+                    || (args.length != 3 && args.length != 5) || !(result instanceof List<?> base)) {
                 return result;
             }
             Object random = args[2];
@@ -307,11 +339,12 @@ public final class RoxyCreateStaticModelCompat {
 
     private static List<?> geometry(Object state, Object random) {
         synchronized (RoxyCreateStaticModelCompat.class) {
+            Object randomKey = random == null ? Void.class : random.getClass();
             Map<Object, List<?>> byRandom = GEOMETRY.computeIfAbsent(state, ignored -> new IdentityHashMap<>());
-            List<?> cached = byRandom.get(random.getClass());
+            List<?> cached = byRandom.get(randomKey);
             if (cached != null) return cached;
             List<?> result = staticQuads(state, random);
-            byRandom.put(random.getClass(), result);
+            byRandom.put(randomKey, result);
             while (GEOMETRY.size() > MAX_MODELS) GEOMETRY.remove(GEOMETRY.keySet().iterator().next());
             return result;
         }

@@ -5,6 +5,7 @@ import net.neoforged.fml.CrashReportCallables;
 import java.nio.file.Path;
 
 public final class RoxyCrashReportHeader {
+    private static final Object LOCK = new Object();
     private static final String PREFIX = "roxy.crash_header.";
     private static final String REGISTERED = PREFIX + "registered";
     private static final String FILE = PREFIX + "voxy_file";
@@ -16,7 +17,7 @@ public final class RoxyCrashReportHeader {
 
     public static void register() {
         try {
-            synchronized (System.getProperties()) {
+            synchronized (LOCK) {
                 if (Boolean.parseBoolean(System.getProperty(REGISTERED))) return;
                 System.setProperty(REGISTERED, Boolean.TRUE.toString());
                 try {
@@ -67,7 +68,7 @@ public final class RoxyCrashReportHeader {
 
     private static void advance(String state, int rank, Path path, Throwable failure) {
         try {
-            synchronized (System.getProperties()) {
+            synchronized (LOCK) {
                 String current = System.getProperty(STATE, "SEARCHING");
                 if (current.equals("FAILED") || current.equals("SUCCESS")) return;
                 if (rank < rank(current)) return;
@@ -82,6 +83,8 @@ public final class RoxyCrashReportHeader {
                         detail += ": " + failure.getMessage();
                     }
                     System.setProperty(FAILURE, sanitize(detail, 240));
+                } else {
+                    System.clearProperty(FAILURE);
                 }
             }
         } catch (Throwable ignored) {
@@ -102,19 +105,25 @@ public final class RoxyCrashReportHeader {
         };
     }
 
-    private static String getHeader() {
+    static String getHeader() {
         try {
-            String state = System.getProperty(STATE, "SEARCHING");
-            String file = System.getProperty(FILE, "the configured Voxy jar");
+            String state;
+            String file;
+            String failure;
+            synchronized (LOCK) {
+                state = System.getProperty(STATE, "SEARCHING");
+                file = System.getProperty(FILE, "the configured Voxy jar");
+                failure = System.getProperty(FAILURE);
+            }
             String status = switch (state) {
                 case "SUCCESS" -> "Roxy is present! It loaded " + file + " successfully in this run.";
                 case "FAILED" -> "Roxy is present! It attempted to load " + file + ", but loading failed in this run.";
                 case "REJECTED" -> "Roxy is present! It skipped the incompatible Voxy jar " + file + ".";
                 case "NOT_FOUND" -> "Roxy is present! It did not locate a Voxy jar before this crash.";
+                case "SEARCHING" -> "Roxy is present! It was still searching for a Voxy jar before this crash.";
                 default -> "Roxy is present! It found " + file + ", but loading had not completed before this crash.";
             };
             if (state.equals("FAILED") || state.equals("REJECTED")) {
-                String failure = System.getProperty(FAILURE);
                 if (failure != null && !failure.isBlank()) status += "\nLoading failure: " + sanitize(failure, 240);
             }
             return status

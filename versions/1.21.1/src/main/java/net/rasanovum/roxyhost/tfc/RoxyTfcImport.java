@@ -13,7 +13,7 @@ import org.slf4j.LoggerFactory;
 public final class RoxyTfcImport {
     private static volatile Method engine;
     private static volatile Method capture;
-    private static boolean warned;
+    private static volatile boolean warned;
     private static volatile ChunkCapture chunkCapture;
     private static volatile boolean chunkCaptureAbsent;
 

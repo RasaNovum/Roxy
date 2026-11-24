@@ -1,104 +1,155 @@
 package net.rasanovum.roxy.bridge;
 
+import net.rasanovum.roxy.util.RoxyReflection;
+
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.invoke.MethodType;
 import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 
 public final class RoxyBakedQuadBridge {
+    private static final ClassValue<ConsumerAccess> CONSUMERS = new ClassValue<>() {
+        @Override
+        protected ConsumerAccess computeValue(Class<?> type) {
+            return ConsumerAccess.resolve(type);
+        }
+    };
+    private static final ClassValue<QuadAccess> QUADS = new ClassValue<>() {
+        @Override
+        protected QuadAccess computeValue(Class<?> type) {
+            return QuadAccess.resolve(type);
+        }
+    };
+    private static final ClassValue<MethodHandle> SPRITE_CONTENTS = new ClassValue<>() {
+        @Override
+        protected MethodHandle computeValue(Class<?> type) {
+            try {
+                Method method = RoxyReflection.findMethod(type, "contents");
+                return MethodHandles.lookup().unreflect(method)
+                        .asType(MethodType.methodType(Object.class, Object.class));
+            } catch (ReflectiveOperationException exception) {
+                throw new IllegalStateException(exception);
+            }
+        }
+    };
+    private static final ClassValue<MethodHandle> ANIMATED_TEXTURE = new ClassValue<>() {
+        @Override
+        protected MethodHandle computeValue(Class<?> type) {
+            try {
+                Field field = RoxyReflection.findField(type, "animatedTexture");
+                return MethodHandles.lookup().unreflectGetter(field)
+                        .asType(MethodType.methodType(Object.class, Object.class));
+            } catch (ReflectiveOperationException exception) {
+                throw new IllegalStateException(exception);
+            }
+        }
+    };
+
     private RoxyBakedQuadBridge() {
     }
 
     public static Object writeQuad(Object consumer, Object quad, int metadata) {
         try {
-            Class<?> consumerType = consumer.getClass();
-            Class<?> quadType = quad.getClass();
+            ConsumerAccess consumerAccess = CONSUMERS.get(consumer.getClass());
+            QuadAccess quadAccess = QUADS.get(quad.getClass());
 
-            boolean shaded = (Boolean) findMethod(quadType, "isShade").invoke(quad);
-            if (shaded) {
-                Field anyShaded = findField(consumerType, "anyShaded");
-                anyShaded.setBoolean(consumer, true);
+            if ((boolean) quadAccess.isShade.invokeExact(quad)) {
+                consumerAccess.setAnyShaded.invokeExact(consumer, true);
             }
 
-            if (hasAnimatedTexture(quad, quadType)) {
-                Field anyDarkenedTexture = findField(consumerType, "anyDarkendTex");
-                anyDarkenedTexture.setBoolean(consumer, true);
+            if (hasAnimatedTexture(quad, quadAccess)) {
+                consumerAccess.setAnyDarkendTex.invokeExact(consumer, true);
             }
 
-            findDeclaredMethod(consumerType, "ensureCanPut").invoke(consumer);
-            int[] vertices = (int[]) findMethod(quadType, "getVertices").invoke(quad);
+            consumerAccess.ensureCanPut.invokeExact(consumer);
+            int[] vertices = (int[]) quadAccess.getVertices.invokeExact(quad);
             int stride = vertices.length / 4;
             if (stride < 6 || stride * 4 != vertices.length) {
                 throw new IllegalStateException("Unexpected BakedQuad vertex stride: " + vertices.length);
             }
 
-            Method addVertex = findMethod(consumerType, "addVertex", float.class, float.class, float.class);
-            Method setUv = findMethod(consumerType, "setUv", float.class, float.class);
-            Method meta = findMethod(consumerType, "meta", int.class);
             for (int vertex = 0; vertex < 4; vertex++) {
                 int offset = vertex * stride;
-                addVertex.invoke(
+                consumerAccess.addVertex.invokeExact(
                         consumer,
                         Float.intBitsToFloat(vertices[offset]),
                         Float.intBitsToFloat(vertices[offset + 1]),
                         Float.intBitsToFloat(vertices[offset + 2])
                 );
-                setUv.invoke(
+                consumerAccess.setUv.invokeExact(
                         consumer,
                         Float.intBitsToFloat(vertices[offset + 4]),
                         Float.intBitsToFloat(vertices[offset + 5])
                 );
-                meta.invoke(consumer, metadata);
+                consumerAccess.meta.invokeExact(consumer, metadata);
             }
             return consumer;
-        } catch (InvocationTargetException exception) {
-            Throwable cause = exception.getCause();
-            if (cause instanceof RuntimeException runtime) throw runtime;
-            if (cause instanceof Error error) throw error;
-            throw new IllegalStateException("Unable to write a 1.21.1 BakedQuad", cause);
-        } catch (ReflectiveOperationException | RuntimeException exception) {
+        } catch (RuntimeException | Error exception) {
+            throw exception;
+        } catch (Throwable exception) {
             throw new IllegalStateException("Unable to write a 1.21.1 BakedQuad", exception);
         }
     }
 
-    private static boolean hasAnimatedTexture(Object quad, Class<?> quadType)
-            throws ReflectiveOperationException {
-        Object sprite = findMethod(quadType, "getSprite").invoke(quad);
+    private static boolean hasAnimatedTexture(Object quad, QuadAccess quadAccess) throws Throwable {
+        Object sprite = quadAccess.getSprite.invokeExact(quad);
         if (sprite == null) return false;
-        Object contents = findMethod(sprite.getClass(), "contents").invoke(sprite);
+        Object contents = SPRITE_CONTENTS.get(sprite.getClass()).invokeExact(sprite);
         if (contents == null) return false;
-        Field animatedTexture = findField(contents.getClass(), "animatedTexture");
-        return animatedTexture.get(contents) != null;
+        return ANIMATED_TEXTURE.get(contents.getClass()).invokeExact(contents) != null;
     }
 
-    private static Method findMethod(Class<?> type, String name, Class<?>... parameters)
-            throws NoSuchMethodException {
-        Method method = type.getMethod(name, parameters);
-        method.trySetAccessible();
-        return method;
-    }
-
-    private static Method findDeclaredMethod(Class<?> type, String name, Class<?>... parameters)
-            throws NoSuchMethodException {
-        for (Class<?> current = type; current != null; current = current.getSuperclass()) {
+    private record ConsumerAccess(
+            MethodHandle setAnyShaded,
+            MethodHandle setAnyDarkendTex,
+            MethodHandle ensureCanPut,
+            MethodHandle addVertex,
+            MethodHandle setUv,
+            MethodHandle meta
+    ) {
+        private static ConsumerAccess resolve(Class<?> type) {
             try {
-                Method method = current.getDeclaredMethod(name, parameters);
-                method.trySetAccessible();
-                return method;
-            } catch (NoSuchMethodException ignored) {
+                MethodHandles.Lookup lookup = MethodHandles.lookup();
+                return new ConsumerAccess(
+                        lookup.unreflectSetter(RoxyReflection.findField(type, "anyShaded"))
+                                .asType(MethodType.methodType(void.class, Object.class, boolean.class)),
+                        lookup.unreflectSetter(RoxyReflection.findField(type, "anyDarkendTex"))
+                                .asType(MethodType.methodType(void.class, Object.class, boolean.class)),
+                        lookup.unreflect(RoxyReflection.findMethod(type, "ensureCanPut"))
+                                .asType(MethodType.methodType(void.class, Object.class)),
+                        lookup.unreflect(RoxyReflection.findMethod(type, "addVertex", float.class, float.class, float.class))
+                                .asType(MethodType.methodType(void.class, Object.class, float.class, float.class, float.class)),
+                        lookup.unreflect(RoxyReflection.findMethod(type, "setUv", float.class, float.class))
+                                .asType(MethodType.methodType(void.class, Object.class, float.class, float.class)),
+                        lookup.unreflect(RoxyReflection.findMethod(type, "meta", int.class))
+                                .asType(MethodType.methodType(void.class, Object.class, int.class))
+                );
+            } catch (ReflectiveOperationException exception) {
+                throw new IllegalStateException(exception);
             }
         }
-        throw new NoSuchMethodException(type.getName() + "." + name);
     }
 
-    private static Field findField(Class<?> type, String name) throws NoSuchFieldException {
-        for (Class<?> current = type; current != null; current = current.getSuperclass()) {
+    private record QuadAccess(
+            MethodHandle isShade,
+            MethodHandle getVertices,
+            MethodHandle getSprite
+    ) {
+        private static QuadAccess resolve(Class<?> type) {
             try {
-                Field field = current.getDeclaredField(name);
-                field.trySetAccessible();
-                return field;
-            } catch (NoSuchFieldException ignored) {
+                MethodHandles.Lookup lookup = MethodHandles.lookup();
+                return new QuadAccess(
+                        lookup.unreflect(RoxyReflection.findMethod(type, "isShade"))
+                                .asType(MethodType.methodType(boolean.class, Object.class)),
+                        lookup.unreflect(RoxyReflection.findMethod(type, "getVertices"))
+                                .asType(MethodType.methodType(int[].class, Object.class)),
+                        lookup.unreflect(RoxyReflection.findMethod(type, "getSprite"))
+                                .asType(MethodType.methodType(Object.class, Object.class))
+                );
+            } catch (ReflectiveOperationException exception) {
+                throw new IllegalStateException(exception);
             }
         }
-        throw new NoSuchFieldException(type.getName() + "." + name);
     }
 }

@@ -67,7 +67,9 @@ public final class RoxyCompatConfig {
     }
 
     private static void write(Path path, Settings settings) throws IOException {
-        Path temporary = Files.createTempFile(path.getParent(), "roxy-compat-", ".tmp");
+        Path parent = path.toAbsolutePath().getParent();
+        if (parent != null) Files.createDirectories(parent);
+        Path temporary = Files.createTempFile(parent, "roxy-compat-", ".tmp");
         try {
             Files.writeString(temporary, GSON.toJson(settings) + System.lineSeparator());
             Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING);
@@ -77,8 +79,12 @@ public final class RoxyCompatConfig {
     }
 
     private static Path configPath() {
-        Path directory = FMLPaths.CONFIGDIR.get();
-        return directory == null ? null : directory.resolve(FILE_NAME);
+        try {
+            Path directory = FMLPaths.CONFIGDIR.get();
+            return directory == null ? null : directory.resolve(FILE_NAME);
+        } catch (RuntimeException | LinkageError ignored) {
+            return null;
+        }
     }
 
     private static final class Startup {

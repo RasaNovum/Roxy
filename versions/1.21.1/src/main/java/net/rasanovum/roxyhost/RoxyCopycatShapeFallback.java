@@ -30,12 +30,22 @@ public final class RoxyCopycatShapeFallback {
     }
 
     public static BlockState approximate(BlockState copycatState, BlockState materialState) {
+        if (copycatState == null || materialState == null) return materialState;
         if (copycatState.getBlock() instanceof StairBlock) {
             BlockState target = STAIR_TARGETS.computeIfAbsent(materialState.getBlock(), block -> resolve(block, true));
-            return target.setValue(StairBlock.FACING, copycatState.getValue(StairBlock.FACING))
-                    .setValue(StairBlock.HALF, copycatState.getValue(StairBlock.HALF))
-                    .setValue(StairBlock.SHAPE, copycatState.getValue(StairBlock.SHAPE))
-                    .setValue(StairBlock.WATERLOGGED, waterlogged(copycatState));
+            if (copycatState.hasProperty(StairBlock.FACING) && target.hasProperty(StairBlock.FACING)) {
+                target = target.setValue(StairBlock.FACING, copycatState.getValue(StairBlock.FACING));
+            }
+            if (copycatState.hasProperty(StairBlock.HALF) && target.hasProperty(StairBlock.HALF)) {
+                target = target.setValue(StairBlock.HALF, copycatState.getValue(StairBlock.HALF));
+            }
+            if (copycatState.hasProperty(StairBlock.SHAPE) && target.hasProperty(StairBlock.SHAPE)) {
+                target = target.setValue(StairBlock.SHAPE, copycatState.getValue(StairBlock.SHAPE));
+            }
+            if (target.hasProperty(StairBlock.WATERLOGGED)) {
+                target = target.setValue(StairBlock.WATERLOGGED, waterlogged(copycatState));
+            }
+            return target;
         }
 
         if (!copycatState.hasProperty(SlabBlock.TYPE)) return materialState;
@@ -47,8 +57,13 @@ public final class RoxyCopycatShapeFallback {
         }
 
         BlockState target = SLAB_TARGETS.computeIfAbsent(materialState.getBlock(), block -> resolve(block, false));
-        return target.setValue(SlabBlock.TYPE, type)
-                .setValue(SlabBlock.WATERLOGGED, type != SlabType.DOUBLE && waterlogged(copycatState));
+        if (target.hasProperty(SlabBlock.TYPE)) {
+            target = target.setValue(SlabBlock.TYPE, type);
+        }
+        if (target.hasProperty(SlabBlock.WATERLOGGED)) {
+            target = target.setValue(SlabBlock.WATERLOGGED, type != SlabType.DOUBLE && waterlogged(copycatState));
+        }
+        return target;
     }
 
     private static boolean waterlogged(BlockState state) {

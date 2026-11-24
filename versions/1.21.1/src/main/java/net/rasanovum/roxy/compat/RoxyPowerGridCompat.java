@@ -1,28 +1,47 @@
 package net.rasanovum.roxy.compat;
 
+import net.neoforged.fml.loading.LoadingModList;
+import net.rasanovum.roxy.util.RoxyClassLoaders;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
-import java.util.UUID;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 
 public final class RoxyPowerGridCompat {
+    private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
     private static final double CACHE_DISTANCE_SQUARED = 64.0 * 64.0;
     private static final double MAX_RENDER_DISTANCE_SQUARED = 1024.0 * 1024.0;
     private static final int STORE_VERSION = 1;
+    private static final int MAX_TRACKED_WIRES = 8192;
+    private static final long WRITE_RETRY_BACKOFF_NANOS = TimeUnit.SECONDS.toNanos(30L);
+    private static final Object STATE_LOCK = new Object();
     private static final Map<UUID, Object> WIRES = new LinkedHashMap<>();
     private static final Map<UUID, Object> STORED_WIRES = new LinkedHashMap<>();
     private static final Map<UUID, Object> PENDING_WIRES = new LinkedHashMap<>();
     private static final Set<UUID> DESTROYED_WIRES = ConcurrentHashMap.newKeySet();
     private static final Map<MethodKey, Method[]> METHOD_CACHE = new ConcurrentHashMap<>();
     private static final Map<FieldKey, Field> FIELD_CACHE = new ConcurrentHashMap<>();
+    private static final ExecutorService STORE_IO = Executors.newSingleThreadExecutor(task -> {
+        Thread thread = new Thread(task, "Roxy PowerGrid wire store");
+        thread.setDaemon(true);
+        return thread;
+    });
     private static final ClassValue<Boolean> WIRE_TYPES = new ClassValue<>() {
         @Override
         protected Boolean computeValue(Class<?> type) {
@@ -32,91 +51,146 @@ public final class RoxyPowerGridCompat {
             return false;
         }
     };
+    private static volatile Boolean powerGridInstalled;
     private static Object level;
     private static Path storePath;
     private static boolean storeDirty;
+    private static boolean writeInFlight;
+    private static long nextWriteAttemptNanos;
     private static boolean reflectionFailureReported;
 
     private RoxyPowerGridCompat() {
     }
 
-    public static void track(Object entity) {
-        if (!RoxyCompatConfig.powerGridEnabled()) return;
-        if (!isPowerGridWire(entity)) return;
+    public static boolean isPowerGridInstalled() {
+        Boolean cached = powerGridInstalled;
+        if (cached != null) return cached;
         try {
-            ensureLevel(invoke(entity, "level"));
-            purgeDestroyedWires();
-            UUID uuid = (UUID) invoke(entity, "getUUID");
-            WIRES.remove(uuid);
-            PENDING_WIRES.put(uuid, entity);
-        } catch (ReflectiveOperationException | RuntimeException exception) {
-            reportReflectionFailure(exception);
+            LoadingModList mods = LoadingModList.get();
+            if (mods == null) return false;
+            boolean present = mods.getModFileById("powergrid") != null;
+            powerGridInstalled = present;
+            return present;
+        } catch (RuntimeException | LinkageError ignored) {
+            return false;
+        }
+    }
+
+    public static void onWorldUnload() {
+        synchronized (STATE_LOCK) {
+            try {
+                if (level != null) persistPendingLocked();
+                if (storeDirty) scheduleWriteStoreLocked(true);
+            } catch (ReflectiveOperationException | RuntimeException exception) {
+                reportReflectionFailure(exception);
+            }
+            WIRES.clear();
+            STORED_WIRES.clear();
+            PENDING_WIRES.clear();
+            DESTROYED_WIRES.clear();
+            storeDirty = false;
+            storePath = null;
+            level = null;
+            nextWriteAttemptNanos = 0L;
+        }
+    }
+
+    public static void track(Object entity) {
+        if (!RoxyCompatConfig.powerGridEnabled() || !isPowerGridInstalled()) return;
+        if (!isPowerGridWire(entity)) return;
+        synchronized (STATE_LOCK) {
+            try {
+                ensureLevelLocked(invoke(entity, "level"));
+                purgeDestroyedWiresLocked();
+                UUID uuid = (UUID) invoke(entity, "getUUID");
+                WIRES.remove(uuid);
+                putBounded(PENDING_WIRES, uuid, entity);
+            } catch (ReflectiveOperationException | RuntimeException exception) {
+                reportReflectionFailure(exception);
+            }
         }
     }
 
     public static void cache(Object entity, Object reason) {
-        if (!RoxyCompatConfig.powerGridEnabled()) return;
+        if (!RoxyCompatConfig.powerGridEnabled() || !isPowerGridInstalled()) return;
         if (!isPowerGridWire(entity)) return;
-        try {
-            Object minecraft = minecraft();
-            Object entityLevel = invoke(entity, "level");
-            ensureLevel(entityLevel);
-            purgeDestroyedWires();
-            UUID uuid = (UUID) invoke(entity, "getUUID");
-            if (DESTROYED_WIRES.contains(uuid)) {
-                removeWire(uuid);
-                return;
+        synchronized (STATE_LOCK) {
+            try {
+                Object minecraft = minecraft();
+                Object entityLevel = invoke(entity, "level");
+                ensureLevelLocked(entityLevel);
+                purgeDestroyedWiresLocked();
+                UUID uuid = (UUID) invoke(entity, "getUUID");
+                if (reason != null && Boolean.TRUE.equals(invoke(reason, "shouldDestroy"))) {
+                    removeWireLocked(uuid);
+                    return;
+                }
+                if (DESTROYED_WIRES.contains(uuid)) {
+                    removeWireLocked(uuid);
+                    return;
+                }
+                Object player = field(minecraft, "player");
+                if (player == null || ((Number) invoke(entity, "distanceToSqr", player)).doubleValue() < CACHE_DISTANCE_SQUARED) {
+                    removeWireLocked(uuid);
+                    return;
+                }
+                Object tag = saveTag(entity);
+                Object snapshot = snapshot(tag, entityLevel);
+                if (snapshot == null) return;
+                PENDING_WIRES.remove(uuid);
+                putBounded(STORED_WIRES, uuid, tag);
+                storeDirty = true;
+                putBounded(WIRES, uuid, snapshot);
+            } catch (ReflectiveOperationException | RuntimeException exception) {
+                reportReflectionFailure(exception);
             }
-            Object player = field(minecraft, "player");
-            if (player == null || ((Number) invoke(entity, "distanceToSqr", player)).doubleValue() < CACHE_DISTANCE_SQUARED) {
-                removeWire(uuid);
-                return;
-            }
-            Object tag = saveTag(entity);
-            Object snapshot = snapshot(tag, entityLevel);
-            if (snapshot == null) return;
-            PENDING_WIRES.remove(uuid);
-            STORED_WIRES.put(uuid, tag);
-            storeDirty = true;
-            WIRES.put(uuid, snapshot);
-        } catch (ReflectiveOperationException | RuntimeException exception) {
-            reportReflectionFailure(exception);
         }
     }
 
     public static void tick() {
-        if (!RoxyCompatConfig.powerGridEnabled()) return;
-        try {
-            Object minecraft = minecraft();
-            Object currentLevel = field(minecraft, "level");
-            ensureLevel(currentLevel);
-            if (currentLevel == null) return;
-            purgeDestroyedWires();
-            persistPending();
-            if (storeDirty) writeStore();
-        } catch (ReflectiveOperationException | RuntimeException exception) {
-            reportReflectionFailure(exception);
+        if (!RoxyCompatConfig.powerGridEnabled() || !isPowerGridInstalled()) return;
+        synchronized (STATE_LOCK) {
+            try {
+                Object minecraft = minecraft();
+                Object currentLevel = field(minecraft, "level");
+                ensureLevelLocked(currentLevel);
+                if (currentLevel == null) return;
+                purgeDestroyedWiresLocked();
+                persistPendingLocked();
+                if (storeDirty && !writeInFlight && System.nanoTime() - nextWriteAttemptNanos >= 0L) {
+                    scheduleWriteStoreLocked(false);
+                }
+            } catch (ReflectiveOperationException | RuntimeException exception) {
+                reportReflectionFailure(exception);
+            }
         }
     }
 
     public static void render(Object event) {
-        if (!RoxyCompatConfig.powerGridEnabled()) return;
+        if (!RoxyCompatConfig.powerGridEnabled() || !isPowerGridInstalled()) return;
+        List<Object> wiresSnapshot;
+        Object currentLevel;
+        Object player;
+        Object minecraft;
         try {
             if (!invoke(event, "getStage").toString().endsWith("after_entities")) return;
-            Object minecraft = minecraft();
-            Object currentLevel = field(minecraft, "level");
-            Object player = field(minecraft, "player");
+            minecraft = minecraft();
+            currentLevel = field(minecraft, "level");
+            player = field(minecraft, "player");
             if (currentLevel == null || player == null) return;
-            if (level != currentLevel) return;
-            purgeDestroyedWires();
-            if (WIRES.isEmpty()) return;
+            synchronized (STATE_LOCK) {
+                if (level != currentLevel) return;
+                purgeDestroyedWiresLocked();
+                if (WIRES.isEmpty()) return;
+                wiresSnapshot = new ArrayList<>(WIRES.values());
+            }
 
             Object camera = invoke(event, "getCamera");
             Object cameraPosition = invoke(camera, "getPosition");
             Object frustum = invoke(event, "getFrustum");
-            double cameraX = ((Number) publicField(cameraPosition, "x")).doubleValue();
-            double cameraY = ((Number) publicField(cameraPosition, "y")).doubleValue();
-            double cameraZ = ((Number) publicField(cameraPosition, "z")).doubleValue();
+            double cameraX = ((Number) field(cameraPosition, "x")).doubleValue();
+            double cameraY = ((Number) field(cameraPosition, "y")).doubleValue();
+            double cameraZ = ((Number) field(cameraPosition, "z")).doubleValue();
             Object renderBuffers = invoke(minecraft, "renderBuffers");
             Object buffers = invoke(renderBuffers, "bufferSource");
             Object partialTick = invoke(event, "getPartialTick");
@@ -124,9 +198,8 @@ public final class RoxyPowerGridCompat {
             Object dispatcher = invoke(minecraft, "getEntityRenderDispatcher");
             Object poseStack = invoke(event, "getPoseStack");
             Method render = method(dispatcher.getClass(), "render", 9);
-            boolean renderedAny = false;
 
-            for (Object wire : WIRES.values()) {
+            for (Object wire : wiresSnapshot) {
                 int id = ((Number) invoke(wire, "getId")).intValue();
                 if (invoke(currentLevel, "getEntity", id) == wire) continue;
                 double distance = ((Number) invoke(wire, "distanceToSqr", player)).doubleValue();
@@ -144,29 +217,37 @@ public final class RoxyPowerGridCompat {
                         buffers,
                         0x00F000F0
                 );
-                renderedAny = true;
             }
-            if (renderedAny) invoke(buffers, "endBatch");
         } catch (ReflectiveOperationException | RuntimeException exception) {
             reportReflectionFailure(exception);
         }
     }
 
+    private static void putBounded(Map<UUID, Object> map, UUID key, Object value) {
+        map.put(key, value);
+        while (map.size() > MAX_TRACKED_WIRES) {
+            var it = map.keySet().iterator();
+            if (!it.hasNext()) break;
+            it.next();
+            it.remove();
+        }
+    }
+
     private static Object minecraft() throws ReflectiveOperationException {
-        ClassLoader loader = Thread.currentThread().getContextClassLoader();
+        ClassLoader loader = RoxyClassLoaders.findGameLoader();
         Class<?> type = Class.forName("net.minecraft.client.Minecraft", false, loader);
         return method(type, "getInstance", 0).invoke(null);
     }
 
     private static Object saveTag(Object entity) throws ReflectiveOperationException {
-        ClassLoader loader = Thread.currentThread().getContextClassLoader();
+        ClassLoader loader = RoxyClassLoaders.findGameLoader(entity.getClass().getClassLoader());
         Object tag = Class.forName("net.minecraft.nbt.CompoundTag", false, loader).getConstructor().newInstance();
         invoke(entity, "save", tag);
         return tag;
     }
 
     private static Object snapshot(Object tag, Object currentLevel) throws ReflectiveOperationException {
-        ClassLoader loader = Thread.currentThread().getContextClassLoader();
+        ClassLoader loader = RoxyClassLoaders.findGameLoader(currentLevel.getClass().getClassLoader());
         Class<?> entityType = Class.forName("net.minecraft.world.entity.EntityType", false, loader);
         Optional<?> type = (Optional<?>) staticInvoke(entityType, "byString", invoke(tag, "getString", "id"));
         if (type.isEmpty()) return null;
@@ -175,12 +256,12 @@ public final class RoxyPowerGridCompat {
         return copy;
     }
 
-    private static void persistPending() throws ReflectiveOperationException {
+    private static void persistPendingLocked() throws ReflectiveOperationException {
         boolean changed = false;
         for (var iterator = PENDING_WIRES.entrySet().iterator(); iterator.hasNext();) {
             Map.Entry<UUID, Object> entry = iterator.next();
             try {
-                STORED_WIRES.put(entry.getKey(), saveTag(entry.getValue()));
+                putBounded(STORED_WIRES, entry.getKey(), saveTag(entry.getValue()));
                 iterator.remove();
                 changed = true;
             } catch (ReflectiveOperationException | RuntimeException ignored) {
@@ -189,25 +270,26 @@ public final class RoxyPowerGridCompat {
         if (changed) storeDirty = true;
     }
 
-    private static void ensureLevel(Object currentLevel) throws ReflectiveOperationException {
+    private static void ensureLevelLocked(Object currentLevel) throws ReflectiveOperationException {
         if (level == currentLevel) return;
-        if (level != null) persistPending();
-        if (storeDirty) writeStore();
+        if (level != null) persistPendingLocked();
+        if (storeDirty) scheduleWriteStoreLocked(true);
         WIRES.clear();
         STORED_WIRES.clear();
         PENDING_WIRES.clear();
         DESTROYED_WIRES.clear();
         storeDirty = false;
+        nextWriteAttemptNanos = 0L;
         reflectionFailureReported = false;
         storePath = currentLevel == null ? null : storePath(currentLevel);
-        if (currentLevel != null) readStore(currentLevel);
+        if (currentLevel != null) readStoreLocked(currentLevel);
         level = currentLevel;
     }
 
     private static Path storePath(Object currentLevel) throws ReflectiveOperationException {
         Object server = invoke(minecraft(), "getSingleplayerServer");
         if (server == null) return null;
-        ClassLoader loader = Thread.currentThread().getContextClassLoader();
+        ClassLoader loader = RoxyClassLoaders.findGameLoader(currentLevel.getClass().getClassLoader());
         Class<?> levelResource = Class.forName("net.minecraft.world.level.storage.LevelResource", false, loader);
         Object root = levelResource.getField("ROOT").get(null);
         Path world = (Path) invoke(server, "getWorldPath", root);
@@ -215,9 +297,9 @@ public final class RoxyPowerGridCompat {
         return world.resolve("data").resolve("roxy-power-grid-" + dimension + ".dat");
     }
 
-    private static void readStore(Object currentLevel) throws ReflectiveOperationException {
+    private static void readStoreLocked(Object currentLevel) throws ReflectiveOperationException {
         if (storePath == null || !Files.isRegularFile(storePath)) return;
-        ClassLoader loader = Thread.currentThread().getContextClassLoader();
+        ClassLoader loader = RoxyClassLoaders.findGameLoader(currentLevel.getClass().getClassLoader());
         Class<?> nbtIo = Class.forName("net.minecraft.nbt.NbtIo", false, loader);
         Object root = staticInvoke(nbtIo, "read", storePath);
         if (root == null) return;
@@ -230,38 +312,54 @@ public final class RoxyPowerGridCompat {
             Object wire = snapshot(tag, currentLevel);
             if (!isPowerGridWire(wire)) continue;
             UUID uuid = (UUID) invoke(wire, "getUUID");
-            STORED_WIRES.put(uuid, tag);
-            WIRES.put(uuid, wire);
+            putBounded(STORED_WIRES, uuid, tag);
+            putBounded(WIRES, uuid, wire);
         }
     }
 
-    private static void writeStore() throws ReflectiveOperationException {
-        if (storePath == null) {
+    private static void scheduleWriteStoreLocked(boolean force) throws ReflectiveOperationException {
+        Path targetPath = storePath;
+        if (targetPath == null) {
             storeDirty = false;
             return;
         }
-        ClassLoader loader = Thread.currentThread().getContextClassLoader();
+        if (writeInFlight && !force) return;
+        ClassLoader loader = RoxyClassLoaders.findGameLoader();
         Object root = Class.forName("net.minecraft.nbt.CompoundTag", false, loader).getConstructor().newInstance();
         Object tags = Class.forName("net.minecraft.nbt.ListTag", false, loader).getConstructor().newInstance();
         invoke(root, "putInt", "Version", STORE_VERSION);
         for (Object tag : STORED_WIRES.values()) invoke(tags, "add", tag);
         invoke(root, "put", "Wires", tags);
-        try {
-            Files.createDirectories(storePath.getParent());
-        } catch (IOException exception) {
-            throw new ReflectiveOperationException(exception);
-        }
-        staticInvoke(Class.forName("net.minecraft.nbt.NbtIo", false, loader), "write", root, storePath);
         storeDirty = false;
+        writeInFlight = true;
+        STORE_IO.execute(() -> {
+            try {
+                Path parent = targetPath.getParent();
+                if (parent != null) Files.createDirectories(parent);
+                staticInvoke(Class.forName("net.minecraft.nbt.NbtIo", false, loader), "write", root, targetPath);
+            } catch (IOException | ReflectiveOperationException | RuntimeException exception) {
+                synchronized (STATE_LOCK) {
+                    if (storePath == targetPath) {
+                        storeDirty = true;
+                        nextWriteAttemptNanos = System.nanoTime() + WRITE_RETRY_BACKOFF_NANOS;
+                    }
+                }
+                LOGGER.warn("Unable to persist Roxy PowerGrid wire store", exception);
+            } finally {
+                synchronized (STATE_LOCK) {
+                    writeInFlight = false;
+                }
+            }
+        });
     }
 
-    private static void removeWire(UUID uuid) throws ReflectiveOperationException {
+    private static void removeWireLocked(UUID uuid) {
         WIRES.remove(uuid);
         PENDING_WIRES.remove(uuid);
         if (STORED_WIRES.remove(uuid) != null) storeDirty = true;
     }
 
-    private static void purgeDestroyedWires() throws ReflectiveOperationException {
+    private static void purgeDestroyedWiresLocked() {
         for (var iterator = DESTROYED_WIRES.iterator(); iterator.hasNext();) {
             UUID uuid = iterator.next();
             WIRES.remove(uuid);
@@ -272,12 +370,15 @@ public final class RoxyPowerGridCompat {
     }
 
     public static void markServerRemoval(Object entity, Object level) {
-        if (!RoxyCompatConfig.powerGridEnabled()) return;
+        if (!RoxyCompatConfig.powerGridEnabled() || !isPowerGridInstalled()) return;
         if (!isPowerGridWire(entity)) return;
         try {
             if (Boolean.TRUE.equals(invoke(level, "isClientSide"))) return;
             Object reason = invoke(entity, "getRemovalReason");
             if (reason != null && Boolean.TRUE.equals(invoke(reason, "shouldDestroy"))) {
+                if (DESTROYED_WIRES.size() >= MAX_TRACKED_WIRES) {
+                    DESTROYED_WIRES.clear();
+                }
                 DESTROYED_WIRES.add((UUID) invoke(entity, "getUUID"));
             }
         } catch (ReflectiveOperationException | RuntimeException exception) {
@@ -312,10 +413,6 @@ public final class RoxyPowerGridCompat {
     }
 
     private static Object field(Object owner, String name) throws ReflectiveOperationException {
-        return field(owner.getClass(), name).get(owner);
-    }
-
-    private static Object publicField(Object owner, String name) throws ReflectiveOperationException {
         return field(owner.getClass(), name).get(owner);
     }
 
@@ -390,6 +487,6 @@ public final class RoxyPowerGridCompat {
     private static void reportReflectionFailure(Throwable exception) {
         if (reflectionFailureReported) return;
         reflectionFailureReported = true;
-        System.err.println("Roxy Power Grid compatibility disabled: " + exception);
+        LOGGER.warn("Roxy Power Grid compatibility encountered an error", exception);
     }
 }

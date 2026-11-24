@@ -8,6 +8,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.Pseudo;
 import org.spongepowered.asm.mixin.injection.At;
 
+import java.util.Locale;
 import java.util.Map;
 
 @Pseudo
@@ -21,7 +22,7 @@ public abstract class RoxyLodIrisShaderMixin {
     private static Object roxy$patchFragment(Map<?, ?> sources, Object key, Operation<Object> original,
                                                @Local(argsOnly = true) String name) {
         Object value = original.call(sources, key);
-        if (!(value instanceof String) || key == null || !key.toString().toLowerCase().contains("fragment")) {
+        if (!(value instanceof String) || key == null || !key.toString().toLowerCase(Locale.ROOT).contains("fragment")) {
             return value;
         }
         return RoxyLodEntityShader.patchIris(name, (String) value);

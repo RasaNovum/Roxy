@@ -10,10 +10,8 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.stream.Stream;
 
 
@@ -22,14 +20,15 @@ public final class RoxyMappings {
     private static final String RUNTIME_MAP_RESOURCE = "roxy/mappings/runtime-1.21.1.map";
     private static final String INTERMEDIARY_RESOURCE = "roxy/mappings/intermediary-1.21.1.tiny";
     private static final String MOJMAP_RESOURCE = "roxy/mappings/client-1.21.1.txt";
+    private static final String AMBIGUOUS = "\u0000";
 
     private final Map<String, String> classes;
     private final Map<MemberKey, String> fields;
     private final Map<MemberKey, String> methods;
-    private final Map<OwnerName, Set<String>> fieldNames;
-    private final Map<OwnerName, Set<String>> methodNames;
-    private final Map<String, Set<String>> globalFieldNames;
-    private final Map<String, Set<String>> globalMethodNames;
+    private final Map<OwnerName, String> fieldNames;
+    private final Map<OwnerName, String> methodNames;
+    private final Map<String, String> globalFieldNames;
+    private final Map<String, String> globalMethodNames;
 
     private RoxyMappings(
             Map<String, String> classes,
@@ -60,20 +59,31 @@ public final class RoxyMappings {
         MojmapMappings mojmap = explicitNeoForm == null
                 ? readBundledMojmap()
                 : MojmapMappings.read(explicitNeoForm);
-        Path intermediaryPath = explicitIntermediary != null ? explicitIntermediary : findIntermediaryMapping();
-        if (intermediaryPath != null) {
-            try (InputStream input = Files.newInputStream(intermediaryPath)) {
+        if (explicitIntermediary != null) {
+            try (InputStream input = Files.newInputStream(explicitIntermediary)) {
                 return parseTiny(input, mojmap);
             }
         }
 
         InputStream resource = openResource(INTERMEDIARY_RESOURCE);
-        if (resource == null) {
-            throw new IOException("Roxy: missing Fabric intermediary mapping " + INTERMEDIARY_RESOURCE);
+        if (resource != null) {
+            try (InputStream mappingResource = resource) {
+                return parseTiny(mappingResource, mojmap);
+            }
         }
-        try (InputStream mappingResource = resource) {
-            return parseTiny(mappingResource, mojmap);
+
+        Path cachedIntermediaryJar = findCachedIntermediaryJar();
+        if (cachedIntermediaryJar != null) {
+            try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(cachedIntermediaryJar.toFile())) {
+                java.util.zip.ZipEntry entry = zip.getEntry("mappings/mappings.tiny");
+                if (entry != null) {
+                    try (InputStream input = zip.getInputStream(entry)) {
+                        return parseTiny(input, mojmap);
+                    }
+                }
+            }
         }
+        throw new IOException("Roxy: missing Fabric intermediary mapping " + INTERMEDIARY_RESOURCE);
     }
 
     private static InputStream openResource(String resourcePath) {
@@ -215,61 +225,52 @@ public final class RoxyMappings {
         return mappings;
     }
 
-    private static Map<OwnerName, Set<String>> indexNames(Map<MemberKey, String> members) {
-        Map<OwnerName, Set<String>> result = new HashMap<>();
-        for (MemberKey key : members.keySet()) {
-            result.computeIfAbsent(new OwnerName(key.owner(), key.name()), ignored -> new HashSet<>()).add(members.get(key));
+    private static Map<OwnerName, String> indexNames(Map<MemberKey, String> members) {
+        Map<OwnerName, String> result = new HashMap<>(members.size());
+        for (Map.Entry<MemberKey, String> entry : members.entrySet()) {
+            MemberKey key = entry.getKey();
+            OwnerName ownerName = new OwnerName(key.owner(), key.name());
+            String mapped = entry.getValue();
+            String existing = result.putIfAbsent(ownerName, mapped);
+            if (existing != null && !existing.equals(mapped)) {
+                result.put(ownerName, AMBIGUOUS);
+            }
         }
         return result;
     }
 
-    private static Map<String, Set<String>> indexGlobalNames(Map<MemberKey, String> members) {
-        Map<String, Set<String>> result = new HashMap<>();
-        for (MemberKey key : members.keySet()) {
-            result.computeIfAbsent(key.name(), ignored -> new HashSet<>()).add(members.get(key));
+    private static Map<String, String> indexGlobalNames(Map<MemberKey, String> members) {
+        Map<String, String> result = new HashMap<>(members.size());
+        for (Map.Entry<MemberKey, String> entry : members.entrySet()) {
+            String name = entry.getKey().name();
+            if (!isIntermediaryMemberName(name)) continue;
+            String mapped = entry.getValue();
+            String existing = result.putIfAbsent(name, mapped);
+            if (existing != null && !existing.equals(mapped)) {
+                result.put(name, AMBIGUOUS);
+            }
         }
         return result;
     }
 
-    private static Path findIntermediaryMapping() {
-        String explicit = System.getProperty("roxy.intermediaryMapping");
-        if (explicit != null && !explicit.isBlank()) {
-            Path path = Paths.get(explicit);
-            if (Files.isRegularFile(path)) return path;
-        }
+    private static boolean isIntermediaryMemberName(String name) {
+        return name.startsWith("field_") || name.startsWith("method_") || name.startsWith("comp_");
+    }
 
+    private static Path findCachedIntermediaryJar() {
         Path home = Paths.get(System.getProperty("user.home", ""));
         Path cache = home.resolve(".gradle/caches/modules-2/files-2.1/net.fabricmc/intermediary/" + MINECRAFT_VERSION);
         if (Files.isDirectory(cache)) {
             try (Stream<Path> files = Files.walk(cache, 4)) {
-                Path found = files
+                return files
                         .filter(Files::isRegularFile)
                         .filter(path -> path.getFileName().toString().endsWith(".jar"))
                         .findFirst()
                         .orElse(null);
-                if (found != null) {
-                    Path extracted = extractTinyToTemp(found);
-                    if (extracted != null) return extracted;
-                }
             } catch (IOException ignored) {
             }
         }
         return null;
-    }
-
-    private static Path extractTinyToTemp(Path jar) {
-        try (java.util.zip.ZipFile zip = new java.util.zip.ZipFile(jar.toFile())) {
-            java.util.zip.ZipEntry entry = zip.getEntry("mappings/mappings.tiny");
-            if (entry == null) return null;
-            Path extracted = Files.createTempFile("roxy-intermediary-", ".tiny");
-            extracted.toFile().deleteOnExit();
-            try (InputStream input = zip.getInputStream(entry)) {
-                Files.copy(input, extracted, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
-            }
-            return extracted;
-        } catch (IOException ignored) {
-            return null;
-        }
     }
 
     private static Path explicitNeoFormMapping() {
@@ -327,16 +328,17 @@ public final class RoxyMappings {
         return mapped.equals(name) ? uniqueGlobalName(globalMethodNames, name) : mapped;
     }
 
-    private static String uniqueName(Map<OwnerName, Set<String>> names, String owner, String name) {
-        Set<String> matches = names.get(new OwnerName(owner, name));
-        if (matches == null || matches.size() != 1) return name;
-        return matches.iterator().next();
+    private static String uniqueName(Map<OwnerName, String> names, String owner, String name) {
+        String match = names.get(new OwnerName(owner, name));
+        if (match == null || AMBIGUOUS.equals(match)) return name;
+        return match;
     }
 
-    private static String uniqueGlobalName(Map<String, Set<String>> names, String name) {
-        Set<String> matches = names.get(name);
-        if (matches == null || matches.size() != 1) return name;
-        return matches.iterator().next();
+    private static String uniqueGlobalName(Map<String, String> names, String name) {
+        if (!isIntermediaryMemberName(name)) return name;
+        String match = names.get(name);
+        if (match == null || AMBIGUOUS.equals(match)) return name;
+        return match;
     }
 
     public String mapMemberReference(String reference, String defaultOwner) {
@@ -485,9 +487,7 @@ public final class RoxyMappings {
                 String source = line.substring(0, arrow).strip();
                 String officialName = line.substring(arrow + 4).strip();
                 if (officialName.isEmpty()) continue;
-                if (source.matches("\\d+:\\d+:.*")) {
-                    source = source.substring(source.indexOf(':', source.indexOf(':') + 1) + 1).strip();
-                }
+                source = stripLineRange(source);
                 MemberSource member = MemberSource.parse(source);
                 if (member == null) continue;
                 String descriptor = member.descriptor(result.mojToOfficial);
@@ -496,6 +496,22 @@ public final class RoxyMappings {
                 }
             }
             return result;
+        }
+
+        private static String stripLineRange(String source) {
+            int firstColon = source.indexOf(':');
+            if (firstColon <= 0) return source;
+            for (int i = 0; i < firstColon; i++) {
+                char c = source.charAt(i);
+                if (c < '0' || c > '9') return source;
+            }
+            int secondColon = source.indexOf(':', firstColon + 1);
+            if (secondColon <= firstColon + 1) return source;
+            for (int i = firstColon + 1; i < secondColon; i++) {
+                char c = source.charAt(i);
+                if (c < '0' || c > '9') return source;
+            }
+            return source.substring(secondColon + 1).strip();
         }
     }
 

@@ -16,8 +16,10 @@ import java.io.InputStreamReader;
 import java.net.JarURLConnection;
 import java.net.URISyntaxException;
 import java.net.URL;
+import java.net.URLConnection;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Enumeration;
@@ -35,10 +37,11 @@ public final class RoxyLocator implements IModFileCandidateLocator {
 
         try {
             Path voxyJar = findVoxyJar();
-            if (voxyJar == null) RoxyCrashReportHeader.notFound();
-            else RoxyCrashReportHeader.located(voxyJar);
-            if (voxyJar != null && !context.isLocated(voxyJar)) {
-                pipeline.addPath(voxyJar, ModFileDiscoveryAttributes.DEFAULT, IncompatibleFileReporting.WARN_ON_KNOWN_INCOMPATIBILITY);
+            if (voxyJar != null) {
+                RoxyCrashReportHeader.located(voxyJar);
+                if (!context.isLocated(voxyJar)) {
+                    pipeline.addPath(voxyJar, ModFileDiscoveryAttributes.DEFAULT, IncompatibleFileReporting.WARN_ON_KNOWN_INCOMPATIBILITY);
+                }
             }
         } catch (Exception e) {
             RoxyCrashReportHeader.failed(e);
@@ -141,15 +144,19 @@ public final class RoxyLocator implements IModFileCandidateLocator {
             String id = split != -1 ? entry.substring(0, split) : "";
             String path = split != -1 ? entry.substring(split + 2) : entry;
             if (id.equals("roxy") && !path.isEmpty()) {
-                Path candidate = Path.of(path);
-                if (Files.isDirectory(candidate)) {
-                    paths.add(candidate);
+                try {
+                    Path candidate = Path.of(path);
+                    if (Files.isDirectory(candidate)) {
+                        paths.add(candidate);
+                    }
+                } catch (InvalidPathException ignored) {
                 }
             }
         }
 
         try {
-            if (RoxyLocator.class.getProtectionDomain().getCodeSource() != null) {
+            if (RoxyLocator.class.getProtectionDomain().getCodeSource() != null
+                    && RoxyLocator.class.getProtectionDomain().getCodeSource().getLocation() != null) {
                 Path codeSource = Path.of(
                         RoxyLocator.class.getProtectionDomain().getCodeSource().getLocation().toURI()
                 ).toAbsolutePath().normalize();
@@ -165,28 +172,40 @@ public final class RoxyLocator implements IModFileCandidateLocator {
 
     static Path findVoxyJar() throws IOException, URISyntaxException {
         ClassLoader classLoader = Thread.currentThread().getContextClassLoader();
+        if (classLoader == null) {
+            classLoader = RoxyLocator.class.getClassLoader();
+        }
         Path patchedFallback = null;
-        Enumeration<URL> urls = classLoader.getResources("fabric.mod.json");
-        while (urls.hasMoreElements()) {
-            Path candidate = pathForFabricMetadata(urls.nextElement());
-            if (candidate != null && isVoxy(candidate)) {
-                if (isPatchedVoxy(candidate)) {
-                    if (patchedFallback == null) patchedFallback = candidate;
-                    continue;
+        if (classLoader != null) {
+            Enumeration<URL> urls = classLoader.getResources("fabric.mod.json");
+            while (urls.hasMoreElements()) {
+                try {
+                    Path candidate = pathForFabricMetadata(urls.nextElement());
+                    if (candidate != null && isVoxy(candidate)) {
+                        if (isPatchedVoxy(candidate)) {
+                            if (patchedFallback == null) patchedFallback = candidate;
+                            continue;
+                        }
+                        return candidate;
+                    }
+                } catch (URISyntaxException | InvalidPathException | IOException ignored) {
                 }
-                return candidate;
             }
         }
 
         String classPath = System.getProperty("java.class.path", "");
         for (String entry : classPath.split(System.getProperty("path.separator"))) {
-            Path candidate = Path.of(entry);
-            if (isVoxy(candidate)) {
-                if (isPatchedVoxy(candidate)) {
-                    if (patchedFallback == null) patchedFallback = candidate;
-                    continue;
+            if (entry.isBlank()) continue;
+            try {
+                Path candidate = Path.of(entry);
+                if (isVoxy(candidate)) {
+                    if (isPatchedVoxy(candidate)) {
+                        if (patchedFallback == null) patchedFallback = candidate;
+                        continue;
+                    }
+                    return candidate;
                 }
-                return candidate;
+            } catch (InvalidPathException ignored) {
             }
         }
         return patchedFallback;
@@ -200,7 +219,9 @@ public final class RoxyLocator implements IModFileCandidateLocator {
     }
 
     private static Path pathForFabricMetadata(URL url) throws IOException, URISyntaxException {
-        if (url.openConnection() instanceof JarURLConnection jarConnection) {
+        URLConnection connection = url.openConnection();
+        connection.setUseCaches(false);
+        if (connection instanceof JarURLConnection jarConnection) {
             return Path.of(jarConnection.getJarFileURL().toURI());
         }
         if (url.getProtocol().equals("file")) {
@@ -214,10 +235,12 @@ public final class RoxyLocator implements IModFileCandidateLocator {
         try {
             JsonObject metadata;
             if (Files.isDirectory(candidate)) {
-                try (InputStream input = Files.newInputStream(candidate.resolve("fabric.mod.json"))) {
+                Path modJson = candidate.resolve("fabric.mod.json");
+                if (!Files.isRegularFile(modJson)) return false;
+                try (InputStream input = Files.newInputStream(modJson)) {
                     metadata = JsonParser.parseReader(new InputStreamReader(input, StandardCharsets.UTF_8)).getAsJsonObject();
                 }
-            } else {
+            } else if (Files.isRegularFile(candidate)) {
                 try (ZipFile zip = new ZipFile(candidate.toFile())) {
                     var entry = zip.getEntry("fabric.mod.json");
                     if (entry == null) return false;
@@ -225,6 +248,8 @@ public final class RoxyLocator implements IModFileCandidateLocator {
                         metadata = JsonParser.parseReader(new InputStreamReader(input, StandardCharsets.UTF_8)).getAsJsonObject();
                     }
                 }
+            } else {
+                return false;
             }
             JsonElement id = metadata.get("id");
             return id != null && id.isJsonPrimitive() && id.getAsString().equals("voxy");

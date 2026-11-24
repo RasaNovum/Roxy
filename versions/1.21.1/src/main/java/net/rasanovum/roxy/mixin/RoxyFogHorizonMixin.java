@@ -17,7 +17,7 @@ import org.spongepowered.asm.mixin.injection.At;
 
 @Mixin(LevelRenderer.class)
 public final class RoxyFogHorizonMixin {
-    @WrapOperation(method = "renderSky", at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/vertex/VertexBuffer;drawWithShader(Lorg/joml/Matrix4f;Lorg/joml/Matrix4f;Lnet/minecraft/client/renderer/ShaderInstance;)V", ordinal = 0))
+    @WrapOperation(method = "renderSky", at = @At(value = "INVOKE", target = "Lcom/mojang/blaze3d/vertex/VertexBuffer;drawWithShader(Lorg/joml/Matrix4f;Lorg/joml/Matrix4f;Lnet/minecraft/client/renderer/ShaderInstance;)V", ordinal = 0), require = 0)
     private void roxy$fadeHorizon(VertexBuffer buffer, Matrix4f modelView, Matrix4f projection,
                                   ShaderInstance shader, Operation<Void> original,
                                   @Local(argsOnly = true) Camera camera, @Local(argsOnly = true) boolean thickFog) {

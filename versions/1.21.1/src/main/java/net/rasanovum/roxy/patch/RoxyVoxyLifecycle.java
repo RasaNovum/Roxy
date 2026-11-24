@@ -20,10 +20,11 @@ public final class RoxyVoxyLifecycle {
     private static boolean hasTicked;
     private static long lastErrorLogAtNanos;
     private static boolean hasLoggedError;
-    private static Object instance;
-    private static Object engine;
-    private static Object renderer;
+    private static WeakReference<Object> instance = new WeakReference<>(null);
+    private static WeakReference<Object> engine = new WeakReference<>(null);
+    private static WeakReference<Object> renderer = new WeakReference<>(null);
     private static WeakReference<Object> level = new WeakReference<>(null);
+    private static boolean worldActive;
     private static boolean rendererReady;
 
     private RoxyVoxyLifecycle() {
@@ -46,14 +47,24 @@ public final class RoxyVoxyLifecycle {
             Object currentLevel = resolved.level.get(minecraft);
             if (currentInstance != null) RoxyVoxyRendererReloadCompat.processPending();
             Object currentEngine = currentLevel == null ? null : resolved.worldEngine.invoke(null, currentLevel);
-            if (currentLevel == null) RoxyVoxyRenderPatch.retireWorld();
-            else if (currentLevel != level.get()) RoxyVoxyRenderPatch.activateWorld();
+            if (currentLevel == null) {
+                if (worldActive) {
+                    worldActive = false;
+                    RoxyVoxyRenderPatch.retireWorld();
+                }
+            } else if (!worldActive || currentLevel != level.get()) {
+                worldActive = true;
+                RoxyVoxyRenderPatch.activateWorld();
+            }
             level = new WeakReference<>(currentLevel);
+            Object trackedInstance = instance.get();
+            Object trackedEngine = engine.get();
+            Object trackedRenderer = renderer.get();
             if (currentInstance == null || currentEngine == null) {
-                if (instance != currentInstance || engine != currentEngine) {
-                    instance = currentInstance;
-                    engine = currentEngine;
-                    renderer = null;
+                if (trackedInstance != currentInstance || trackedEngine != currentEngine || trackedRenderer != null) {
+                    instance = new WeakReference<>(currentInstance);
+                    engine = new WeakReference<>(currentEngine);
+                    renderer = new WeakReference<>(null);
                     rendererReady = false;
                 }
                 return;
@@ -62,12 +73,12 @@ public final class RoxyVoxyLifecycle {
             Object levelRenderer = resolved.levelRenderer.get(minecraft);
             if (levelRenderer == null) return;
             Object currentRenderer = resolved.getRenderSystem.invoke(levelRenderer);
-            boolean worldChanged = currentInstance != instance || currentEngine != engine;
-            boolean rendererChanged = currentRenderer != renderer;
+            boolean worldChanged = currentInstance != trackedInstance || currentEngine != trackedEngine;
+            boolean rendererChanged = currentRenderer != trackedRenderer;
             if (worldChanged || rendererChanged) {
-                instance = currentInstance;
-                engine = currentEngine;
-                renderer = currentRenderer;
+                instance = new WeakReference<>(currentInstance);
+                engine = new WeakReference<>(currentEngine);
+                renderer = new WeakReference<>(currentRenderer);
                 rendererReady = false;
                 if (worldChanged) RoxyVoxyRenderPatch.observeWorld(currentLevel, currentEngine);
                 if (currentRenderer != null) {

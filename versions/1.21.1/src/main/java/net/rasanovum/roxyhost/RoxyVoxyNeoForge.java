@@ -17,9 +17,13 @@ import net.rasanovum.roxy.loader.RoxyFabricRuntime;
 import net.rasanovum.roxy.loader.RoxyCrashReportHeader;
 import net.rasanovum.roxy.client.RoxyClientWarnings;
 import net.rasanovum.roxy.tfc.TfcCompatConfig;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Mod(value = "voxy", dist = Dist.CLIENT)
 public final class RoxyVoxyNeoForge {
+    private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
+
     public RoxyVoxyNeoForge(IEventBus modBus) {
         RoxyCrashReportHeader.register();
         modBus.addListener(this::onClientSetup);
@@ -60,23 +64,26 @@ public final class RoxyVoxyNeoForge {
                 Object command = commands.getMethod("register").invoke(null);
                 event.getDispatcher().register((LiteralArgumentBuilder) command);
             } catch (ReflectiveOperationException | LinkageError exception) {
-                System.err.println("Roxy: unable to register the Voxy client command: " + exception);
+                LOGGER.warn("Unable to register the Voxy client command", exception);
             }
         }
     }
 
     private void onRenderLevelStage(RenderLevelStageEvent event) {
-        RoxyPowerGridCompat.render(event);
+        if (event.getStage() == RenderLevelStageEvent.Stage.AFTER_ENTITIES) {
+            RoxyPowerGridCompat.render(event);
+        }
     }
 
     private void onClientTick(ClientTickEvent.Post event) {
         net.rasanovum.roxy.compat.RoxyCopycatsCompat.tick();
         RoxyVoxyLifecycle.tick();
-        if (RoxyCompatConfig.tfcEnabled() && net.minecraft.client.Minecraft.getInstance().level == null) {
+        boolean tfcActive = RoxyCompatConfig.tfcEnabled() && TfcCompatConfig.installed();
+        if (tfcActive && net.minecraft.client.Minecraft.getInstance().level == null) {
             net.rasanovum.roxyhost.tfc.RoxyTfcTerrainRefresh.reset();
         }
         RoxyPowerGridCompat.tick();
-        if (RoxyCompatConfig.tfcEnabled()) net.rasanovum.roxyhost.tfc.RoxyTfcProgress.tick();
+        if (tfcActive) net.rasanovum.roxyhost.tfc.RoxyTfcProgress.tick();
     }
 
     private void onEntityLeaveLevel(EntityLeaveLevelEvent event) {

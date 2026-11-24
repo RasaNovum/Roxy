@@ -167,9 +167,10 @@ public final class RoxyCopycatsCompat {
     }
 
     public static void blockEntityDataUpdated(Object packet) {
-        if (!RoxyCompatConfig.copycatsEnabled()) return;
+        if (!RoxyCompatConfig.copycatsEnabled() || packet == null) return;
+        ClassLoader loader = packet.getClass().getClassLoader();
+        if (!hasCopycatMod(loader)) return;
         try {
-            ClassLoader loader = packet.getClass().getClassLoader();
             Class<?> minecraftType = Class.forName("net.minecraft.client.Minecraft", false, loader);
             Object minecraft = minecraftType.getMethod("getInstance").invoke(null);
             Object level = field(minecraft, "level");
@@ -286,20 +287,41 @@ public final class RoxyCopycatsCompat {
         return copycatModLoaded;
     }
 
+    private static final Set<String> COPYCAT_BLOCK_INTERFACES = Set.of(
+            "com.copycatsplus.copycats.foundation.copycat.ICopycatBlock",
+            "com.copycatsplus.copycats.foundation.copycat.multistate.IMultiStateCopycatBlock",
+            "com.simibubi.create.content.decoration.copycat.ICopycatBlock"
+    );
+    private static final Set<String> COPYCAT_ENTITY_INTERFACES = Set.of(
+            "com.copycatsplus.copycats.foundation.copycat.ICopycatBlockEntity",
+            "com.copycatsplus.copycats.foundation.copycat.multistate.IMultiStateCopycatBlockEntity",
+            "com.simibubi.create.content.decoration.copycat.ICopycatBlockEntity"
+    );
+    private static final ConcurrentHashMap<ClassLoader, Object> BLOCK_REGISTRIES = new ConcurrentHashMap<>();
+    private static final ConcurrentHashMap<ArityMethodKey, Optional<Method>> ARITY_METHODS = new ConcurrentHashMap<>();
+
+    private static boolean implementsAnyInterface(Class<?> type, Set<String> targets) {
+        if (type == null) return false;
+        for (Class<?> current = type; current != null; current = current.getSuperclass()) {
+            if (matchesInterfaceHierarchy(current.getInterfaces(), targets)) return true;
+        }
+        return false;
+    }
+
+    private static boolean matchesInterfaceHierarchy(Class<?>[] interfaces, Set<String> targets) {
+        for (Class<?> iface : interfaces) {
+            if (targets.contains(iface.getName())) return true;
+            if (matchesInterfaceHierarchy(iface.getInterfaces(), targets)) return true;
+        }
+        return false;
+    }
+
     private static boolean isPotentialCopycatState(Object state) {
         try {
             String key = registryKey(state);
             if (key.contains("copycat")) return true;
             Object block = invoke(state, "getBlock");
-            for (Class<?> type = block.getClass(); type != null; type = type.getSuperclass()) {
-                for (Class<?> iface : type.getInterfaces()) {
-                    String name = iface.getName();
-                    if (name.equals("com.copycatsplus.copycats.foundation.copycat.ICopycatBlock")
-                            || name.equals("com.copycatsplus.copycats.foundation.copycat.multistate.IMultiStateCopycatBlock")
-                            || name.equals("com.simibubi.create.content.decoration.copycat.ICopycatBlock")) return true;
-                }
-            }
-            return false;
+            return block != null && implementsAnyInterface(block.getClass(), COPYCAT_BLOCK_INTERFACES);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
             return false;
         }
@@ -308,14 +330,7 @@ public final class RoxyCopycatsCompat {
     private static boolean isCopycat(Object state, Object blockEntity) {
         if (isPotentialCopycatState(state)) return true;
         if (blockEntity == null) return false;
-        for (Class<?> type = blockEntity.getClass(); type != null; type = type.getSuperclass()) {
-            for (Class<?> iface : type.getInterfaces()) {
-                String name = iface.getName();
-                if (name.equals("com.copycatsplus.copycats.foundation.copycat.ICopycatBlockEntity")
-                        || name.equals("com.copycatsplus.copycats.foundation.copycat.multistate.IMultiStateCopycatBlockEntity")
-                        || name.equals("com.simibubi.create.content.decoration.copycat.ICopycatBlockEntity")) return true;
-            }
-        }
+        if (implementsAnyInterface(blockEntity.getClass(), COPYCAT_ENTITY_INTERFACES)) return true;
         try {
             String key = registryKey(state);
             return (key.startsWith("create:") || key.startsWith("copycats:"))
@@ -381,9 +396,18 @@ public final class RoxyCopycatsCompat {
 
     private static String registryKey(Object state, ClassLoader loader) throws ReflectiveOperationException {
         Object block = invoke(state, "getBlock");
-        Class<?> registries = Class.forName("net.minecraft.core.registries.BuiltInRegistries", false, loader);
-        Object blocks = field(registries, "BLOCK");
+        Object blocks = blockRegistry(loader);
         return String.valueOf(invoke(blocks, "getKey", block));
+    }
+
+    private static Object blockRegistry(ClassLoader loader) throws ReflectiveOperationException {
+        ClassLoader key = loader != null ? loader : RoxyCopycatsCompat.class.getClassLoader();
+        Object cached = BLOCK_REGISTRIES.get(key);
+        if (cached != null) return cached;
+        Class<?> registries = Class.forName("net.minecraft.core.registries.BuiltInRegistries", false, key);
+        Object blocks = field(registries, "BLOCK");
+        if (blocks != null) BLOCK_REGISTRIES.putIfAbsent(key, blocks);
+        return blocks;
     }
 
     private static Object invokeStatic(Class<?> type, String name, Object... arguments) throws ReflectiveOperationException {
@@ -427,12 +451,19 @@ public final class RoxyCopycatsCompat {
     }
 
     private static Method findMethod(Class<?> type, String name, int parameterCount) {
-        for (Class<?> current = type; current != null; current = current.getSuperclass()) {
-            for (Method method : current.getMethods()) {
-                if (method.getName().equals(name) && method.getParameterCount() == parameterCount) return method;
+        return ARITY_METHODS.computeIfAbsent(new ArityMethodKey(type, name, parameterCount), key -> {
+            for (Class<?> current = key.type; current != null; current = current.getSuperclass()) {
+                for (Method method : current.getMethods()) {
+                    if (method.getName().equals(key.name) && method.getParameterCount() == key.parameterCount) {
+                        return Optional.of(method);
+                    }
+                }
             }
-        }
-        return null;
+            return Optional.empty();
+        }).orElse(null);
+    }
+
+    private record ArityMethodKey(Class<?> type, String name, int parameterCount) {
     }
 
     private static Object field(Object target, String name) throws ReflectiveOperationException {

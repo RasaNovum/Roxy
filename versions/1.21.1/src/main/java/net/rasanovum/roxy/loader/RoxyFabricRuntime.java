@@ -7,17 +7,23 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.zip.ZipFile;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
-
+import net.neoforged.fml.ModList;
+import net.neoforged.fml.loading.FMLPaths;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class RoxyFabricRuntime {
+    private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
     private static boolean initialized;
 
     private RoxyFabricRuntime() {
@@ -44,11 +50,18 @@ public final class RoxyFabricRuntime {
             try {
                 initializeForgifiedLoader();
             } catch (RuntimeException exception) {
-                if (!(exception.getCause() instanceof ClassNotFoundException)) throw exception;
+                if (!(exception.getCause() instanceof ClassNotFoundException)) {
+                    LOGGER.warn("Roxy: Forgified Fabric Loader initialization failed, falling back", exception);
+                }
             }
             if (isVoxyManagedByFabricLoader()) return;
         }
         invokeFallbackLoader();
+    }
+
+    private static ClassLoader fabricClassLoader() {
+        ClassLoader context = Thread.currentThread().getContextClassLoader();
+        return context != null ? context : RoxyFabricRuntime.class.getClassLoader();
     }
 
     private static boolean isVoxyManagedByFabricLoader() {
@@ -56,7 +69,7 @@ public final class RoxyFabricRuntime {
             Class<?> api = Class.forName(
                     "net.fabricmc.loader.api.FabricLoader",
                     false,
-                    RoxyFabricRuntime.class.getClassLoader()
+                    fabricClassLoader()
             );
             Object loader = api.getMethod("getInstance").invoke(null);
             if (loader == null || loader.getClass().getName().contains("RoxyFabricLoader")) return false;
@@ -76,7 +89,14 @@ public final class RoxyFabricRuntime {
         addPathList(candidates, System.getProperty("java.class.path"));
         addPathList(candidates, System.getenv("MOD_CLASSES"));
 
-        Path gameDirectory = Path.of("").toAbsolutePath().normalize();
+        Path gameDirectory = null;
+        try {
+            gameDirectory = FMLPaths.GAMEDIR.get();
+        } catch (RuntimeException | LinkageError ignored) {
+        }
+        if (gameDirectory == null) {
+            gameDirectory = Path.of("").toAbsolutePath().normalize();
+        }
         candidates.add(gameDirectory.resolve("mods"));
         candidates.add(gameDirectory);
 
@@ -92,7 +112,11 @@ public final class RoxyFabricRuntime {
             String path = entry;
             int marker = path.indexOf("%%");
             if (marker >= 0) path = path.substring(marker + 2);
-            if (!path.isBlank()) candidates.add(Path.of(path));
+            if (path.isBlank()) continue;
+            try {
+                candidates.add(Path.of(path));
+            } catch (InvalidPathException ignored) {
+            }
         }
     }
 
@@ -102,11 +126,18 @@ public final class RoxyFabricRuntime {
             if (Files.isDirectory(candidate)) {
                 try (var files = Files.list(candidate)) {
                     return files.filter(Files::isRegularFile)
-                            .filter(file -> file.getFileName().toString().endsWith(".jar"))
+                            .filter(file -> {
+                                Path fn = file.getFileName();
+                                return fn != null && fn.toString().toLowerCase(Locale.ROOT).endsWith(".jar");
+                            })
                             .anyMatch(RoxyFabricRuntime::containsForgifiedFabricLoader);
                 }
             }
-            if (!candidate.getFileName().toString().endsWith(".jar")) return false;
+            Path fileNamePath = candidate.getFileName();
+            if (fileNamePath == null) return false;
+            String fileName = fileNamePath.toString().toLowerCase(Locale.ROOT);
+            if (!fileName.endsWith(".jar")) return false;
+            if (fileName.startsWith("forgified-fabric-loader-")) return true;
             try (ZipFile zip = new ZipFile(candidate.toFile())) {
                 return zip.stream().anyMatch(entry ->
                         entry.getName().startsWith("META-INF/jars/forgified-fabric-loader-")
@@ -122,9 +153,17 @@ public final class RoxyFabricRuntime {
             Class<?> implementation = Class.forName(
                     "net.fabricmc.loader.impl.FabricLoaderImpl",
                     true,
-                    RoxyFabricRuntime.class.getClassLoader()
+                    fabricClassLoader()
             );
             Object instance = implementation.getField("INSTANCE").get(null);
+            try {
+                var frozenField = implementation.getDeclaredField("frozen");
+                frozenField.setAccessible(true);
+                if (Boolean.TRUE.equals(frozenField.get(instance))) {
+                    return;
+                }
+            } catch (ReflectiveOperationException ignored) {
+            }
             implementation.getMethod("setup").invoke(instance);
         } catch (ReflectiveOperationException exception) {
             throw new RuntimeException("Roxy: unable to initialize Forgified Fabric Loader", exception);
@@ -136,11 +175,13 @@ public final class RoxyFabricRuntime {
     }
 
     private static void invokeVoxyEntrypoints() {
-        Path voxyJar;
-        try {
-            voxyJar = RoxyLocator.findVoxyJar();
-        } catch (IOException | java.net.URISyntaxException exception) {
-            throw new RuntimeException("Roxy: unable to locate Voxy entrypoints", exception);
+        Path voxyJar = resolveVoxyModPath();
+        if (voxyJar == null) {
+            try {
+                voxyJar = RoxyLocator.findVoxyJar();
+            } catch (IOException | java.net.URISyntaxException exception) {
+                throw new RuntimeException("Roxy: unable to locate Voxy entrypoints", exception);
+            }
         }
         if (voxyJar == null) return;
 
@@ -148,13 +189,26 @@ public final class RoxyFabricRuntime {
         invokeEntrypointNames(voxyJar, "client", "onInitializeClient");
     }
 
+    private static Path resolveVoxyModPath() {
+        try {
+            ModList modList = ModList.get();
+            if (modList == null) return null;
+            return modList.getModContainerById("voxy")
+                    .map(container -> container.getModInfo().getOwningFile().getFile().getFilePath())
+                    .orElse(null);
+        } catch (RuntimeException | LinkageError ignored) {
+            return null;
+        }
+    }
+
     private static void invokeEntrypointNames(Path modFile, String key, String methodName) {
+        ClassLoader loader = fabricClassLoader();
         for (String className : readEntrypointNames(modFile, key)) {
             try {
                 Class<?> entrypointClass = Class.forName(
                         className,
                         true,
-                        Thread.currentThread().getContextClassLoader()
+                        loader
                 );
                 Object entrypoint = entrypointClass.getDeclaredConstructor().newInstance();
                 Method method = entrypointClass.getMethod(methodName);
@@ -200,23 +254,36 @@ public final class RoxyFabricRuntime {
     }
 
     private static InputStream openEntry(Path file, String name) throws IOException {
-        if (java.nio.file.Files.isDirectory(file)) {
-            return java.nio.file.Files.newInputStream(file.resolve(name));
+        if (Files.isDirectory(file)) {
+            Path target = file.resolve(name);
+            return Files.isRegularFile(target) ? Files.newInputStream(target) : null;
         }
 
         ZipFile zip = new ZipFile(file.toFile());
-        var entry = zip.getEntry(name);
-        if (entry == null) {
-            zip.close();
-            return null;
-        }
-        InputStream input = zip.getInputStream(entry);
-        return new java.io.FilterInputStream(input) {
-            @Override
-            public void close() throws IOException {
-                super.close();
+        try {
+            var entry = zip.getEntry(name);
+            if (entry == null) {
                 zip.close();
+                return null;
             }
-        };
+            InputStream input = zip.getInputStream(entry);
+            return new java.io.FilterInputStream(input) {
+                @Override
+                public void close() throws IOException {
+                    try {
+                        super.close();
+                    } finally {
+                        zip.close();
+                    }
+                }
+            };
+        } catch (IOException | RuntimeException exception) {
+            try {
+                zip.close();
+            } catch (IOException suppressed) {
+                exception.addSuppressed(suppressed);
+            }
+            throw exception;
+        }
     }
 }

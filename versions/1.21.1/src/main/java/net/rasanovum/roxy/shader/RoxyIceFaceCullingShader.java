@@ -6,15 +6,16 @@ public final class RoxyIceFaceCullingShader {
     private static final String MODEL_FLAG_ANCHOR = "    uint flags = 0;\n";
     private static final String MODEL_FLAG_PATCH = "    flags |= uint((model.flagsA & 0x10u) != 0u) << 7;\n";
     private static final String FRAGMENT_ANCHOR =
-            "        colour = textureGrad(blockModelAtlas, texPos, dx, dy);\n    }// else {";
+            "        colour = textureGrad(blockModelAtlas, texPos, dx, dy);\n    }";
     private static final String FRAGMENT_PATCH = """
 
+        #ifdef TRANSLUCENT
         if ((interData.x & 0x80u) != 0u
                 && (getFace() & 1u) != uint(gl_FrontFacing != ((getFace() >> 1u) != 0u))) {
             discard;
             return;
         }
-        // else {""";
+        #endif""";
 
     private RoxyIceFaceCullingShader() {
     }
@@ -38,9 +39,7 @@ public final class RoxyIceFaceCullingShader {
 
     private static String patchFragment(String source) {
         if (source.contains(FRAGMENT_PATCH)) return source;
-        return replaceOnce(source, FRAGMENT_ANCHOR,
-                "        colour = textureGrad(blockModelAtlas, texPos, dx, dy);\n    }"
-                        + FRAGMENT_PATCH,
+        return replaceOnce(source, FRAGMENT_ANCHOR, FRAGMENT_ANCHOR + FRAGMENT_PATCH,
                 "Unsupported Voxy quad fragment layout");
     }
 

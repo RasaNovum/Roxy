@@ -229,26 +229,19 @@ final class RoxyTfcBytecodePatch implements Opcodes {
     }
 
     private static boolean isModelFlagsWrite(AbstractInsnNode write) {
-        AbstractInsnNode value = previousInstruction(write);
+        AbstractInsnNode value = previousRealInstruction(write);
         if (value instanceof MethodInsnNode ice && ice.getOpcode() == INVOKESTATIC
                 && ice.owner.equals("net/rasanovum/roxy/bridge/RoxyIceModelBridge")
                 && ice.name.equals("addIceBackfaceFlag") && ice.desc.equals("(Ljava/lang/Object;I)I")) {
-            AbstractInsnNode swap = previousInstruction(ice);
-            AbstractInsnNode state = previousInstruction(swap);
+            AbstractInsnNode swap = previousRealInstruction(ice);
+            AbstractInsnNode state = previousRealInstruction(swap);
             if (swap == null || swap.getOpcode() != SWAP || !(state instanceof VarInsnNode load)
                     || load.getOpcode() != ALOAD || load.var != 2) return false;
-            value = previousInstruction(state);
+            value = previousRealInstruction(state);
         }
-        AbstractInsnNode address = previousInstruction(value);
+        AbstractInsnNode address = previousRealInstruction(value);
         return value instanceof VarInsnNode flags && flags.getOpcode() == ILOAD && flags.var == 24
                 && address instanceof VarInsnNode pointer && pointer.getOpcode() == LLOAD && pointer.var == 15;
-    }
-
-    private static AbstractInsnNode previousInstruction(AbstractInsnNode instruction) {
-        if (instruction == null) return null;
-        AbstractInsnNode previous = instruction.getPrevious();
-        while (previous != null && previous.getOpcode() < 0) previous = previous.getPrevious();
-        return previous;
     }
 
     private static AbstractInsnNode previousRealInstruction(AbstractInsnNode instruction) {
@@ -330,7 +323,9 @@ final class RoxyTfcBytecodePatch implements Opcodes {
                     resolved++;
                 }
                 if (insn instanceof FieldInsnNode field && field.getOpcode() == GETFIELD
-                        && field.name.equals("neighboringFaces") && !method.name.equals("acquireNeighborData")) neighborArray = true;
+                        && field.name.equals("neighboringFaces")
+                        && !method.name.equals("acquireNeighborData")
+                        && !method.name.equals("generateMesh")) neighborArray = true;
                 if (neighborArray && insn.getOpcode() == LALOAD) {
                     InsnList hook = new InsnList();
                     hook.add(new VarInsnNode(ALOAD, 0));

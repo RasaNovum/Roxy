@@ -7,15 +7,33 @@ import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 
 public final class RoxyFabricMetadataCompat {
+    private static final String MOD_METADATA_INTERFACE = "net.fabricmc.loader.api.metadata.ModMetadata";
+
+    private static final ClassValue<Method> CUSTOM_VALUE_METHOD = new ClassValue<>() {
+        @Override
+        protected Method computeValue(Class<?> type) {
+            Class<?> apiInterface = findModMetadataInterface(type);
+            Class<?> lookupType = apiInterface != null ? apiInterface : type;
+            try {
+                Method method = lookupType.getMethod("getCustomValue", String.class);
+                method.trySetAccessible();
+                return method;
+            } catch (NoSuchMethodException ignored) {
+                return null;
+            }
+        }
+    };
+
     private RoxyFabricMetadataCompat() {
     }
 
     public static Object getCustomValue(Object metadata, String key) {
+        Object actual = invokeCustomValue(metadata, key);
+        if (actual != null) return actual;
         if ("commit".equals(key)) {
-            String commit = readCommit();
-            return stringValue(metadata, commit);
+            return stringValue(metadata, readCommit());
         }
-        return invokeCustomValue(metadata, key);
+        return null;
     }
 
     private static String readCommit() {
@@ -30,9 +48,9 @@ public final class RoxyFabricMetadataCompat {
 
     private static Object invokeCustomValue(Object metadata, String key) {
         if (metadata == null) return null;
+        Method method = CUSTOM_VALUE_METHOD.get(metadata.getClass());
+        if (method == null) return null;
         try {
-            Method method = metadata.getClass().getMethod("getCustomValue", String.class);
-            if (!method.trySetAccessible() && !method.canAccess(metadata)) return null;
             return method.invoke(metadata, key);
         } catch (InvocationTargetException exception) {
             Throwable cause = exception.getCause();
@@ -67,11 +85,19 @@ public final class RoxyFabricMetadataCompat {
 
     private static Class<?> customValueType(Object metadata) {
         if (metadata == null) return null;
-        try {
-            return metadata.getClass().getMethod("getCustomValue", String.class).getReturnType();
-        } catch (NoSuchMethodException ignored) {
-            return null;
+        Method method = CUSTOM_VALUE_METHOD.get(metadata.getClass());
+        return method == null ? null : method.getReturnType();
+    }
+
+    private static Class<?> findModMetadataInterface(Class<?> type) {
+        for (Class<?> current = type; current != null; current = current.getSuperclass()) {
+            for (Class<?> iface : current.getInterfaces()) {
+                if (MOD_METADATA_INTERFACE.equals(iface.getName())) return iface;
+                Class<?> nested = findModMetadataInterface(iface);
+                if (nested != null) return nested;
+            }
         }
+        return null;
     }
 
     @SuppressWarnings({"rawtypes", "unchecked"})

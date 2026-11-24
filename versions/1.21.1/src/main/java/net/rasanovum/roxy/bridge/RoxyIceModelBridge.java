@@ -27,8 +27,9 @@ public final class RoxyIceModelBridge {
                         blocksClass.getField("ICE"),
                         blocksClass.getField("FROSTED_ICE")
                 );
-            } catch (ReflectiveOperationException exception) {
-                throw new IllegalStateException("Unable to resolve vanilla ice blocks", exception);
+            } catch (ReflectiveOperationException | LinkageError | RuntimeException exception) {
+                warnOnce(exception);
+                return Access.UNAVAILABLE;
             }
         }
     };
@@ -41,8 +42,9 @@ public final class RoxyIceModelBridge {
 
         try {
             Access access = ACCESS.get(state.getClass());
+            if (access == Access.UNAVAILABLE) return flags;
             Object block = access.getBlock.invoke(state);
-            if (block == access.ice.get(null) || block == access.frostedIce.get(null)) {
+            if (block != null && (block == access.ice.get(null) || block == access.frostedIce.get(null))) {
                 return flags | ICE_BACKFACE_FLAG;
             }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
@@ -58,5 +60,6 @@ public final class RoxyIceModelBridge {
     }
 
     private record Access(Method getBlock, Field ice, Field frostedIce) {
+        private static final Access UNAVAILABLE = new Access(null, null, null);
     }
 }

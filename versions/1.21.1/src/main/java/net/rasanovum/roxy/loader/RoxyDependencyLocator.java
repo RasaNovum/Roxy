@@ -11,6 +11,8 @@ import net.neoforged.neoforgespi.locating.IDependencyLocator;
 import net.neoforged.neoforgespi.locating.IDiscoveryPipeline;
 import net.neoforged.neoforgespi.locating.IModFile;
 import net.neoforged.neoforgespi.locating.ModFileDiscoveryAttributes;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -19,17 +21,22 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
-import java.util.Locale;
+import java.util.ArrayList;
+import java.util.Enumeration;
 import java.util.List;
+import java.util.Locale;
 import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 import java.util.zip.ZipInputStream;
 
 public final class RoxyDependencyLocator implements IDependencyLocator {
+    private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
     private static final String RELOCATED_JARS = "META-INF/roxy-jars/";
     private static final String FABRIC_STUBS = "META-INF/jars/roxy-fabric-stubs.jar";
     private static final String MACOS_NATIVE_PATH_PROPERTY = "roxy.macos.nativePath";
+    private static final String CANDIDATE_LOCATOR_SERVICE =
+            "META-INF/services/net.neoforged.neoforgespi.locating.IModFileCandidateLocator";
     private static final List<String> MACOS_ARM64_NATIVE_JARS = List.of(
             "roxy-lwjgl-lmdb-natives-macos-arm64.jar",
             "roxy-lwjgl-zstd-natives-macos-arm64.jar",
@@ -45,25 +52,59 @@ public final class RoxyDependencyLocator implements IDependencyLocator {
 
     @Override
     public void scanMods(List<IModFile> loadedMods, IDiscoveryPipeline pipeline) {
-        boolean forgifiedFabricLoader = containsForgifiedFabricLoader(loadedMods);
-        boolean c2meOpenCl = containsC2meOpenCl(loadedMods);
-        boolean voxyLoaded = containsVoxy(loadedMods);
-        if (voxyLoaded && !forgifiedFabricLoader) addFallbackFabricStubs(pipeline);
+        boolean forgifiedFabricLoader = false;
+        boolean c2meOpenCl = false;
+        boolean voxyLoaded = false;
+        List<RelocatedModJars> modsWithJars = new ArrayList<>();
 
         for (IModFile mod : loadedMods) {
+            if (!voxyLoaded && hasModId(mod, "voxy")) voxyLoaded = true;
             Path modPath = mod.getFilePath();
             if (modPath == null || !Files.exists(modPath)) continue;
-            try (JarContents contents = JarContents.of(mod.getFilePath())) {
-                JsonArray jars = readJarsArray(contents);
-                if (jars == null) continue;
-                for (JsonElement entry : jars) {
-                    if (!entry.isJsonObject()) continue;
-                    JsonElement file = entry.getAsJsonObject().get("file");
+            Path fileNamePath = modPath.getFileName();
+            String fileName = fileNamePath == null ? "" : fileNamePath.toString().toLowerCase(Locale.ROOT);
+            if (!forgifiedFabricLoader && fileName.startsWith("forgified-fabric-loader-")) {
+                forgifiedFabricLoader = true;
+            }
+            if (!c2meOpenCl && fileName.contains("c2me") && fileName.contains("accel-opencl")) {
+                c2meOpenCl = true;
+            }
+            if (!forgifiedFabricLoader && hasForgifiedFabricLoaderNestedJar(modPath)) {
+                forgifiedFabricLoader = true;
+            }
+            try (JarContents contents = JarContents.of(modPath)) {
+                if (!c2meOpenCl && RoxyJarContents.containsFile(contents, CANDIDATE_LOCATOR_SERVICE)) {
+                    try (InputStream input = RoxyJarContents.openFile(contents, CANDIDATE_LOCATOR_SERVICE)) {
+                        if (input != null && new String(input.readAllBytes(), StandardCharsets.UTF_8)
+                                .contains("c2me.opts.accel.opencl")) {
+                            c2meOpenCl = true;
+                        }
+                    }
+                }
+                JsonObject fabricMeta = readFabricMetadata(contents);
+                if (fabricMeta != null) {
+                    if (!voxyLoaded && isVoxyFabricMetadata(fabricMeta)) voxyLoaded = true;
+                    JsonElement jarsElement = fabricMeta.get("jars");
+                    if (jarsElement != null && jarsElement.isJsonArray()) {
+                        modsWithJars.add(new RelocatedModJars(modPath, jarsElement.getAsJsonArray()));
+                    }
+                }
+            } catch (IOException | RuntimeException ignored) {
+            }
+        }
+
+        if (voxyLoaded && !forgifiedFabricLoader) addFallbackFabricStubs(pipeline);
+
+        for (RelocatedModJars entry : modsWithJars) {
+            try (JarContents contents = JarContents.of(entry.path())) {
+                for (JsonElement jarElement : entry.jars()) {
+                    if (!jarElement.isJsonObject()) continue;
+                    JsonElement file = jarElement.getAsJsonObject().get("file");
                     if (file == null || !file.isJsonPrimitive()) continue;
-                    String fileName = file.getAsString();
-                    if (!isCurrentPlatformJar(fileName) || isProvidedLibrary(fileName, c2meOpenCl)) continue;
+                    String jarName = file.getAsString();
+                    if (!isCurrentPlatformJar(jarName) || isProvidedLibrary(jarName, c2meOpenCl)) continue;
                     try {
-                        Path extracted = extract(contents, relocatedPath(fileName));
+                        Path extracted = extract(contents, relocatedPath(jarName));
                         if (extracted == null) continue;
                         IModFile library = IModFile.create(
                                 SecureJar.from(JarContents.of(extracted)),
@@ -71,30 +112,70 @@ public final class RoxyDependencyLocator implements IDependencyLocator {
                                 IModFile.Type.GAMELIBRARY,
                                 ModFileDiscoveryAttributes.DEFAULT);
                         pipeline.addModFile(library);
-                    } catch (IOException ignored) {
+                    } catch (IOException exception) {
+                        LOGGER.warn("Unable to extract nested Voxy library {} from {}", jarName, entry.path().getFileName(), exception);
                     }
                 }
-            } catch (IOException | RuntimeException ignored) {
+            } catch (IOException | RuntimeException exception) {
+                LOGGER.warn("Unable to inspect nested libraries in {}", entry.path().getFileName(), exception);
             }
         }
         if (voxyLoaded) addPreparedMacOsArm64Natives(loadedMods, pipeline);
     }
 
-    private static boolean containsVoxy(List<IModFile> loadedMods) {
-        for (IModFile mod : loadedMods) {
-            Path path = mod.getFilePath();
-            if (path == null) continue;
-            if (path.getFileName().toString().toLowerCase(Locale.ROOT).startsWith("voxy")) return true;
-            try (JarContents contents = JarContents.of(path);
-                 InputStream input = RoxyJarContents.openFile(contents, "fabric.mod.json")) {
-                if (input == null) continue;
-                JsonObject metadata = JsonParser.parseReader(new InputStreamReader(input, StandardCharsets.UTF_8)).getAsJsonObject();
-                JsonElement id = metadata.get("id");
-                if (id != null && id.isJsonPrimitive() && id.getAsString().equals("voxy")) return true;
-            } catch (IOException | RuntimeException ignored) {
+    private static boolean hasModId(IModFile mod, String modId) {
+        try {
+            var infos = mod.getModInfos();
+            if (infos == null) return false;
+            for (var info : infos) {
+                if (modId.equals(info.getModId())) return true;
             }
+        } catch (RuntimeException ignored) {
         }
         return false;
+    }
+
+    private static boolean isVoxyFabricMetadata(JsonObject metadata) {
+        JsonElement id = metadata.get("id");
+        return id != null && id.isJsonPrimitive() && "voxy".equals(id.getAsString());
+    }
+
+    private static JsonObject readFabricMetadata(JarContents contents) {
+        try (InputStream input = RoxyJarContents.openFile(contents, "fabric.mod.json")) {
+            if (input == null) return null;
+            JsonElement parsed = JsonParser.parseReader(new InputStreamReader(input, StandardCharsets.UTF_8));
+            return parsed != null && parsed.isJsonObject() ? parsed.getAsJsonObject() : null;
+        } catch (IOException | RuntimeException e) {
+            return null;
+        }
+    }
+
+    private static boolean hasForgifiedFabricLoaderNestedJar(Path path) {
+        try {
+            if (Files.isDirectory(path)) {
+                Path jarsDir = path.resolve("META-INF/jars");
+                if (!Files.isDirectory(jarsDir)) return false;
+                try (Stream<Path> files = Files.walk(jarsDir, 1)) {
+                    return files.anyMatch(file -> isForgifiedFabricLoaderEntry(
+                            path.relativize(file).toString().replace('\\', '/')
+                    ));
+                }
+            }
+            if (!Files.isRegularFile(path)) return false;
+            try (ZipFile zip = new ZipFile(path.toFile())) {
+                Enumeration<? extends ZipEntry> entries = zip.entries();
+                while (entries.hasMoreElements()) {
+                    if (isForgifiedFabricLoaderEntry(entries.nextElement().getName())) {
+                        return true;
+                    }
+                }
+            }
+        } catch (IOException ignored) {
+        }
+        return false;
+    }
+
+    private record RelocatedModJars(Path path, JsonArray jars) {
     }
 
     private static void addPreparedMacOsArm64Natives(List<IModFile> loadedMods, IDiscoveryPipeline pipeline) {
@@ -210,79 +291,16 @@ public final class RoxyDependencyLocator implements IDependencyLocator {
         }
     }
 
-    private static boolean containsForgifiedFabricLoader(List<IModFile> loadedMods) {
-        for (IModFile mod : loadedMods) {
-            Path path = mod.getFilePath();
-            if (path == null) continue;
-            String fileName = path.getFileName().toString().toLowerCase(Locale.ROOT);
-            if (fileName.startsWith("forgified-fabric-loader-")) {
-                return true;
-            }
-            try {
-                if (Files.isDirectory(path)) {
-                    try (Stream<Path> files = Files.walk(path.resolve("META-INF/jars"), 1)) {
-                        if (files.anyMatch(file -> isForgifiedFabricLoaderEntry(
-                                path.relativize(file).toString().replace('\\', '/')
-                        ))) {
-                            return true;
-                        }
-                    }
-                    continue;
-                }
-
-                try (ZipInputStream zip = new ZipInputStream(Files.newInputStream(path))) {
-                    ZipEntry entry;
-                    while ((entry = zip.getNextEntry()) != null) {
-                        if (isForgifiedFabricLoaderEntry(entry.getName())) {
-                            return true;
-                        }
-                    }
-                }
-            } catch (IOException ignored) {
-            }
-        }
-        return false;
-    }
-
-    private static boolean containsC2meOpenCl(List<IModFile> loadedMods) {
-        for (IModFile mod : loadedMods) {
-            Path path = mod.getFilePath();
-            if (path == null) continue;
-            String name = path.getFileName().toString().toLowerCase(Locale.ROOT);
-            if (name.contains("c2me") && name.contains("accel-opencl")) return true;
-            try (JarContents contents = JarContents.of(path)) {
-                if (RoxyJarContents.containsFile(
-                        contents,
-                        "META-INF/services/net.neoforged.neoforgespi.locating.IModFileCandidateLocator"
-                )) {
-                    try (InputStream input = RoxyJarContents.openFile(
-                            contents,
-                            "META-INF/services/net.neoforged.neoforgespi.locating.IModFileCandidateLocator"
-                    )) {
-                        if (input != null && new String(input.readAllBytes(), StandardCharsets.UTF_8)
-                                .contains("c2me.opts.accel.opencl")) return true;
-                    }
-                }
-            } catch (IOException | RuntimeException ignored) {
-            }
-        }
-        return false;
-    }
-
     private static boolean isForgifiedFabricLoaderEntry(String name) {
         return name.startsWith("META-INF/jars/forgified-fabric-loader-")
                 && name.endsWith("-full.jar");
     }
 
     private static JsonArray readJarsArray(JarContents contents) {
-        try (InputStream input = RoxyJarContents.openFile(contents, "fabric.mod.json")) {
-            if (input == null) return null;
-            JsonObject metadata = JsonParser.parseReader(new InputStreamReader(input, StandardCharsets.UTF_8)).getAsJsonObject();
-            JsonElement jars = metadata.get("jars");
-            return jars != null && jars.isJsonArray() ? jars.getAsJsonArray() : null;
-        } catch (IOException | IllegalStateException e) {
-            return null;
-        }
+        JsonObject metadata = readFabricMetadata(contents);
+        if (metadata == null) return null;
+        JsonElement jars = metadata.get("jars");
+        return jars != null && jars.isJsonArray() ? jars.getAsJsonArray() : null;
     }
 
     private static Path extract(JarContents contents, String innerPath) throws IOException {
@@ -291,10 +309,20 @@ public final class RoxyDependencyLocator implements IDependencyLocator {
         String name = normalized.substring(normalized.lastIndexOf('/') + 1);
         Path output = Files.createTempFile("roxy-jij-", "-" + name);
         output.toFile().deleteOnExit();
+        boolean copied = false;
         try (InputStream input = RoxyJarContents.openFile(contents, normalized)) {
+            if (input == null) return null;
             Files.copy(input, output, StandardCopyOption.REPLACE_EXISTING);
+            copied = true;
+            return output;
+        } finally {
+            if (!copied) {
+                try {
+                    Files.deleteIfExists(output);
+                } catch (IOException ignored) {
+                }
+            }
         }
-        return output;
     }
 
     private static String relocatedPath(String originalPath) {

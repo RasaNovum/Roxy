@@ -15,6 +15,8 @@ import net.neoforged.fml.ModList;
 import net.neoforged.fml.loading.FMLEnvironment;
 import net.neoforged.fml.loading.FMLPaths;
 import net.neoforged.neoforgespi.language.IModInfo;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -32,7 +34,9 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.zip.ZipFile;
 
 public final class RoxyFabricLoaderImpl implements FabricLoader {
+    private static final Logger LOGGER = LoggerFactory.getLogger(RoxyFabricLoaderImpl.class);
     public static final RoxyFabricLoaderImpl INSTANCE = new RoxyFabricLoaderImpl();
+    private static final Map<Path, Path> JAR_ROOT_CACHE = new ConcurrentHashMap<>();
 
     private final Map<String, List<Object>> entrypointCache = new ConcurrentHashMap<>();
     private volatile boolean fabricEntrypointsInitialized;
@@ -59,16 +63,16 @@ public final class RoxyFabricLoaderImpl implements FabricLoader {
                 } else if (entrypoint instanceof ClientModInitializer initializer) {
                     initializer.onInitializeClient();
                 }
-            } catch (Throwable throwable) {
-                System.err.println("Roxy: Fabric " + key + " entrypoint failed: " + throwable);
-                throwable.printStackTrace(System.err);
+            } catch (RuntimeException | LinkageError exception) {
+                LOGGER.error("Roxy: Fabric {} entrypoint failed", key, exception);
             }
         }
     }
 
     @Override
     public boolean isModLoaded(String modId) {
-        return ModList.get().isLoaded(modId);
+        ModList modList = ModList.get();
+        return modId != null && modList != null && modList.isLoaded(modId);
     }
 
     @Override
@@ -78,12 +82,15 @@ public final class RoxyFabricLoaderImpl implements FabricLoader {
 
     @Override
     public Optional<ModContainer> getModContainer(String modId) {
-        return ModList.get().getModContainerById(modId).map(NeoModContainer::new);
+        ModList modList = ModList.get();
+        if (modId == null || modList == null) return Optional.empty();
+        return modList.getModContainerById(modId).map(NeoModContainer::new);
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public <T> List<T> getEntrypoints(String key, Class<T> type) {
+        if (key == null || type == null) return List.of();
         if (!key.equals("main") && !key.equals("client")) return List.of();
         List<Object> instances = entrypointCache.computeIfAbsent(key, ignored -> instantiateEntrypoints(key));
         List<T> result = new ArrayList<>();
@@ -100,12 +107,15 @@ public final class RoxyFabricLoaderImpl implements FabricLoader {
         List<String> classNames = readEntrypointNames(modFile, key);
         List<Object> instances = new ArrayList<>();
         ClassLoader contextLoader = Thread.currentThread().getContextClassLoader();
+        if (contextLoader == null) {
+            contextLoader = RoxyFabricLoaderImpl.class.getClassLoader();
+        }
         for (String className : classNames) {
             try {
                 Class<?> entrypointClass = Class.forName(className, true, contextLoader);
                 instances.add(entrypointClass.getDeclaredConstructor().newInstance());
             } catch (ReflectiveOperationException | LinkageError exception) {
-                System.err.println("Roxy: unable to create Fabric entrypoint " + className + ": " + exception);
+                LOGGER.error("Roxy: unable to create Fabric entrypoint {}", className, exception);
             }
         }
         return List.copyOf(instances);
@@ -136,34 +146,60 @@ public final class RoxyFabricLoaderImpl implements FabricLoader {
     }
 
     private static Path voxyModFile() {
-        return ModList.get().getModContainerById("voxy")
+        ModList modList = ModList.get();
+        if (modList == null) return null;
+        return modList.getModContainerById("voxy")
                 .map(container -> container.getModInfo().getOwningFile().getFile().getFilePath())
                 .orElse(null);
     }
 
     private static InputStream openEntry(Path file, String name) throws IOException {
         if (Files.isDirectory(file)) {
-            return Files.newInputStream(file.resolve(name));
+            Path target = file.resolve(name);
+            return Files.isRegularFile(target) ? Files.newInputStream(target) : null;
         }
         ZipFile zip = new ZipFile(file.toFile());
-        var entry = zip.getEntry(name);
-        if (entry == null) {
-            zip.close();
-            return null;
-        }
-        InputStream input = zip.getInputStream(entry);
-        return new java.io.FilterInputStream(input) {
-            @Override
-            public void close() throws IOException {
-                super.close();
+        try {
+            var entry = zip.getEntry(name);
+            if (entry == null) {
                 zip.close();
+                return null;
             }
-        };
+            InputStream input = zip.getInputStream(entry);
+            return new java.io.FilterInputStream(input) {
+                @Override
+                public void close() throws IOException {
+                    try {
+                        super.close();
+                    } finally {
+                        zip.close();
+                    }
+                }
+            };
+        } catch (IOException | RuntimeException exception) {
+            try {
+                zip.close();
+            } catch (IOException suppressed) {
+                exception.addSuppressed(suppressed);
+            }
+            throw exception;
+        }
     }
 
     @Override
     public Path getConfigDir() {
         return FMLPaths.CONFIGDIR.get();
+    }
+
+    private static Path resolveJarRoot(Path file) {
+        return JAR_ROOT_CACHE.computeIfAbsent(file, path -> {
+            try {
+                FileSystem fileSystem = FileSystems.newFileSystem(path, Map.of());
+                return fileSystem.getRootDirectories().iterator().next();
+            } catch (IOException ignored) {
+                return path;
+            }
+        });
     }
 
     private record NeoModContainer(net.neoforged.fml.ModContainer delegate) implements ModContainer {
@@ -176,11 +212,7 @@ public final class RoxyFabricLoaderImpl implements FabricLoader {
         public List<Path> getRootPaths() {
             Path file = delegate.getModInfo().getOwningFile().getFile().getFilePath();
             if (Files.isRegularFile(file)) {
-                try {
-                    FileSystem fileSystem = FileSystems.newFileSystem(file, Map.of());
-                    return List.of(fileSystem.getRootDirectories().iterator().next());
-                } catch (IOException ignored) {
-                }
+                return List.of(resolveJarRoot(file));
             }
             return List.of(file);
         }
@@ -196,7 +228,8 @@ public final class RoxyFabricLoaderImpl implements FabricLoader {
         @Override
         public CustomValue getCustomValue(String key) {
             Object value = info.getModProperties().get(key);
-            String string = value == null ? "" : value.toString();
+            if (value == null) return null;
+            String string = value.toString();
             return () -> string;
         }
     }

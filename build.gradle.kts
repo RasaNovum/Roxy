@@ -641,7 +641,6 @@ project(":1.21.1") {
                             && file !in mainClassDirectories
                     }
                     .joinToString(System.lineSeparator())
-                legacyClasspath.writeText(filteredLegacyClasspath)
                 packagedLegacyClasspath.get().asFile.writeText(filteredLegacyClasspath)
                 mainClass.set(devRun.mainClass)
                 val packagedClasspath = runtimeClasspath.get().files.filter { file ->

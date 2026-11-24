@@ -54,9 +54,8 @@ public final class RoxyFabricModReader implements IModFileReader {
         try {
             if (Files.isRegularFile(original)
                     && RoxyJarContents.containsFile(jar, "META-INF/neoforge.mods.toml")
-                    && RoxyJarContents.containsFile(jar, "mobius/voxyseedgen/mixin/VoxyCullDistanceMixin.class")
-                    && SeedGenVoxyJarPatch.isTarget(original)) {
-                Path patched = SeedGenVoxyJarPatch.patch(original);
+                    && RoxyJarContents.containsFile(jar, "mobius/voxyseedgen/mixin/VoxyCullDistanceMixin.class")) {
+                Path patched = SeedGenVoxyJarPatch.patchIfTarget(original);
                 if (patched == null) return null;
 
                 try {
@@ -130,45 +129,62 @@ public final class RoxyFabricModReader implements IModFileReader {
         Path patched = Files.createTempFile("roxy-patched-" + modId + "-", ".jar");
         patched.toFile().deleteOnExit();
         RoxyMappings mappings = RoxyMappings.load();
-        java.util.Map<String, byte[]> remappedClasses = remapClasses(original, mappings, true);
         byte[] supplementalShaderMixin = readSupplementalShaderMixin();
         byte[] supplementalWorldgenMixin = readResource(SUPPLEMENTAL_WORLDGEN_MIXIN);
         if (!RoxyCompatConfig.copycatsEnabled()) {
             supplementalWorldgenMixin = removeClientMixins(supplementalWorldgenMixin,
                     "RoxyCopycatsBlockEntityPacketMixin"::equals);
         }
+        Set<String> writtenEntries = new java.util.HashSet<>();
 
         try (ZipFile input = new ZipFile(original.toFile());
              ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(patched))) {
             var entries = input.entries();
             while (entries.hasMoreElements()) {
                 ZipEntry entry = entries.nextElement();
-                if (entry.getName().equals(MODS_TOML)
-                        || entry.getName().equals(ACCESS_TRANSFORMER)
-                        || entry.getName().endsWith(".class")
-                        || entry.getName().endsWith("-refmap.json")) {
+                String entryName = entry.getName();
+                if (entryName.equals(MODS_TOML)
+                        || entryName.equals(ACCESS_TRANSFORMER)
+                        || entryName.endsWith("-refmap.json")) {
                     continue;
                 }
-                String outputName = entry.getName();
-                if (entry.getName().startsWith("META-INF/jars/") && entry.getName().endsWith(".jar")) {
-                    outputName = RELOCATED_JARS + entry.getName().substring(entry.getName().lastIndexOf('/') + 1);
+                if (!entry.isDirectory() && entryName.endsWith(".class")) {
+                    byte[] remapped;
+                    String remappedName;
+                    try (InputStream stream = input.getInputStream(entry)) {
+                        remapped = RoxyBytecodeRemapper.remap(
+                                stream.readAllBytes(),
+                                mappings,
+                                true
+                        );
+                        org.objectweb.asm.ClassReader reader = new org.objectweb.asm.ClassReader(remapped);
+                        remappedName = reader.getClassName() + ".class";
+                    } catch (RuntimeException exception) {
+                        throw new IOException("Roxy: unable to remap " + entryName, exception);
+                    }
+                    if (writtenEntries.add(remappedName)) {
+                        output.putNextEntry(new ZipEntry(remappedName));
+                        output.write(remapped);
+                        output.closeEntry();
+                    }
+                    continue;
                 }
+                String outputName = entryName;
+                if (entryName.startsWith("META-INF/jars/") && entryName.endsWith(".jar")) {
+                    outputName = RELOCATED_JARS + entryName.substring(entryName.lastIndexOf('/') + 1);
+                }
+                if (!writtenEntries.add(outputName)) continue;
                 output.putNextEntry(new ZipEntry(outputName));
                 if (!entry.isDirectory()) {
                     try (InputStream stream = input.getInputStream(entry)) {
-                        byte[] contents = stream.readAllBytes();
-                        if (isVoxyMixinConfig(entry.getName())) {
-                            contents = filterUnsupportedClientMixins(contents);
+                        if (isVoxyMixinConfig(entryName)) {
+                            byte[] contents = filterUnsupportedClientMixins(stream.readAllBytes());
+                            output.write(contents);
+                        } else {
+                            stream.transferTo(output);
                         }
-                        output.write(contents);
                     }
                 }
-                output.closeEntry();
-            }
-
-            for (var remappedClass : remappedClasses.entrySet()) {
-                output.putNextEntry(new ZipEntry(remappedClass.getKey()));
-                output.write(remappedClass.getValue());
                 output.closeEntry();
             }
 
@@ -177,17 +193,19 @@ public final class RoxyFabricModReader implements IModFileReader {
                 if (contents == null) {
                     throw new IOException("Roxy: missing embedded host class " + hostClass.getKey());
                 }
-                output.putNextEntry(new ZipEntry(hostClass.getKey()));
-                output.write(contents);
-                output.closeEntry();
+                if (writtenEntries.add(hostClass.getKey())) {
+                    output.putNextEntry(new ZipEntry(hostClass.getKey()));
+                    output.write(contents);
+                    output.closeEntry();
+                }
             }
 
-            if (supplementalShaderMixin != null) {
+            if (supplementalShaderMixin != null && writtenEntries.add(SUPPLEMENTAL_SHADER_MIXIN)) {
                 output.putNextEntry(new ZipEntry(SUPPLEMENTAL_SHADER_MIXIN));
                 output.write(supplementalShaderMixin);
                 output.closeEntry();
             }
-            if (supplementalWorldgenMixin != null) {
+            if (supplementalWorldgenMixin != null && writtenEntries.add(SUPPLEMENTAL_WORLDGEN_MIXIN)) {
                 output.putNextEntry(new ZipEntry(SUPPLEMENTAL_WORLDGEN_MIXIN));
                 output.write(supplementalWorldgenMixin);
                 output.closeEntry();
@@ -207,6 +225,12 @@ public final class RoxyFabricModReader implements IModFileReader {
                 output.write(accessTransformer.getBytes(StandardCharsets.UTF_8));
                 output.closeEntry();
             }
+        } catch (IOException | RuntimeException exception) {
+            try {
+                Files.deleteIfExists(patched);
+            } catch (IOException ignored) {
+            }
+            throw exception;
         }
         return patched;
     }
@@ -291,33 +315,6 @@ public final class RoxyFabricModReader implements IModFileReader {
         }
     }
 
-    private static java.util.Map<String, byte[]> remapClasses(
-            Path original,
-            RoxyMappings mappings,
-            boolean patchFabricMetadata
-    ) throws IOException {
-        java.util.Map<String, byte[]> result = new java.util.LinkedHashMap<>();
-        try (ZipFile input = new ZipFile(original.toFile())) {
-            var entries = input.entries();
-            while (entries.hasMoreElements()) {
-                ZipEntry entry = entries.nextElement();
-                if (entry.isDirectory() || !entry.getName().endsWith(".class")) continue;
-                try (InputStream stream = input.getInputStream(entry)) {
-                    byte[] remapped = RoxyBytecodeRemapper.remap(
-                            stream.readAllBytes(),
-                            mappings,
-                            patchFabricMetadata
-                    );
-                    org.objectweb.asm.ClassReader reader = new org.objectweb.asm.ClassReader(remapped);
-                    result.put(reader.getClassName() + ".class", remapped);
-                } catch (RuntimeException exception) {
-                    throw new IOException("Roxy: unable to remap " + entry.getName(), exception);
-                }
-            }
-        }
-        return result;
-    }
-
     private static String buildModsToml(
             JsonObject fabricMetadata,
             boolean includeSupplementalShaderMixin,
@@ -337,13 +334,13 @@ public final class RoxyFabricModReader implements IModFileReader {
         toml.append("modLoader = \"javafml\"\n");
         toml.append("loaderVersion = \"[4,)\"\n");
         toml.append("license = \"").append(esc(string(fabricMetadata, "license", "All-Rights-Reserved"))).append("\"\n");
-        if (!authors.isEmpty()) {
-            toml.append("authors = \"").append(esc(authors)).append("\"\n");
-        }
         toml.append("[[mods]]\n");
         toml.append("modId = \"").append(esc(modId)).append("\"\n");
         toml.append("version = \"").append(esc(version)).append("\"\n");
         toml.append("displayName = \"").append(esc(name)).append("\"\n");
+        if (!authors.isEmpty()) {
+            toml.append("authors = \"").append(esc(authors)).append("\"\n");
+        }
         if (!description.isEmpty()) {
             toml.append("description = \"").append(esc(description)).append("\"\n");
         }
@@ -378,60 +375,29 @@ public final class RoxyFabricModReader implements IModFileReader {
     }
 
     private static String buildAccessTransformer(ZipFile input, JsonObject fabricMetadata, RoxyMappings mappings) throws IOException {
-        String accessWidenerName = string(fabricMetadata, "accessWidener", null);
-        if (accessWidenerName == null) {
-            return "";
-        }
-        ZipEntry entry = input.getEntry(normalizePath(accessWidenerName));
-        if (entry == null) {
-            return "";
-        }
-
         StringBuilder output = new StringBuilder();
-        output.append("# Generated by Roxy from ").append(accessWidenerName).append("\n");
-        try (BufferedReader reader = new BufferedReader(new InputStreamReader(input.getInputStream(entry), StandardCharsets.UTF_8))) {
-            String line;
-            boolean header = true;
-            String namespace = "intermediary";
-            while ((line = reader.readLine()) != null) {
-                int comment = line.indexOf('#');
-                if (comment >= 0) line = line.substring(0, comment);
-                line = line.strip();
-                if (line.isEmpty()) continue;
-                if (header) {
-                    header = false;
-                    String[] headerParts = line.split("\\s+");
-                    if (headerParts.length >= 3) namespace = headerParts[2];
-                    output.append("# ").append(line).append("\n");
-                    continue;
-                }
-
-                String[] parts = line.split("\\s+");
-                if (parts.length < 3) continue;
-                String access = parts[0];
-                if (!access.equals("accessible") && !access.equals("extendable") && !access.equals("mutable")) continue;
-                String type = parts[1];
-                String visibility = access.equals("mutable") ? "public-f" : "public";
-                String owner = mapAccessClass(parts[2], namespace, mappings);
-                switch (type) {
-                    case "class" -> output.append("public ").append(owner).append("\n");
-                    case "field" -> {
-                        if (parts.length >= 5) {
-                            String sourceDescriptor = parts[4];
-                            String descriptor = mapAccessDescriptor(sourceDescriptor, namespace, mappings);
-                            String name = mapAccessField(parts[2], parts[3], sourceDescriptor, namespace, mappings);
-                            output.append(visibility).append(' ').append(owner).append(' ').append(name).append(" # ").append(descriptor).append("\n");
+        String accessWidenerName = string(fabricMetadata, "accessWidener", null);
+        if (accessWidenerName != null) {
+            ZipEntry entry = input.getEntry(normalizePath(accessWidenerName));
+            if (entry != null) {
+                output.append("# Generated by Roxy from ").append(accessWidenerName).append("\n");
+                try (BufferedReader reader = new BufferedReader(new InputStreamReader(input.getInputStream(entry), StandardCharsets.UTF_8))) {
+                    String line;
+                    boolean header = true;
+                    String namespace = "intermediary";
+                    while ((line = reader.readLine()) != null) {
+                        int comment = line.indexOf('#');
+                        if (comment >= 0) line = line.substring(0, comment);
+                        line = line.strip();
+                        if (line.isEmpty()) continue;
+                        if (header) {
+                            header = false;
+                            String[] headerParts = line.split("\\s+");
+                            if (headerParts.length >= 3) namespace = headerParts[2];
+                            output.append("# ").append(line).append("\n");
+                            continue;
                         }
-                    }
-                    case "method" -> {
-                        if (parts.length >= 5) {
-                            String sourceDescriptor = parts[4];
-                            String descriptor = mapAccessDescriptor(sourceDescriptor, namespace, mappings);
-                            String name = mapAccessMethod(parts[2], parts[3], sourceDescriptor, namespace, mappings);
-                            output.append(visibility).append(' ').append(owner).append(' ').append(name).append(descriptor).append("\n");
-                        }
-                    }
-                    default -> {
+                        appendAccessEntry(output, line.split("\\s+"), namespace, mappings);
                     }
                 }
             }
@@ -443,7 +409,7 @@ public final class RoxyFabricModReader implements IModFileReader {
 
     private static void appendSupplementalAccessTransformer(StringBuilder output, RoxyMappings mappings) throws IOException {
         ClassLoader loader = Thread.currentThread().getContextClassLoader();
-        InputStream extra = loader.getResourceAsStream("roxy-extra.accesswidener");
+        InputStream extra = loader == null ? null : loader.getResourceAsStream("roxy-extra.accesswidener");
         if (extra == null) {
             extra = RoxyFabricModReader.class.getClassLoader().getResourceAsStream("roxy-extra.accesswidener");
         }
@@ -474,10 +440,10 @@ public final class RoxyFabricModReader implements IModFileReader {
         String access = parts[0];
         if (!access.equals("accessible") && !access.equals("extendable") && !access.equals("mutable")) return;
         String type = parts[1];
-        String visibility = access.equals("mutable") ? "public-f" : "public";
+        String visibility = (access.equals("mutable") || access.equals("extendable")) ? "public-f" : "public";
         String owner = mapAccessClass(parts[2], namespace, mappings);
         switch (type) {
-            case "class" -> output.append("public ").append(owner).append("\n");
+            case "class" -> output.append(visibility).append(' ').append(owner).append("\n");
             case "field" -> {
                 if (parts.length >= 5) {
                     String sourceDescriptor = parts[4];
@@ -550,7 +516,7 @@ public final class RoxyFabricModReader implements IModFileReader {
 
     private static String lowerBound(String constraint) {
         String value = constraint.strip();
-        while (value.startsWith(">=") || value.startsWith("=") || value.startsWith("~") || value.startsWith("^")) {
+        while (value.startsWith(">=") || value.startsWith(">") || value.startsWith("=") || value.startsWith("~") || value.startsWith("^")) {
             value = value.substring(value.startsWith(">=") ? 2 : 1).strip();
         }
         int space = value.indexOf(' ');
@@ -659,7 +625,12 @@ public final class RoxyFabricModReader implements IModFileReader {
     }
 
     private static String esc(String value) {
-        return value.replace("\\", "\\\\").replace("\"", "\\\"");
+        return value
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
 
     @Override

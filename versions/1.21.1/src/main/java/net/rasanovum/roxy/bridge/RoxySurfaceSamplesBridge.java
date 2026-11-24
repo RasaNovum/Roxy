@@ -1,5 +1,6 @@
 package net.rasanovum.roxy.bridge;
 
+import net.neoforged.fml.loading.LoadingModList;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -15,6 +16,7 @@ public final class RoxySurfaceSamplesBridge {
     private static final String STONY_FLAVOUR = "stony";
     private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
     private static final AtomicBoolean WARNED = new AtomicBoolean();
+    private static volatile Boolean installed;
     private static final ClassValue<Access> ACCESS = new ClassValue<>() {
         @Override
         protected Access computeValue(Class<?> stateClass) {
@@ -63,7 +65,7 @@ public final class RoxySurfaceSamplesBridge {
     }
 
     public static Object normalizeForModel(Object state) {
-        if (state == null) return null;
+        if (state == null || !isInstalled()) return state;
 
         Access access;
         try {
@@ -75,10 +77,9 @@ public final class RoxySurfaceSamplesBridge {
         if (access == Access.UNAVAILABLE) return state;
 
         try {
-            Object blockId = access.getRegistryKey.invoke(
-                    access.blockRegistry,
-                    access.getBlock.invoke(state)
-            );
+            Object block = access.getBlock.invoke(state);
+            if (block == null) return state;
+            Object blockId = access.getRegistryKey.invoke(access.blockRegistry, block);
             if (blockId == null || !SURFACE_SAMPLES_NAMESPACE.equals(access.getNamespace.invoke(blockId))) {
                 return state;
             }
@@ -98,6 +99,19 @@ public final class RoxySurfaceSamplesBridge {
             warnOnce(exception);
         }
         return state;
+    }
+
+    private static boolean isInstalled() {
+        Boolean cached = installed;
+        if (cached != null) return cached;
+        boolean present = false;
+        try {
+            LoadingModList mods = LoadingModList.get();
+            present = mods != null && mods.getModFileById(SURFACE_SAMPLES_NAMESPACE) != null;
+        } catch (RuntimeException | LinkageError ignored) {
+        }
+        installed = present;
+        return present;
     }
 
     private static Object invokeSetValue(Access access, Object state, Object property, Object value) {

@@ -2,7 +2,9 @@ package net.rasanovum.roxy.util;
 
 import net.rasanovum.roxy.bridge.RoxyModelTintBridge;
 import net.rasanovum.roxy.compat.RoxyChunksmithCompat;
+import net.rasanovum.roxy.compat.RoxyCreateStaticModelCompat;
 import net.rasanovum.roxy.compat.RoxyLodEntityOcclusion;
+import net.rasanovum.roxy.compat.RoxyPowerGridCompat;
 import net.rasanovum.roxy.compat.RoxyVoxyWorldgenCompat;
 import net.rasanovum.roxy.fog.RoxyVoxyFogPatch;
 
@@ -16,6 +18,7 @@ public final class RoxyCompatLifecycle {
         RoxyModelTintBridge.clear();
         RoxyChunksmithCompat.resetRendererState();
         RoxyVoxyFogPatch.resetTerrainFogLifecycle();
+        RoxyPowerGridCompat.onWorldUnload();
     }
 
     public static void onWorldChange() {
@@ -32,5 +35,6 @@ public final class RoxyCompatLifecycle {
 
     public static void onResourceReload() {
         RoxyModelTintBridge.clear();
+        RoxyCreateStaticModelCompat.clear();
     }
 }

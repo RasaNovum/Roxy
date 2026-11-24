@@ -18,7 +18,7 @@ import java.util.Arrays;
 
 public final class RoxyTerrainSlabs {
     private static final String MOD_ID = "terrain_slabs";
-    private static final boolean LOADED = LoadingModList.get().getModFileById(MOD_ID) != null;
+    private static final boolean LOADED = isLoaded();
     private static final ThreadLocal<RoxyTerrainSlabs> LOCAL = ThreadLocal.withInitial(RoxyTerrainSlabs::new);
     private static final TagKey<Block> ON_TOP = TagKey.create(Registries.BLOCK,
             ResourceLocation.fromNamespaceAndPath(MOD_ID, "on_top_blocks"));
@@ -30,9 +30,18 @@ public final class RoxyTerrainSlabs {
     private RoxyTerrainSlabs() {
     }
 
+    private static boolean isLoaded() {
+        try {
+            LoadingModList mods = LoadingModList.get();
+            return mods != null && mods.getModFileById(MOD_ID) != null;
+        } catch (RuntimeException | LinkageError ignored) {
+            return false;
+        }
+    }
+
     public static void adjustSnow(Object mapper, long[] raw, long[] neighbors, int neighborMask,
                                   long[] mesh, int[] opaque, int[] nonOpaque) {
-        if (!LOADED) return;
+        if (!LOADED || mapper == null) return;
         RoxyTerrainSlabs cache = LOCAL.get();
         cache.bind(mapper);
         RoxyTerrainSlabsCompat.markSnow(raw, neighbors, neighborMask, mesh, opaque, nonOpaque,
@@ -51,19 +60,20 @@ public final class RoxyTerrainSlabs {
     }
 
     private boolean isSnow(Object mapper, int id) {
-        if (id == 0) return false;
+        if (id <= 0) return false;
         BlockState state = state(mapper, id);
-        return state.getBlock() instanceof SnowLayerBlock && state.is(ON_TOP);
+        return state != null && state.getBlock() instanceof SnowLayerBlock && state.is(ON_TOP);
     }
 
     private boolean isBottomSlab(Object mapper, int id) {
-        if (id == 0) return false;
+        if (id <= 0) return false;
         BlockState state = state(mapper, id);
-        return state.is(BlockTags.SLABS) && state.hasProperty(SlabBlock.TYPE)
+        return state != null && state.is(BlockTags.SLABS) && state.hasProperty(SlabBlock.TYPE)
                 && state.getValue(SlabBlock.TYPE) == SlabType.BOTTOM;
     }
 
     private BlockState state(Object mapper, int id) {
+        if (id < 0) return null;
         if (id >= states.length) {
             states = Arrays.copyOf(states, Math.max(states.length * 2, id + 1));
         }

@@ -69,6 +69,7 @@ public final class RoxyVoxyRequestPatch {
     private static final Object MANAGER_LOCK = new Object();
     private static final AtomicLong DEFERRED = new AtomicLong();
     private static final AtomicLong RETRIED = new AtomicLong();
+    private static final AtomicLong ABORTED = new AtomicLong();
     private static final AtomicLong REQUEST_GENERATION = new AtomicLong();
     private static final ThreadLocal<LeafRequest> LEAF_REQUEST = new ThreadLocal<>();
     private static volatile WatchdogState watchdogState;
@@ -77,17 +78,21 @@ public final class RoxyVoxyRequestPatch {
     private static volatile boolean accessFailed;
     private static volatile boolean cleanupFailed;
     private static volatile boolean retryFailed;
+    private static volatile ScheduledExecutorService watchdogExecutor;
 
-    private static final ScheduledExecutorService WATCHDOG_EXECUTOR =
-            Executors.newSingleThreadScheduledExecutor(new WatchdogThreadFactory());
-
-    static {
-        WATCHDOG_EXECUTOR.scheduleWithFixedDelay(
-                RoxyVoxyRequestPatch::wakeWatchdog,
-                2L,
-                2L,
-                TimeUnit.SECONDS
-        );
+    private static void ensureWatchdogStarted() {
+        if (watchdogExecutor != null) return;
+        synchronized (MANAGER_LOCK) {
+            if (watchdogExecutor != null) return;
+            ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor(new WatchdogThreadFactory());
+            executor.scheduleWithFixedDelay(
+                    RoxyVoxyRequestPatch::wakeWatchdog,
+                    2L,
+                    2L,
+                    TimeUnit.SECONDS
+            );
+            watchdogExecutor = executor;
+        }
     }
 
     private RoxyVoxyRequestPatch() {
@@ -103,6 +108,7 @@ public final class RoxyVoxyRequestPatch {
         }
         DEFERRED.set(0L);
         RETRIED.set(0L);
+        ABORTED.set(0L);
         LEAF_REQUEST.remove();
         accessFailed = false;
         cleanupFailed = false;
@@ -111,6 +117,7 @@ public final class RoxyVoxyRequestPatch {
 
     public static void registerAsyncNodeManager(Object asyncNodeManager) {
         if (asyncNodeManager == null) return;
+        ensureWatchdogStarted();
         synchronized (MANAGER_LOCK) {
             if (activeAsyncNodeManager != asyncNodeManager) {
                 PENDING.clear();
@@ -185,6 +192,7 @@ public final class RoxyVoxyRequestPatch {
 
     public static void processAsync(Object asyncNodeManager) {
         if (asyncNodeManager == null) return;
+        ensureWatchdogStarted();
         RoxyVoxyWorkDrain.endProduction(asyncNodeManager);
         try {
             WatchdogState state;
@@ -233,11 +241,16 @@ public final class RoxyVoxyRequestPatch {
 
     private static boolean replayPending(WatchdogState state, long generation) {
         ConcurrentMap<Long, Long> pending = PENDING.get(state.nodeManager);
-        if (pending == null) return false;
-        boolean changed = false;
+        if (pending == null || pending.isEmpty()) return false;
+        java.util.List<Long> positions = new java.util.ArrayList<>();
         for (Map.Entry<Long, Long> entry : pending.entrySet()) {
-            if (entry.getValue() != generation) continue;
-            retry(state.nodeManager, entry.getKey());
+            if (entry.getValue() == generation) {
+                positions.add(entry.getKey());
+            }
+        }
+        boolean changed = false;
+        for (long position : positions) {
+            retry(state.nodeManager, position);
             changed = true;
         }
         return changed;
@@ -286,7 +299,7 @@ public final class RoxyVoxyRequestPatch {
             if (requestId == REQUEST_ID_MASK) return false;
             Object childRequests = access.childRequests.invokeExact(nodeManager);
             Object request = access.childGetOrNull.invokeExact(childRequests, requestId);
-            if (request != null && isLiveRequest(nodeManager, access, position, requestId, request)) return true;
+            if (request != null && isLiveRequest(position, request)) return true;
             clearStaleRequest(nodeManager, access, position, nodeId, requestId, true);
             return false;
         } catch (Throwable exception) {
@@ -336,7 +349,10 @@ public final class RoxyVoxyRequestPatch {
             Object nodeData = access.nodeData.invokeExact(nodeManager);
             access.nodeSetRequest.invokeExact(nodeData, nodeId, REQUEST_ID_MASK);
             access.invalidateNode.invokeExact(nodeManager, nodeId);
-            LOGGER.warn("Recovered a failed Voxy leaf request and left it eligible for retry", failure);
+            long count = ABORTED.incrementAndGet();
+            if (count <= 8 || count % 100 == 0) {
+                LOGGER.warn("Recovered a failed Voxy leaf request and left it eligible for retry ({} total)", count, failure);
+            }
         } catch (Throwable exception) {
             rethrowNonLinkageError(exception);
             logCleanupFailure("Unable to roll back a failed Voxy leaf request", exception);
@@ -399,7 +415,7 @@ public final class RoxyVoxyRequestPatch {
             if (position == -1L) continue;
             int requestId = (int) access.nodeGetRequest.invokeExact(nodeData, nodeId);
             Object request = access.childGetOrNull.invokeExact(childRequests, requestId);
-            if (request != null && isLiveRequest(nodeManager, access, position, requestId, request)) continue;
+            if (request != null && isLiveRequest(position, request)) continue;
 
             try {
                 state.maintenanceChanged = true;
@@ -478,13 +494,7 @@ public final class RoxyVoxyRequestPatch {
         return (long) REQUEST_POSITION.get(request.getClass()).invokeExact(request);
     }
 
-    private static boolean isLiveRequest(
-            Object nodeManager,
-            NodeAccess access,
-            long position,
-            int requestId,
-            Object request
-    ) throws Throwable {
+    private static boolean isLiveRequest(long position, Object request) throws Throwable {
         return requestPosition(request) == position;
     }
 

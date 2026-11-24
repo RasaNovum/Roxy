@@ -26,7 +26,7 @@ public final class TfcVoxyBridge {
     private static final ThreadLocal<Integer> BAKE_TINT = new ThreadLocal<>();
     private static final ThreadLocal<Mesh> MESH = new ThreadLocal<>();
     private static final ThreadLocal<MeshStamp> MESH_STAMP = new ThreadLocal<>();
-    private static int cameraX,cameraZ;
+    private static volatile int cameraX,cameraZ;
     private static long progressStarted;
     private static long[] progress=new long[8];
     private static Iterator<Map.Entry<Long,Set<Entry>>> progressScan;
@@ -37,10 +37,18 @@ public final class TfcVoxyBridge {
     private static final ClassValue<Map<String,Field>> FIELDS = new ClassValue<>() {
         @Override protected Map<String,Field> computeValue(Class<?> type) { return new ConcurrentHashMap<>(); }
     };
+    private static final ClassValue<Method> ENGINE_GET_MAPPER = new ClassValue<>() {
+        @Override protected Method computeValue(Class<?> type) {
+            try { return type.getMethod("getMapper"); }
+            catch(NoSuchMethodException failure) { throw new IllegalStateException(failure); }
+        }
+    };
+    private static volatile Method renderSystemGetNullable;
+    private static volatile Method voxyCommonGetInstance;
     private static volatile Factory active;
     private static volatile Object world;
     private static volatile TfcClimateStore climate;
-    private static Adapter adapter;
+    private static volatile Adapter adapter;
     private static boolean warned;
     private static boolean compatWasEnabled;
     private static boolean configSeen;
@@ -315,10 +323,12 @@ public final class TfcVoxyBridge {
     }
 
     public static void uploadsStarted(Object owner) {
+        TfcVoxyUploadPatch.clearAtlasOnly();
         Factory factory=active;
         if(factory!=null && factory.owner==owner){factory.uploading.clear();factory.uploadingRecolors.clear();}
     }
     public static void uploadsCommitted(Object owner) {
+        TfcVoxyUploadPatch.clearAtlasOnly();
         Factory factory=active;
         if(factory!=null && factory.owner==owner) {
             factory.uploaded.addAll(factory.uploading);
@@ -415,6 +425,7 @@ public final class TfcVoxyBridge {
             if(!withinRadius(chunkX,chunkZ))return original;
             int contextX=chunkX,contextZ=chunkZ;
             boolean known=mesh.known.computeIfAbsent(TfcClimateStore.key(chunkX,chunkZ),ignored -> climate!=null && climate.contains(chunkX,chunkZ));
+            boolean trackedUnknown=false;
             if(kind!=1 || !nearCell(chunkX,chunkZ)) {
                 int representativeX=coarseChunk(chunkX),representativeZ=coarseChunk(chunkZ);
                 long representativeKey=TfcClimateStore.key(representativeX,representativeZ);
@@ -424,9 +435,10 @@ public final class TfcVoxyBridge {
                     contextX=representativeX;contextZ=representativeZ;known=true;
                 } else if(withinRadius(representativeX,representativeZ)) {
                     trackUnknown(factory,representativeKey,mesh.key);
+                    trackedUnknown=true;
                 }
             }
-            if(!known)trackUnknown(factory,TfcClimateStore.key(chunkX,chunkZ),mesh.key);
+            if(!known && !trackedUnknown)trackUnknown(factory,TfcClimateStore.key(chunkX,chunkZ),mesh.key);
             Cell cell=known?new Cell(representative,contextX,contextZ,y>>4):null;
             Entry entry;
             if(known) {
@@ -821,9 +833,29 @@ public final class TfcVoxyBridge {
         Factory factory=active;
         if(engine==null || factory==null || climate==null || world!=factory.level)return;
         try {
-            if(engine.getClass().getMethod("getMapper").invoke(engine)!=factory.mapper)return;
+            if(ENGINE_GET_MAPPER.get(engine.getClass()).invoke(engine)!=factory.mapper)return;
             captureSnapshot(x,z,snapshot);
         } catch(ReflectiveOperationException | RuntimeException failure) { warn(failure); }
+    }
+
+    private static Object nullableRenderer(ClassLoader loader) throws ReflectiveOperationException {
+        Method method = renderSystemGetNullable;
+        if (method == null) {
+            method = Class.forName("me.cortex.voxy.client.core.IGetVoxyRenderSystem", false, loader)
+                    .getMethod("getNullable");
+            renderSystemGetNullable = method;
+        }
+        return method.invoke(null);
+    }
+
+    private static Object voxyInstance(ClassLoader loader) throws ReflectiveOperationException {
+        Method method = voxyCommonGetInstance;
+        if (method == null) {
+            method = Class.forName("me.cortex.voxy.commonImpl.VoxyCommon", false, loader)
+                    .getMethod("getInstance");
+            voxyCommonGetInstance = method;
+        }
+        return method.invoke(null);
     }
 
     private static void captureSnapshot(int x,int z,float[] snapshot) {
@@ -862,17 +894,20 @@ public final class TfcVoxyBridge {
         if(level==null || factory==null || factory.level!=level)return;
         ticks++;
         try {
-            Object renderer=Class.forName("me.cortex.voxy.client.core.IGetVoxyRenderSystem",false,level.getClass().getClassLoader())
-                    .getMethod("getNullable").invoke(null);
+            Object renderer=nullableRenderer(level.getClass().getClassLoader());
             if(renderer==null)return;
             adapter.tickClimate.invoke(null);
             int[] camera=(int[])adapter.camera.invoke(null);
             cameraX=camera[0];cameraZ=camera[1];REFRESH.camera(cameraX,cameraZ);
-            if(factory.storagePath==null) {
-                Object instance=Class.forName("me.cortex.voxy.commonImpl.VoxyCommon",false,level.getClass().getClassLoader())
-                        .getMethod("getInstance").invoke(null);
-                factory.storagePath=TfcStorageIdentity.resolve(instance,level);
-                climate.attach(factory.storagePath);
+            if(!factory.storageAttempted && factory.storagePath==null) {
+                factory.storageAttempted=true;
+                try {
+                    Object instance=voxyInstance(level.getClass().getClassLoader());
+                    factory.storagePath=TfcStorageIdentity.resolve(instance,level);
+                    if(factory.storagePath!=null)climate.attach(factory.storagePath);
+                } catch(ReflectiveOperationException | RuntimeException failure) {
+                    LOG.warn("TFC climate persistence path unavailable; continuing with in-memory climate cache",failure);
+                }
             }
             long currentDay=(long)adapter.day.invoke(null);
             long[] calendar=(long[])adapter.calendar.invoke(null);
@@ -1101,7 +1136,7 @@ public final class TfcVoxyBridge {
             boolean complete=true,present=false;
             for(Entry entry:chunk.getValue())if(!entry.retired && (!entry.deferred || nearCell(entry.cell.x,entry.cell.z))){
                 present=true;
-                if(forceMeshes||outdated(entry)||entry.pending!=null||entry.sections.stream().anyMatch(section->!REFRESH.complete(section)))complete=false;
+                if(forceMeshes||outdated(entry)||entry.pending!=null||hasIncompleteSection(entry.sections))complete=false;
             }
             if(present){Boolean old=progressChunks.put(key,complete);if(Boolean.TRUE.equals(old))progressDone--;if(complete)progressDone++;}
             else removeProgressChunk(key);
@@ -1114,6 +1149,12 @@ public final class TfcVoxyBridge {
         if(progressWasWorking&&!working)LOG.debug("TFC LoD refresh queues drained: revision={}, sampled chunks={}/{}, unavailable climate={}, submitted={}, accepted={}, changed={}, unchanged={}",
                 revision,progressDone,progressChunks.size(),factory.unknown.size(),REFRESH.submittedCount(),REFRESH.acceptedCount(),factory.changed,factory.unchanged);
         progressWasWorking=working;
+    }
+    private static boolean hasIncompleteSection(Set<Long> sections) {
+        for(long section:sections) {
+            if(!REFRESH.complete(section))return true;
+        }
+        return false;
     }
     private static void removeProgressChunk(long key){if(Boolean.TRUE.equals(progressChunks.remove(key)))progressDone--;}
     private static void clearRemovedProgress(){removedProgressChunks.clear();removedProgressSet.clear();}
@@ -1149,7 +1190,7 @@ public final class TfcVoxyBridge {
             desiredCalendar=calendar.clone();revision++;
             forceMeshes=true;
             progressStarted=System.nanoTime();progressScan=null;
-            sweep=factory.contexts.values().iterator();sweepNext=null;
+            rebuildSweep(factory);
             return true;
         } catch(ReflectiveOperationException | RuntimeException failure) { warn(failure);return false; }
     }
@@ -1505,8 +1546,8 @@ public final class TfcVoxyBridge {
         revision++;
         forceMeshes=true;
         progressStarted=System.nanoTime();progressScan=null;progressChunks.clear();progressDone=0;
-        sweep=factory.contexts.values().iterator();sweepNext=null;
         for(Entry entry:factory.contexts.values()) { entry.revision=-1; entry.evaluatedDirty=0; entry.pending=null; entry.waiting=false; }
+        rebuildSweep(factory);
         factory.fallbackSweep=null;factory.unknownScan=null;factory.waiting.clear();
     }
 
@@ -1514,6 +1555,7 @@ public final class TfcVoxyBridge {
         if(!compatWasEnabled && !TfcCompatConfig.enabled())return;
         compatWasEnabled=false;
         compatFastEnabled=false;
+        TfcVoxyUploadPatch.clearAtlasOnly();
         BAKE.remove();MESH.remove();MESH_STAMP.remove();
         Factory factory=active;
         if(factory!=null) {
@@ -1558,8 +1600,7 @@ public final class TfcVoxyBridge {
         Factory factory=active;
         if(factory==null || level==null || factory.level!=level)return;
         try {
-            Object renderer=Class.forName("me.cortex.voxy.client.core.IGetVoxyRenderSystem",false,level.getClass().getClassLoader())
-                    .getMethod("getNullable").invoke(null);
+            Object renderer=nullableRenderer(level.getClass().getClassLoader());
             REFRESH.tick(renderer);
         } catch(ReflectiveOperationException|RuntimeException ignored) {}
     }
@@ -1745,7 +1786,7 @@ public final class TfcVoxyBridge {
         long nextVariantGeneration;
         boolean geometryOverflowWarned;
         long recolorPlans,recolorQueued,recolorAcks,recolorEnqueueAttempts,recolorLockMisses,recolorAddRejects,recolorUploadRejects,recolorCapacityRejects,recolorCancels;
-        Lock enqueue;Thread worker;java.nio.file.Path storagePath;
+        Lock enqueue;Thread worker;java.nio.file.Path storagePath;boolean storageAttempted;
         long changed,unchanged;
         Factory(Object owner,int[] mappings,Object level) throws ReflectiveOperationException {
             this.owner=owner;this.mappings=mappings;this.level=level;

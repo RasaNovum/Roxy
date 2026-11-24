@@ -41,7 +41,7 @@ public final class RoxyTfcProgress {
             VISIBILITY.reset(minecraft.level);
         }
         if (world == minecraft.level && ++ticks % 5 != 0) return;
-        update(minecraft.level, minecraft.gui.getBossOverlay(), TfcVoxyBridge.refreshProgress(), System.currentTimeMillis());
+        update(minecraft.level, minecraft.gui.getBossOverlay(), TfcVoxyBridge.refreshProgress(), System.nanoTime() / 1_000_000L);
     }
 
     private static void pollRendererReload(Minecraft minecraft) {
@@ -133,8 +133,14 @@ public final class RoxyTfcProgress {
         var event = new LerpingBossEvent(ID, title, fraction,
                 unknown > 0 ? BossEvent.BossBarColor.YELLOW : BossEvent.BossBarColor.GREEN,
                 BossEvent.BossBarOverlay.PROGRESS, false, false, false);
-        overlay.update(ClientboundBossEventPacket.createAddPacket(event));
-        visible = true;
+        if (!visible) {
+            overlay.update(ClientboundBossEventPacket.createAddPacket(event));
+            visible = true;
+        } else {
+            overlay.update(ClientboundBossEventPacket.createUpdateNamePacket(event));
+            overlay.update(ClientboundBossEventPacket.createUpdateProgressPacket(event));
+            overlay.update(ClientboundBossEventPacket.createUpdateStylePacket(event));
+        }
     }
 
     private static void hide(Minecraft minecraft) {
@@ -169,7 +175,8 @@ public final class RoxyTfcProgress {
             boolean currentWorking = progress.length > 4 && progress[4] != 0;
             boolean scanComplete = progress.length > 7 && progress[7] != 0;
             boolean workChanged = currentRevision != revision
-                    || currentSampled != sampled || currentUnknown != unknown
+                    || currentSampled != sampled
+                    || (visible && currentUnknown != unknown)
                     || currentDone < done && currentSampled >= sampled
                     || currentMeshPending > meshPending || pendingClimate > backfillPending;
             if (workChanged) {

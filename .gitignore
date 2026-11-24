@@ -1,4 +1,4 @@
-.gradle/
+﻿.gradle/
 build/
 !gradle/wrapper/gradle-wrapper.jar
 .kotlin
@@ -26,4 +26,3 @@ run/
 /verification/
 /.roxy-macos/
 /scripts/
-/tools

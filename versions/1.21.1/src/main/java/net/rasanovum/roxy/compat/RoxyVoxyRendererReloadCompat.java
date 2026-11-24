@@ -26,7 +26,7 @@ public final class RoxyVoxyRendererReloadCompat {
     private static final long FAILURE_LOG_INTERVAL_MILLIS = 5000L;
     private static volatile Accessors accessors;
     private static volatile boolean accessorsFailureLogged;
-    private static long lastFailureAt;
+    private static final AtomicLong LAST_FAILURE_AT = new AtomicLong();
 
     private RoxyVoxyRendererReloadCompat() {
     }
@@ -256,9 +256,7 @@ public final class RoxyVoxyRendererReloadCompat {
                     if (isFatal(inspectionFailure)) quarantine(pending, inspectionCause);
                     else restorePending(pending);
                 }
-                long now = System.currentTimeMillis();
-                if (now - lastFailureAt >= FAILURE_LOG_INTERVAL_MILLIS) {
-                    lastFailureAt = now;
+                if (shouldLogFailure()) {
                     LOGGER.warn("Unable to apply deferred Voxy renderer reload", cause);
                 }
             }
@@ -268,9 +266,7 @@ public final class RoxyVoxyRendererReloadCompat {
                 quarantine(pending, cause);
                 return;
             }
-            long now = System.currentTimeMillis();
-            if (now - lastFailureAt >= FAILURE_LOG_INTERVAL_MILLIS) {
-                lastFailureAt = now;
+            if (shouldLogFailure()) {
                 LOGGER.warn("Unable to inspect deferred Voxy renderer reload state", cause);
             }
         }
@@ -402,10 +398,15 @@ public final class RoxyVoxyRendererReloadCompat {
         }
     }
 
-    private static void logFailure(String message, Throwable exception) {
+    private static boolean shouldLogFailure() {
         long now = System.currentTimeMillis();
-        if (now - lastFailureAt >= FAILURE_LOG_INTERVAL_MILLIS) {
-            lastFailureAt = now;
+        long previous = LAST_FAILURE_AT.get();
+        return now - previous >= FAILURE_LOG_INTERVAL_MILLIS
+                && LAST_FAILURE_AT.compareAndSet(previous, now);
+    }
+
+    private static void logFailure(String message, Throwable exception) {
+        if (shouldLogFailure()) {
             LOGGER.warn(message, exception);
         }
     }

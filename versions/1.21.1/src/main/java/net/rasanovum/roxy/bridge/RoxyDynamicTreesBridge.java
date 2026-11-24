@@ -48,12 +48,13 @@ public final class RoxyDynamicTreesBridge {
 
         try {
             Object block = access.getBlock.invoke(state);
-            if (!access.branchBlock.isInstance(block)) return state;
+            if (block == null || !access.branchBlock.isInstance(block)) return state;
 
-            Optional<?> primitiveLog = (Optional<?>) access.getPrimitiveLog.invoke(block);
-            if (primitiveLog.isEmpty()) return state;
+            Object raw = access.getPrimitiveLog.invoke(block);
+            if (!(raw instanceof Optional<?> primitiveLog) || primitiveLog.isEmpty()) return state;
 
             Object lodState = access.defaultBlockState.invoke(primitiveLog.get());
+            if (lodState == null) return state;
             if (LOGGED.compareAndSet(false, true)) {
                 LOGGER.info("Dynamic Trees branches will use their primitive logs in Voxy LODs");
             }

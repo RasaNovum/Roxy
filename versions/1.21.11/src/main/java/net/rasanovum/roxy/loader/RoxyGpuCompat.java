@@ -1,9 +1,11 @@
 package net.rasanovum.roxy.loader;
 
-import com.mojang.blaze3d.opengl.GlTexture;
 import com.mojang.blaze3d.opengl.GlDevice;
+import com.mojang.blaze3d.opengl.GlTexture;
 
-import java.lang.reflect.InvocationTargetException;
+import java.lang.invoke.MethodHandle;
+import java.lang.invoke.MethodHandles;
+import java.lang.reflect.Method;
 
 public final class RoxyGpuCompat {
     private static final String VALIDATION_TEXTURE =
@@ -11,43 +13,59 @@ public final class RoxyGpuCompat {
     private static final String VALIDATION_DEVICE =
             "net.neoforged.neoforge.client.blaze3d.validation.ValidationGpuDevice";
 
+    private static final ClassValue<MethodHandle> TEXTURE_UNWRAP = new ClassValue<>() {
+        @Override
+        protected MethodHandle computeValue(Class<?> type) {
+            return resolveUnwrapper(type, "getRealTexture");
+        }
+    };
+
+    private static final ClassValue<MethodHandle> DEVICE_UNWRAP = new ClassValue<>() {
+        @Override
+        protected MethodHandle computeValue(Class<?> type) {
+            return resolveUnwrapper(type, "getRealDevice");
+        }
+    };
+
     private RoxyGpuCompat() {
     }
 
     public static GlTexture unwrapGlTexture(Object texture) {
-        return (GlTexture) unwrapValidationObject(texture, VALIDATION_TEXTURE,
-                "GPU texture");
+        if (texture == null || texture instanceof GlTexture) {
+            return (GlTexture) texture;
+        }
+        if (texture.getClass().getName().equals(VALIDATION_TEXTURE)) {
+            return (GlTexture) invokeUnwrapper(TEXTURE_UNWRAP.get(texture.getClass()), texture, "GPU texture");
+        }
+        return (GlTexture) texture;
     }
 
     public static GlDevice unwrapGlDevice(Object device) {
-        return (GlDevice) unwrapValidationObject(device, VALIDATION_DEVICE,
-                "GPU device");
-    }
-
-    private static Object unwrapValidationObject(Object value, String wrapperClassName,
-                                                   String valueName) {
-        Object realValue = value;
-        if (realValue != null && realValue.getClass().getName().equals(wrapperClassName)) {
-            try {
-                realValue = realValue.getClass().getMethod("getRealDevice").invoke(realValue);
-            } catch (NoSuchMethodException exception) {
-                try {
-                    realValue = realValue.getClass().getMethod("getRealTexture").invoke(realValue);
-                } catch (ReflectiveOperationException nestedException) {
-                    throw reflectionFailure(valueName, nestedException);
-                }
-            } catch (ReflectiveOperationException exception) {
-                throw reflectionFailure(valueName, exception);
-            }
+        if (device == null || device instanceof GlDevice) {
+            return (GlDevice) device;
         }
-        return realValue;
+        if (device.getClass().getName().equals(VALIDATION_DEVICE)) {
+            return (GlDevice) invokeUnwrapper(DEVICE_UNWRAP.get(device.getClass()), device, "GPU device");
+        }
+        return (GlDevice) device;
     }
 
-    private static IllegalStateException reflectionFailure(String valueName,
-                                                            ReflectiveOperationException exception) {
-        Throwable cause = exception instanceof InvocationTargetException invocation
-                && invocation.getCause() != null ? invocation.getCause() : exception;
-        return new IllegalStateException("Unable to unwrap NeoForge GPU " + valueName
-                + " validation wrapper", cause);
+    private static MethodHandle resolveUnwrapper(Class<?> type, String methodName) {
+        try {
+            Method method = type.getMethod(methodName);
+            return MethodHandles.publicLookup().unreflect(method);
+        } catch (ReflectiveOperationException exception) {
+            throw new IllegalStateException("Unable to resolve NeoForge GPU validation unwrapper " + methodName, exception);
+        }
+    }
+
+    private static Object invokeUnwrapper(MethodHandle handle, Object value, String valueName) {
+        try {
+            return handle.invoke(value);
+        } catch (Error error) {
+            throw error;
+        } catch (Throwable throwable) {
+            throw new IllegalStateException("Unable to unwrap NeoForge GPU " + valueName + " validation wrapper", throwable);
+        }
     }
 }

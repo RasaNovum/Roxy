@@ -18,6 +18,8 @@ import java.io.InputStreamReader;
 import java.lang.reflect.InvocationTargetException;
 import java.net.URISyntaxException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileSystem;
+import java.nio.file.FileSystems;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -31,6 +33,7 @@ import java.util.zip.ZipFile;
 
 final class RoxyFabricLoaderBridge implements FabricLoader {
     static final RoxyFabricLoaderBridge INSTANCE = new RoxyFabricLoaderBridge();
+    private static final Map<Path, Path> JAR_ROOT_CACHE = new ConcurrentHashMap<>();
 
     private final Map<String, List<Object>> entrypointCache = new ConcurrentHashMap<>();
 
@@ -173,6 +176,18 @@ final class RoxyFabricLoaderBridge implements FabricLoader {
         }
     }
 
+    private static Path resolveJarRoot(Path file) {
+        if (file == null || !Files.isRegularFile(file)) return file;
+        return JAR_ROOT_CACHE.computeIfAbsent(file, path -> {
+            try {
+                FileSystem fileSystem = FileSystems.newFileSystem(path, Map.of());
+                return fileSystem.getRootDirectories().iterator().next();
+            } catch (IOException ignored) {
+                return path;
+            }
+        });
+    }
+
     private record RoxyModContainer(net.neoforged.fml.ModContainer delegate) implements ModContainer {
         @Override
         public ModMetadata getMetadata() {
@@ -182,7 +197,7 @@ final class RoxyFabricLoaderBridge implements FabricLoader {
         @Override
         public List<Path> getRootPaths() {
             Path file = delegate.getModInfo().getOwningFile().getFile().getFilePath();
-            return List.of(file);
+            return List.of(resolveJarRoot(file));
         }
     }
 
@@ -218,7 +233,7 @@ final class RoxyFabricLoaderBridge implements FabricLoader {
 
         @Override
         public List<Path> getRootPaths() {
-            return List.of(file);
+            return List.of(resolveJarRoot(file));
         }
     }
 

@@ -60,6 +60,10 @@ public final class TfcVoxyUploadPatch {
         ATLAS_ONLY.set(uploader);
     }
 
+    public static void clearAtlasOnly() {
+        ATLAS_ONLY.remove();
+    }
+
     public static boolean atlasOnly(Object uploader) {
         Object armed = ATLAS_ONLY.get();
         if (armed == null) return false;

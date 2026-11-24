@@ -15,21 +15,36 @@ public final class TfcCompatConfig {
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
     private static final String FILE_NAME = "roxy-tfc.json";
     private static volatile Settings settings;
+    private static volatile Boolean tfcInstalled;
 
     private TfcCompatConfig() {}
 
     public static boolean installed() {
+        Boolean cached = tfcInstalled;
+        if (cached != null) return cached;
         try {
             LoadingModList mods = LoadingModList.get();
-            return mods != null && mods.getModFileById("tfc") != null;
+            if (mods == null) return false;
+            boolean present = mods.getModFileById("tfc") != null;
+            tfcInstalled = present;
+            return present;
         } catch (RuntimeException | LinkageError ignored) {
             return false;
         }
     }
 
-    public static synchronized Settings get() {
-        if (settings == null) settings = read(configPath());
-        return settings;
+    public static Settings get() {
+        Settings current = settings;
+        if (current != null) return current;
+        synchronized (TfcCompatConfig.class) {
+            current = settings;
+            if (current == null) {
+                Path path = configPath();
+                current = path == null ? new Settings() : read(path);
+                settings = current;
+            }
+            return current;
+        }
     }
 
     public static boolean enabled() {
@@ -49,11 +64,12 @@ public final class TfcCompatConfig {
     }
 
     public static synchronized void save() {
-        write(configPath(), get());
+        Path path = configPath();
+        if (path != null) write(path, get());
     }
 
     public static Settings read(Path path) {
-        if (!Files.isRegularFile(path)) return new Settings();
+        if (path == null || !Files.isRegularFile(path)) return new Settings();
         try (var reader = Files.newBufferedReader(path)) {
             Settings result = GSON.fromJson(reader, Settings.class);
             return result == null ? new Settings() : result;
@@ -67,8 +83,9 @@ public final class TfcCompatConfig {
     public static void write(Path path, Settings value) {
         Path temporary = null;
         try {
-            Files.createDirectories(path.toAbsolutePath().getParent());
-            temporary = Files.createTempFile(path.toAbsolutePath().getParent(), "roxy-tfc-", ".tmp");
+            Path parent = path.toAbsolutePath().getParent();
+            if (parent != null) Files.createDirectories(parent);
+            temporary = Files.createTempFile(parent, "roxy-tfc-", ".tmp");
             Files.writeString(temporary, GSON.toJson(value));
             Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException exception) {
@@ -81,7 +98,8 @@ public final class TfcCompatConfig {
     }
 
     private static Path configPath() {
-        return FMLPaths.CONFIGDIR.get().resolve(FILE_NAME);
+        Path configDir = FMLPaths.CONFIGDIR.get();
+        return configDir == null ? null : configDir.resolve(FILE_NAME);
     }
 
     public static final class Settings {

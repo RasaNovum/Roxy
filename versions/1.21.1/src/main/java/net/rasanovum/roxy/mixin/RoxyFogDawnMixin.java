@@ -15,7 +15,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 public final class RoxyFogDawnMixin {
     @Inject(method = "getBlendFactor", at = @At("RETURN"), cancellable = true, require = 0, remap = false)
     private static void roxy$laterDawn(ClientLevel level, CallbackInfoReturnable<Float> cir) {
-        if (RoxyVoxyFogPatch.fadeFogHorizon()) {
+        if (level != null && RoxyVoxyFogPatch.fadeFogHorizon()) {
             cir.setReturnValue(RoxyFogDawn.dayBlend(cir.getReturnValueF(), level.getDayTime()));
         }
     }
@@ -23,10 +23,11 @@ public final class RoxyFogDawnMixin {
     @Inject(method = "blendFogColorWithSunriseSunsetColors", at = @At("RETURN"), require = 0, remap = false)
     private void roxy$fadeSunrise(Minecraft minecraft, float red, float green, float blue, float partialTick,
                                  CallbackInfoReturnable<float[]> cir) {
-        if (minecraft.level == null || !RoxyVoxyFogPatch.fadeFogHorizon()) return;
+        if (minecraft == null || minecraft.level == null || !RoxyVoxyFogPatch.fadeFogHorizon()) return;
         float strength = RoxyFogDawn.sunriseInfluence(minecraft.level.getDayTime(), partialTick);
         if (strength == 1) return;
         float[] result = cir.getReturnValue();
+        if (result == null || result.length < 3) return;
         result[0] = red + (result[0] - red) * strength;
         result[1] = green + (result[1] - green) * strength;
         result[2] = blue + (result[2] - blue) * strength;

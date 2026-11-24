@@ -16,10 +16,15 @@ import org.objectweb.asm.commons.FieldRemapper;
 import org.objectweb.asm.commons.MethodRemapper;
 import org.objectweb.asm.commons.Remapper;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.UnaryOperator;
 
 public final class RoxyBytecodeRemapper {
     private static final String MIXIN = "Lorg/spongepowered/asm/mixin/Mixin;";
@@ -206,7 +211,9 @@ public final class RoxyBytecodeRemapper {
             "(L" + SODIUM_CHUNK_RENDER_MATRICES + ";DDD)L" + VOXY_VIEWPORT + ";";
 
     private static final class RoxyClassWriter extends ClassWriter {
+        private static final Map<String, Class<?>> LOADED_CACHE = new ConcurrentHashMap<>();
         private final ClassLoader contextClassLoader;
+        private final Set<String> missingCache = new java.util.HashSet<>();
 
         private RoxyClassWriter(ClassReader reader, int flags) {
             super(reader, flags);
@@ -235,16 +242,28 @@ public final class RoxyBytecodeRemapper {
         }
 
         private Class<?> loadClass(String internalName) {
+            Class<?> cached = LOADED_CACHE.get(internalName);
+            if (cached != null) return cached;
+            if (missingCache.contains(internalName)) return null;
             String binaryName = internalName.replace('/', '.');
             ClassLoader ownClassLoader = RoxyBytecodeRemapper.class.getClassLoader();
             ClassLoader systemClassLoader = ClassLoader.getSystemClassLoader();
             Class<?> loaded = tryLoad(binaryName, contextClassLoader);
-            if (loaded != null) return loaded;
-            loaded = tryLoad(binaryName, ownClassLoader);
-            if (loaded != null) return loaded;
-            loaded = tryLoad(binaryName, systemClassLoader);
-            if (loaded != null) return loaded;
-            return tryLoad(binaryName, null);
+            if (loaded == null && ownClassLoader != contextClassLoader) {
+                loaded = tryLoad(binaryName, ownClassLoader);
+            }
+            if (loaded == null && systemClassLoader != contextClassLoader && systemClassLoader != ownClassLoader) {
+                loaded = tryLoad(binaryName, systemClassLoader);
+            }
+            if (loaded == null) {
+                loaded = tryLoad(binaryName, null);
+            }
+            if (loaded != null) {
+                LOADED_CACHE.putIfAbsent(internalName, loaded);
+            } else {
+                missingCache.add(internalName);
+            }
+            return loaded;
         }
 
         private static Class<?> tryLoad(String binaryName, ClassLoader classLoader) {
@@ -260,6 +279,77 @@ public final class RoxyBytecodeRemapper {
         }
     }
 
+    private static final Map<String, List<UnaryOperator<byte[]>>> CLASS_PATCHES = buildClassPatches();
+
+    private static Map<String, List<UnaryOperator<byte[]>>> buildClassPatches() {
+        Map<String, List<UnaryOperator<byte[]>>> map = new HashMap<>();
+        registerPatch(map, "me/cortex/voxy/common/world/other/Mapper", RoxyBytecodeRemapper::patchVoxyMissingStates);
+        registerPatch(map, VOXY_MODEL_FACTORY, RoxyBytecodeRemapper::patchVoxyTextureTintUpload);
+        registerPatch(map, "me/cortex/voxy/client/core/NormalRenderPipeline", RoxyBytecodeRemapper::patchVoxyNormalFog);
+        registerPatch(map, VOXY_MDIC_SECTION_RENDERER, RoxyBytecodeRemapper::patchVoxyTerrainFogUpload);
+        registerPatch(map, "me/cortex/voxy/client/core/SSAO", RoxyBytecodeRemapper::patchVoxySsaoFogUpload);
+        registerPatch(map, "me/cortex/voxy/client/core/NormalRenderPipeline", RoxyBytecodeRemapper::patchVoxyNormalFogSetup);
+        registerPatch(map, VOXY_WORLD_MIXIN, RoxyBytecodeRemapper::patchVoxyWorldCallback);
+        registerPatch(map, VOXY_NODE_STORE, RoxyBytecodeRemapper::patchVoxyNodeStore);
+        registerPatch(map, VOXY_ALLOCATION_LIST, RoxyBytecodeRemapper::patchVoxyAllocationList);
+        registerPatch(map, VOXY_ASYNC_NODE_MANAGER, RoxyBytecodeRemapper::patchVoxyAsyncNodeManager);
+        registerPatch(map, VOXY_HIERARCHICAL_OCCLUSION_TRAVERSER, RoxyBytecodeRemapper::patchVoxyTraversalRequestSubmission);
+        registerPatch(map, VOXY_NODE_MANAGER, RoxyBytecodeRemapper::patchVoxyNodeManagerRequests);
+        registerPatch(map, VOXY_CLIENT_LEVEL_MIXIN, RoxyBytecodeRemapper::patchVoxyClientLevelCallback);
+        registerPatch(map, VOXY_RENDER_GENERATION_SERVICE, RoxyBytecodeRemapper::patchVoxyRenderGenerationService);
+        registerPatch(map, VOXY_RENDER_SYSTEM_MIXIN, RoxyBytecodeRemapper::patchVoxyRenderSystemCallback);
+        registerPatch(map, VOXY_RENDER_SYSTEM, RoxyBytecodeRemapper::patchVoxyRenderSystemShutdown);
+        registerPatch(map, VOXY_RENDER_SYSTEM, RoxyBytecodeRemapper::patchVoxyRenderSystemWorkDrain);
+        registerPatch(map, VOXY_CHUNK_BOUND_RENDERER, RoxyBytecodeRemapper::patchVoxyChunkBoundReset);
+        registerPatch(map, VOXY_CHUNK_BOUND_RENDERER, RoxyBytecodeRemapper::patchVoxyVisibleChunkBounds);
+        registerPatch(map, "me/cortex/voxy/client/core/AbstractRenderPipeline", RoxyBytecodeRemapper::patchVoxyDepthClearState);
+        registerPatch(map, VOXY_LEVEL_RENDERER_MIXIN, RoxyBytecodeRemapper::patchVoxyLevelRendererLifecycle);
+        registerPatch(map, VOXY_COMMANDS, RoxyBytecodeRemapper::patchVoxyCommandsReload);
+        registerPatch(map, VOXY_RENDER_SYSTEM, RoxyBytecodeRemapper::patchVoxyRenderSystemViewport);
+        registerPatch(map, VOXY_DEFAULT_CHUNK_RENDERER, RoxyBytecodeRemapper::patchVoxyDefaultChunkRenderer);
+        registerPatch(map, VOXY_NVIDIUM_RENDER_PIPELINE, RoxyBytecodeRemapper::patchVoxyNvidiumRenderPipeline);
+        registerPatch(map, VOXY_TEXTURE_BAKERY, RoxyBytecodeRemapper::patchVoxyTextureSetup);
+        registerPatch(map, VOXY_TEXTURE_BAKERY, RoxyBytecodeRemapper::patchVoxyBakedModel);
+        registerPatch(map, VOXY_MODEL_FACTORY, RoxyBytecodeRemapper::patchVoxyModelTinting);
+        registerPatch(map, "me/cortex/voxy/client/core/model/bakery/SoftwareRasterizer", RoxyBytecodeRemapper::patchVoxyModelTinting);
+        registerPatch(map, VOXY_MODEL_FACTORY, RoxyBytecodeRemapper::patchVoxyModelFactory);
+        registerPatch(map, VOXY_MODEL_FACTORY, RoxyBytecodeRemapper::patchVoxyIceModelFlags);
+        registerPatch(map, VOXY_RENDER_DATA_FACTORY, bytes -> RoxyCompatConfig.terrainSlabsEnabled() ? patchVoxyTerrainSlabSnow(bytes) : bytes);
+        UnaryOperator<byte[]> tfcPatch = bytes -> RoxyCompatConfig.tfcEnabled() ? RoxyTfcBytecodePatch.patch(bytes) : bytes;
+        registerPatch(map, VOXY_MODEL_FACTORY, tfcPatch);
+        registerPatch(map, VOXY_MODEL_FACTORY + "$ModelBakeResultUpload", tfcPatch);
+        registerPatch(map, VOXY_RENDER_DATA_FACTORY, tfcPatch);
+        registerPatch(map, "me/cortex/voxy/client/core/model/ModelBakerySubsystem", tfcPatch);
+        registerPatch(map, VOXY_MODEL_BAKERY, RoxyBytecodeRemapper::patchVoxyModelBakeryConstructorCleanup);
+        registerPatch(map, VOXY_RENDER_SYSTEM, RoxyBytecodeRemapper::patchVoxyRenderSystemConstructorCleanup);
+        registerPatch(map, VOXY_MODEL_FACTORY, RoxyBytecodeRemapper::patchVoxyFluidClassification);
+        registerPatch(map, VOXY_TEXTURE_BAKERY, RoxyBytecodeRemapper::patchVoxyFluidClassification);
+        registerPatch(map, VOXY_TEXTURE_BAKERY, RoxyBytecodeRemapper::patchVoxyMetaFromLayer);
+        registerPatch(map, VOXY_VERTEX_CONSUMER, RoxyBytecodeRemapper::patchVoxyVertexConsumer);
+        registerPatch(map, VOXY_LIGHT_MAP_HELPER, RoxyBytecodeRemapper::patchVoxyLightMapHelper);
+        registerPatch(map, VOXY_IRIS_PIPELINE_MIXIN, RoxyBytecodeRemapper::patchVoxyIrisPipeline);
+        registerPatch(map, VOXY_IRIS_RENDER_PIPELINE, RoxyBytecodeRemapper::patchVoxyIrisDepthOutput);
+        registerPatch(map, VOXY_IRIS_SAMPLERS, RoxyBytecodeRemapper::patchVoxyIrisSamplers);
+        registerPatch(map, VOXY_IRIS_SAMPLER_HOLDER, RoxyBytecodeRemapper::patchVoxyIrisSamplerHolder);
+        registerPatch(map, VOXY_IRIS_SHADER_PATCH, RoxyBytecodeRemapper::patchVoxyGsonCompatibility);
+        registerPatch(map, VOXY_CLIENT_INSTANCE, RoxyBytecodeRemapper::patchVoxyIntegratedServerWorldPath);
+        registerPatch(map, VOXY_COMMANDS, RoxyBytecodeRemapper::patchVoxyIntegratedServerWorldPath);
+        registerPatch(map, VOXY_WORLD_IMPORTER, RoxyBytecodeRemapper::patchVoxyPalettedContainerFactory);
+        registerPatch(map, VOXY_WORLD_IMPORTER, RoxyBytecodeRemapper::patchVoxyWorldImporterDefaultBiomeProvider);
+        registerPatch(map, "me/cortex/voxy/common/world/other/Mapper$StateEntry", RoxyBytecodeRemapper::patchVoxyStoredStateDataFix);
+        registerPatch(map, VOXY_CONFIG, RoxyBytecodeRemapper::patchVoxyConfigDefaults);
+        registerPatch(map, VOXY_CONFIG_MENU, RoxyBytecodeRemapper::patchVoxyConfigMenu);
+        return map;
+    }
+
+    private static void registerPatch(
+            Map<String, List<UnaryOperator<byte[]>>> map,
+            String className,
+            UnaryOperator<byte[]> patch
+    ) {
+        map.computeIfAbsent(className, ignored -> new ArrayList<>()).add(patch);
+    }
+
     private RoxyBytecodeRemapper() {
     }
 
@@ -272,67 +362,23 @@ public final class RoxyBytecodeRemapper {
         MixinMetadata metadata = MixinMetadata.read(reader);
         String sourceClass = reader.getClassName();
         RoxyRemapper remapper = new RoxyRemapper(mappings, sourceClass, metadata);
+        String mappedClass = remapper.map(sourceClass);
         ClassWriter writer = new ClassWriter(reader, 0);
         reader.accept(new RoxyClassRemapper(writer, remapper, metadata), 0);
         byte[] output = patchJavaVersion(patchNeoForgeColorMapAccess(patchClasspathDirectoryScan(writer.toByteArray())));
-        output = patchVoxyFogParameters(output);
-        output = patchVoxyMissingStates(output);
-        output = patchVoxyTextureTintUpload(output);
-        output = patchVoxyNormalFog(output);
-        output = patchVoxyTerrainFogUpload(output);
-        output = patchVoxySsaoFogUpload(output);
-        output = patchVoxyNormalFogSetup(output);
-        output = patchVoxyChunkSectionLayer(output);
-        output = patchVoxyWorldCallback(output);
-        output = patchVoxyNodeStore(output);
-        output = patchVoxyAllocationList(output);
-        output = patchVoxyAsyncNodeManager(output);
-        output = patchVoxyTraversalRequestSubmission(output);
-        output = patchVoxyNodeManagerRequests(output);
-        output = patchVoxyClientLevelCallback(output);
-        output = patchVoxyRenderGenerationService(output);
-        output = patchVoxyRenderSystemCallback(output);
-        output = patchVoxyRenderSystemShutdown(output);
-        output = patchVoxyRenderSystemWorkDrain(output);
-        output = patchVoxyChunkBoundReset(output);
-        output = patchVoxyVisibleChunkBounds(output);
-        output = patchVoxyDepthClearState(output);
-        output = patchVoxyLevelRendererLifecycle(output);
-        output = patchVoxyCommandsReload(output);
-        output = patchVoxyRenderSystemViewport(output);
-        output = patchVoxyDefaultChunkRenderer(output);
-        output = patchVoxyNvidiumRenderPipeline(output);
-        output = patchVoxyTextureSetup(output);
-        output = patchVoxyBakedModel(output);
-        output = patchVoxyModelTinting(output);
-        output = patchVoxyModelFactory(output);
-        output = patchVoxyIceModelFlags(output);
-        if (RoxyCompatConfig.terrainSlabsEnabled()) {
-            output = patchVoxyTerrainSlabSnow(output);
+        List<UnaryOperator<byte[]>> classPatches = CLASS_PATCHES.get(mappedClass);
+        if (classPatches != null) {
+            for (UnaryOperator<byte[]> patch : classPatches) {
+                output = patch.apply(output);
+            }
         }
-        if (RoxyCompatConfig.tfcEnabled()) {
-            output = RoxyTfcBytecodePatch.patch(output);
-        }
-        output = patchVoxyModelBakeryConstructorCleanup(output);
-        output = patchVoxyRenderSystemConstructorCleanup(output);
-        output = patchVoxyFluidClassification(output);
-        output = patchVoxyMetaFromLayer(output);
-        output = patchVoxyVertexConsumer(output);
-        output = patchVoxyLightMapHelper(output);
-        output = patchVoxyIrisPipeline(output);
-        output = patchVoxyIrisDepthOutput(output);
-        output = patchVoxyIrisSamplers(output);
-        output = patchVoxyIrisSamplerHolder(output);
-        output = patchVoxyGsonCompatibility(output);
-        output = patchVoxyIntegratedServerWorldPath(output);
-        output = patchVoxyPalettedContainerFactory(output);
-        output = patchVoxyWorldImporterDefaultBiomeProvider(output);
-        output = patchVoxyStoredStateDataFix(output);
-        output = patchVoxyConfigDefaults(output);
-        output = patchVoxyConfigMenu(output);
         output = patchMinecraftVersionBridges(output);
-        output = patchMacOSGraphicsGuard(output);
-        output = patchVoxyJomlMemoryAccess(output);
+        if (mappedClass.equals("me/cortex/voxy/client/VoxyClient")) {
+            output = patchMacOSGraphicsGuard(output);
+        }
+        if (mappedClass.startsWith("me/cortex/voxy/")) {
+            output = patchVoxyJomlMemoryAccess(output);
+        }
         return patchFabricMetadata ? patchFabricMetadataAccess(output) : output;
     }
 
@@ -1004,36 +1050,6 @@ public final class RoxyBytecodeRemapper {
                 };
             }
         }, 0);
-        return writer.toByteArray();
-    }
-
-    private static byte[] patchVoxyFogParameters(byte[] input) {
-        ClassReader reader = new ClassReader(input);
-        ClassWriter writer = new ClassWriter(reader, 0);
-        reader.accept(new ClassRemapper(writer, new Remapper() {
-            @Override
-            public String map(String internalName) {
-                if (internalName.equals(SODIUM_FOG_PARAMETERS_NEW)) {
-                    return SODIUM_FOG_PARAMETERS;
-                }
-                return internalName;
-            }
-        }), 0);
-        return writer.toByteArray();
-    }
-
-    private static byte[] patchVoxyChunkSectionLayer(byte[] input) {
-        ClassReader reader = new ClassReader(input);
-        ClassWriter writer = new ClassWriter(reader, 0);
-        reader.accept(new ClassRemapper(writer, new Remapper() {
-            @Override
-            public String map(String internalName) {
-                if (internalName.equals(CHUNK_SECTION_LAYER_NEW)) {
-                    return RENDER_TYPE;
-                }
-                return internalName;
-            }
-        }), 0);
         return writer.toByteArray();
     }
 
@@ -3747,9 +3763,11 @@ public final class RoxyBytecodeRemapper {
                 AnnotationVisitor methods = inject.visitArray("method");
                 methods.visit(null, "render");
                 methods.visitEnd();
-                AnnotationVisitor at = inject.visitAnnotation("at", AT);
+                AnnotationVisitor atArray = inject.visitArray("at");
+                AnnotationVisitor at = atArray.visitAnnotation(null, AT);
                 at.visit("value", "HEAD");
                 at.visitEnd();
+                atArray.visitEnd();
                 if (cancellable) inject.visit("cancellable", true);
                 inject.visitEnd();
             }
@@ -3759,7 +3777,8 @@ public final class RoxyBytecodeRemapper {
                 AnnotationVisitor methods = inject.visitArray("method");
                 methods.visit(null, "render");
                 methods.visitEnd();
-                AnnotationVisitor at = inject.visitAnnotation("at", AT);
+                AnnotationVisitor atArray = inject.visitArray("at");
+                AnnotationVisitor at = atArray.visitAnnotation(null, AT);
                 at.visit("value", "INVOKE");
                 at.visit(
                         "target",
@@ -3768,6 +3787,7 @@ public final class RoxyBytecodeRemapper {
                 );
                 at.visitEnum("shift", "Lorg/spongepowered/asm/mixin/injection/At$Shift;", "BEFORE");
                 at.visitEnd();
+                atArray.visitEnd();
                 inject.visitEnd();
             }
         }, 0);
@@ -4201,9 +4221,11 @@ public final class RoxyBytecodeRemapper {
                 AnnotationVisitor methods = inject.visitArray("method");
                 methods.visit(null, "<init>");
                 methods.visitEnd();
-                AnnotationVisitor at = inject.visitAnnotation("at", AT);
+                AnnotationVisitor atArray = inject.visitArray("at");
+                AnnotationVisitor at = atArray.visitAnnotation(null, AT);
                 at.visit("value", "RETURN");
                 at.visitEnd();
+                atArray.visitEnd();
                 inject.visitEnd();
 
                 boolean isStatic = (access & Opcodes.ACC_STATIC) != 0;
@@ -4745,8 +4767,6 @@ public final class RoxyBytecodeRemapper {
                         public void visitJumpInsn(int opcode, Label label) {
                             if (afterInFlightCheck && opcode == Opcodes.IFEQ) {
                                 afterInFlightCheck = false;
-                                super.visitVarInsn(Opcodes.ISTORE, 10);
-                                super.visitVarInsn(Opcodes.ILOAD, 10);
                                 super.visitJumpInsn(Opcodes.IFEQ, label);
                                 super.visitVarInsn(Opcodes.ALOAD, 0);
                                 super.visitVarInsn(Opcodes.LLOAD, 1);
@@ -4840,8 +4860,8 @@ public final class RoxyBytecodeRemapper {
 
                         @Override
                         public void visitCode() {
-                            super.visitTryCatchBlock(start, end, handler, null);
                             super.visitCode();
+                            super.visitTryCatchBlock(start, end, handler, null);
                             super.visitLabel(start);
                         }
 
@@ -5380,7 +5400,7 @@ public final class RoxyBytecodeRemapper {
         ClassReader reader = new ClassReader(input);
         if (!reader.getClassName().equals(VOXY_RENDER_SYSTEM_MIXIN)) return input;
 
-        ClassWriter writer = new ClassWriter(reader, 0);
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
         reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
             private int callbackAccess;
             private boolean callbackFound;
@@ -5443,9 +5463,11 @@ public final class RoxyBytecodeRemapper {
         methods.visitEnd();
         if (order != null) inject.visit("order", order);
         inject.visit("remap", remap);
-        AnnotationVisitor at = inject.visitAnnotation("at", AT);
+        AnnotationVisitor atArray = inject.visitArray("at");
+        AnnotationVisitor at = atArray.visitAnnotation(null, AT);
         at.visit("value", atValue);
         at.visitEnd();
+        atArray.visitEnd();
         inject.visitEnd();
     }
 
@@ -5557,14 +5579,14 @@ public final class RoxyBytecodeRemapper {
                                 && owner.equals(BLOCK_COLORS)
                                 && name.equals("blockColors")
                                 && descriptor.equals("Lnet/minecraft/core/IdMapper;")) {
-                            visitMethodInsn(
+                            super.visitMethodInsn(
                                     Opcodes.INVOKESTATIC,
                                     COLOR_COMPAT,
                                     "getColorMapper",
                                     "(Ljava/lang/Object;)Ljava/lang/Object;",
                                     false
                             );
-                            visitTypeInsn(Opcodes.CHECKCAST, "net/minecraft/core/IdMapper");
+                            super.visitTypeInsn(Opcodes.CHECKCAST, "net/minecraft/core/IdMapper");
                         } else {
                             super.visitFieldInsn(opcode, owner, name, descriptor);
                         }
@@ -5699,27 +5721,40 @@ public final class RoxyBytecodeRemapper {
 
         @Override
         public String map(String internalName) {
-            return mappings.mapClass(internalName);
+            String mapped = mappings.mapClass(internalName);
+            if (mapped.equals(SODIUM_FOG_PARAMETERS_NEW)) {
+                return SODIUM_FOG_PARAMETERS;
+            }
+            if (mapped.equals(CHUNK_SECTION_LAYER_NEW)) {
+                return RENDER_TYPE;
+            }
+            return mapped;
         }
 
         @Override
         public String mapFieldName(String owner, String name, String descriptor) {
-            MixinMember shadow = metadata.fieldsByName.get(name);
-            if (owner.equals(mixinClass) && shadow != null) {
-                String targetName = stripPrefix(name, shadow.prefix);
-                String mapped = mappings.mapFieldName(metadata.targetOwner(), targetName, shadow.descriptor);
-                return shadow.prefix + mapped;
+            if (owner.equals(mixinClass)) {
+                MixinMember shadow = metadata.fields.get(new MemberKey(name, descriptor));
+                if (shadow == null) shadow = metadata.fieldsByName.get(name);
+                if (shadow != null) {
+                    String targetName = stripPrefix(name, shadow.prefix);
+                    String mapped = mappings.mapFieldName(metadata.targetOwner(), targetName, shadow.descriptor);
+                    return shadow.prefix + mapped;
+                }
             }
             return mappings.mapFieldName(owner, name, descriptor);
         }
 
         @Override
         public String mapMethodName(String owner, String name, String descriptor) {
-            MixinMember shadow = metadata.methodsByName.get(name);
-            if (owner.equals(mixinClass) && shadow != null) {
-                String targetName = stripPrefix(name, shadow.prefix);
-                String mapped = mappings.mapMethodName(metadata.targetOwner(), targetName, shadow.descriptor);
-                return shadow.prefix + mapped;
+            if (owner.equals(mixinClass)) {
+                MixinMember shadow = metadata.methods.get(new MemberKey(name, descriptor));
+                if (shadow == null) shadow = metadata.methodsByName.get(name);
+                if (shadow != null) {
+                    String targetName = stripPrefix(name, shadow.prefix);
+                    String mapped = mappings.mapMethodName(metadata.targetOwner(), targetName, shadow.descriptor);
+                    return shadow.prefix + mapped;
+                }
             }
             return mappings.mapMethodName(owner, name, descriptor);
         }
@@ -5747,6 +5782,11 @@ public final class RoxyBytecodeRemapper {
         }
 
         @Override
+        protected AnnotationVisitor createAnnotationRemapper(String descriptor, AnnotationVisitor annotationVisitor) {
+            return new RoxyAnnotationRemapper(descriptor, annotationVisitor, remapper, metadata);
+        }
+
+        @Override
         public void visit(String name, Object value) {
             if (value instanceof String string) {
                 value = mapString(name, string);
@@ -5756,33 +5796,34 @@ public final class RoxyBytecodeRemapper {
 
         @Override
         public AnnotationVisitor visitArray(String name) {
-            AnnotationVisitor delegate = super.visitArray(name);
+            AnnotationVisitor delegate = av == null ? null : av.visitArray(name);
+            if (delegate == null) return null;
             return new AnnotationVisitor(Opcodes.ASM9, delegate) {
                 @Override
                 public void visit(String ignored, Object value) {
                     if (value instanceof String string) {
                         value = mapString(name, string);
                     }
-                    if (delegate != null) delegate.visit(ignored, value);
+                    delegate.visit(ignored, remapper.mapValue(value));
+                }
+
+                @Override
+                public void visitEnum(String ignored, String enumDescriptor, String value) {
+                    delegate.visitEnum(ignored, remapper.mapDesc(enumDescriptor), value);
                 }
 
                 @Override
                 public AnnotationVisitor visitAnnotation(String ignored, String nestedDescriptor) {
-                    AnnotationVisitor nested = delegate == null ? null : delegate.visitAnnotation(ignored, nestedDescriptor);
-                    return new RoxyAnnotationRemapper(nestedDescriptor, nested, remapper, metadata);
+                    AnnotationVisitor nested = delegate.visitAnnotation(ignored, remapper.mapDesc(nestedDescriptor));
+                    return nested == null ? null : new RoxyAnnotationRemapper(nestedDescriptor, nested, remapper, metadata);
                 }
 
                 @Override
-                public void visitEnd() {
-                    if (delegate != null) delegate.visitEnd();
+                public AnnotationVisitor visitArray(String ignored) {
+                    AnnotationVisitor nested = delegate.visitArray(ignored);
+                    return nested == null ? null : new RoxyAnnotationRemapper(null, nested, remapper, metadata);
                 }
             };
-        }
-
-        @Override
-        public AnnotationVisitor visitAnnotation(String name, String nestedDescriptor) {
-            AnnotationVisitor nested = super.visitAnnotation(name, nestedDescriptor);
-            return new RoxyAnnotationRemapper(nestedDescriptor, nested, remapper, metadata);
         }
 
         private String mapString(String name, String value) {
@@ -5825,7 +5866,7 @@ public final class RoxyBytecodeRemapper {
     }
 
     private static final class MixinMetadata {
-        private final Set<String> targets = new HashSet<>();
+        private final Set<String> targets = new LinkedHashSet<>();
         private final Map<MemberKey, MixinMember> fields = new HashMap<>();
         private final Map<MemberKey, MixinMember> methods = new HashMap<>();
         private final Map<String, MixinMember> fieldsByName = new HashMap<>();

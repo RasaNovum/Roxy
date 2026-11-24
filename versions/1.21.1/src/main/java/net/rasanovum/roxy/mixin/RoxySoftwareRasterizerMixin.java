@@ -25,35 +25,35 @@ public abstract class RoxySoftwareRasterizerMixin {
 
     @Inject(method = "rasterTriangle(Z)V", at = @At("HEAD"), cancellable = true, remap = false)
     private void roxy$rasterTriangleFixedPoint(boolean includeEdges, CallbackInfo callback) {
-        int x1 = roxy$toFixed(this.scratchR1.x);
-        int y1 = roxy$toFixed(this.scratchR1.y);
-        int x2 = roxy$toFixed(this.scratchR2.x);
-        int y2 = roxy$toFixed(this.scratchR2.y);
-        int x3 = roxy$toFixed(this.scratchR3.x);
-        int y3 = roxy$toFixed(this.scratchR3.y);
-        int area = roxy$edge(x1, y1, x2, y2, x3, y3);
+        long x1 = roxy$toFixed(this.scratchR1.x);
+        long y1 = roxy$toFixed(this.scratchR1.y);
+        long x2 = roxy$toFixed(this.scratchR2.x);
+        long y2 = roxy$toFixed(this.scratchR2.y);
+        long x3 = roxy$toFixed(this.scratchR3.x);
+        long y3 = roxy$toFixed(this.scratchR3.y);
+        long area = roxy$edge(x1, y1, x2, y2, x3, y3);
 
-        if ((area < 0) == this.cullBackFace || Math.abs(roxy$fromFixed(area)) < 0.001f) {
+        if ((area < 0L) == this.cullBackFace || Math.abs(roxy$fromFixed(area)) < 0.001f) {
             callback.cancel();
             return;
         }
 
-        int minX = roxy$fromFixedToInt(Math.max(Math.min(Math.min(x1, x2), x3), 0));
+        int minX = roxy$fromFixedToInt(Math.max(Math.min(Math.min(x1, x2), x3), 0L));
         int maxX = roxy$fromFixedToInt(Math.min(Math.max(Math.max(x1, x2), x3), roxy$toFixed(this.targetSize - 1)));
-        int minY = roxy$fromFixedToInt(Math.max(Math.min(Math.min(y1, y2), y3), 0));
+        int minY = roxy$fromFixedToInt(Math.max(Math.min(Math.min(y1, y2), y3), 0L));
         int maxY = roxy$fromFixedToInt(Math.min(Math.max(Math.max(y1, y2), y3), roxy$toFixed(this.targetSize - 1)));
-        int half = roxy$toFixed(0.5f);
-        int one = roxy$toFixed(1);
+        long half = roxy$toFixed(0.5f);
+        long one = roxy$toFixed(1);
 
         for (int py = minY; py <= maxY; py++) {
             for (int px = minX; px <= maxX; px++) {
-                int cx = roxy$toFixed(px) + half;
-                int cy = roxy$toFixed(py) + half;
-                int w1 = roxy$fixedDiv(roxy$edge(x2, y2, x3, y3, cx, cy), area);
-                int w2 = roxy$fixedDiv(roxy$edge(x3, y3, x1, y1, cx, cy), area);
-                int w3 = one - w1 - w2;
-                if ((w1 > 0 && w2 > 0 && w3 > 0)
-                        || (includeEdges && w1 >= 0 && w2 >= 0 && w3 >= 0)) {
+                long cx = roxy$toFixed(px) + half;
+                long cy = roxy$toFixed(py) + half;
+                long w1 = roxy$fixedDiv(roxy$edge(x2, y2, x3, y3, cx, cy), area);
+                long w2 = roxy$fixedDiv(roxy$edge(x3, y3, x1, y1, cx, cy), area);
+                long w3 = one - w1 - w2;
+                if ((w1 > 0L && w2 > 0L && w3 > 0L)
+                        || (includeEdges && w1 >= 0L && w2 >= 0L && w3 >= 0L)) {
                     this.roxy$invokeRasterPixel(
                             px + py * this.targetSize,
                             roxy$fromFixed(w1),
@@ -67,31 +67,31 @@ public abstract class RoxySoftwareRasterizerMixin {
         callback.cancel();
     }
 
-    private static int roxy$edge(int ax, int ay, int bx, int by, int cx, int cy) {
+    private static long roxy$edge(long ax, long ay, long bx, long by, long cx, long cy) {
         return roxy$fixedMul(cx - ax, by - ay) - roxy$fixedMul(cy - ay, bx - ax);
     }
 
-    private static int roxy$toFixed(float value) {
-        return (int) (value * ROXY_FIXED_POINT_SCALE);
+    private static long roxy$toFixed(float value) {
+        return (long) ((double) value * ROXY_FIXED_POINT_SCALE);
     }
 
-    private static int roxy$toFixed(int value) {
-        return (int) (value * ROXY_FIXED_POINT_SCALE);
+    private static long roxy$toFixed(int value) {
+        return value * ROXY_FIXED_POINT_SCALE;
     }
 
-    private static float roxy$fromFixed(int value) {
+    private static float roxy$fromFixed(long value) {
         return (float) (value / (double) ROXY_FIXED_POINT_SCALE);
     }
 
-    private static int roxy$fromFixedToInt(int value) {
+    private static int roxy$fromFixedToInt(long value) {
         return (int) (value / ROXY_FIXED_POINT_SCALE);
     }
 
-    private static int roxy$fixedMul(int first, int second) {
-        return (int) (((long) first * second) / ROXY_FIXED_POINT_SCALE);
+    private static long roxy$fixedMul(long first, long second) {
+        return (first * second) / ROXY_FIXED_POINT_SCALE;
     }
 
-    private static int roxy$fixedDiv(int numerator, int denominator) {
-        return (int) ((numerator * ROXY_FIXED_POINT_SCALE) / denominator);
+    private static long roxy$fixedDiv(long numerator, long denominator) {
+        return (numerator * ROXY_FIXED_POINT_SCALE) / denominator;
     }
 }

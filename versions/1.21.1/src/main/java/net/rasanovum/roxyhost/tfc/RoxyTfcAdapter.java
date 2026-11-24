@@ -147,8 +147,14 @@ public final class RoxyTfcAdapter {
         if (!isLeaf(state)) return state;
         BlockState leaf = (BlockState) state;
         BlockState defaults = leaf.getBlock().defaultBlockState();
-        return leaf.setValue(leafDistance, defaults.getValue(leafDistance))
-                .setValue(leafPersistent, defaults.getValue(leafPersistent));
+        BlockState normalized = leaf;
+        if (leafDistance != null && normalized.hasProperty(leafDistance) && defaults.hasProperty(leafDistance)) {
+            normalized = normalized.setValue(leafDistance, defaults.getValue(leafDistance));
+        }
+        if (leafPersistent != null && normalized.hasProperty(leafPersistent) && defaults.hasProperty(leafPersistent)) {
+            normalized = normalized.setValue(leafPersistent, defaults.getValue(leafPersistent));
+        }
+        return normalized;
     }
 
     public static long calendarDay() {
@@ -166,14 +172,26 @@ public final class RoxyTfcAdapter {
 
     public static Object clientLevel() { return Minecraft.getInstance().level; }
 
+    public static boolean isOverworldClimate(Object level) {
+        if (level == null || !available() || climateModel == null || overworldClimate == null) return false;
+        try {
+            Object model = climateModel.invoke(null, level);
+            return overworldClimate.isInstance(model);
+        } catch (ReflectiveOperationException | RuntimeException failure) {
+            return false;
+        }
+    }
+
     public static void requestClimate(Object level, int x, int z) {
         if (TfcCompatConfig.enabled()) RoxyTfcBackfill.request(level, x, z);
     }
     public static void tickClimate() {
         if (TfcCompatConfig.enabled()) {
             RoxyTfcBackfill.tick();
-            long[] time = calendarSnapshot();
-            if (time != null) RoxyTfcTerrainRefresh.tick(clientLevel(), time[0], time[1]);
+            Object level = clientLevel();
+            long[] time = isOverworldClimate(level) ? calendarSnapshot() : null;
+            if (time != null) RoxyTfcTerrainRefresh.tick(level, time[0], time[1]);
+            else RoxyTfcTerrainRefresh.reset();
         } else {
             RoxyTfcBackfill.disable();
             RoxyTfcTerrainRefresh.disable();
@@ -251,11 +269,17 @@ public final class RoxyTfcAdapter {
         return modelClass.isInstance(model) ? model : null;
     }
 
-    public static Object scopedClimate() { return TfcCompatConfig.enabled() ? CLIMATE.get() : null; }
+    public static Object scopedClimate() {
+        Object value = CLIMATE.get();
+        return value != null && TfcCompatConfig.enabled() ? value : null;
+    }
 
     public static void snapshotHookInstalled() { snapshotHookInstalled = true; }
 
-    public static long[] scopedCalendar() { return TfcCompatConfig.enabled() ? CALENDAR.get() : null; }
+    public static long[] scopedCalendar() {
+        long[] value = CALENDAR.get();
+        return value != null && TfcCompatConfig.enabled() ? value : null;
+    }
 
     public static void calendarHookInstalled() { calendarHookInstalled = true; }
 

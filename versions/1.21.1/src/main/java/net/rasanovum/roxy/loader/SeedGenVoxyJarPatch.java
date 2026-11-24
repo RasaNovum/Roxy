@@ -45,6 +45,103 @@ final class SeedGenVoxyJarPatch {
     private SeedGenVoxyJarPatch() {
     }
 
+    static Path patchIfTarget(Path original) throws IOException {
+        try (ZipFile input = new ZipFile(original.toFile())) {
+            ZipEntry metadata = input.getEntry(MODS_TOML);
+            if (metadata == null || input.getEntry(MOD_MARKER) == null) return null;
+            Version version;
+            try (InputStream stream = input.getInputStream(metadata)) {
+                String toml = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
+                if (!MOD_ID.matcher(toml).find()) return null;
+                version = parseVersion(toml);
+                if (version == null) return null;
+            }
+            boolean strictLegacyLayout = !version.atLeast(0, 3, 2);
+
+            Map<String, byte[]> replacements = new HashMap<>();
+            Map<String, Integer> intReads = new HashMap<>();
+            Map<String, Integer> floatReads = new HashMap<>();
+            Map<String, Integer> voidSaves = new HashMap<>();
+            Map<String, Integer> booleanSaves = new HashMap<>();
+            Map<String, Integer> voidLogs = new HashMap<>();
+            Map<String, Integer> stringLogs = new HashMap<>();
+            boolean[] cleanupReady = new boolean[1];
+
+            var entries = input.entries();
+            while (entries.hasMoreElements()) {
+                ZipEntry entry = entries.nextElement();
+                if (entry.isDirectory() || !entry.getName().endsWith(".class")
+                        || !entry.getName().startsWith("mobius/voxyseedgen/")) continue;
+                try (InputStream stream = input.getInputStream(entry)) {
+                    ReadPatch result = patchBytecode(stream.readAllBytes(), entry.getName(), strictLegacyLayout);
+                    if (result.bytecode != null) replacements.put(entry.getName(), result.bytecode);
+                    if (result.intReads > 0) intReads.put(entry.getName(), result.intReads);
+                    if (result.floatReads > 0) floatReads.put(entry.getName(), result.floatReads);
+                    if (result.voidSaves > 0) voidSaves.put(entry.getName(), result.voidSaves);
+                    if (result.booleanSaves > 0) booleanSaves.put(entry.getName(), result.booleanSaves);
+                    if (result.voidLogs > 0) voidLogs.put(entry.getName(), result.voidLogs);
+                    if (result.stringLogs > 0) stringLogs.put(entry.getName(), result.stringLogs);
+                    if (entry.getName().equals(LADDER_WRITER + ".class")) cleanupReady[0] = result.cleanupReady;
+                }
+            }
+
+            boolean originalFields = intReads.equals(EXPECTED_READS)
+                    && (!strictLegacyLayout || floatReads.isEmpty());
+            boolean patchedFields = intReads.isEmpty()
+                    && (!strictLegacyLayout || floatReads.equals(EXPECTED_READS));
+            boolean oldSaveAbi = voidSaves.equals(Map.of(LADDER_WRITER + ".class", 1))
+                    && (!strictLegacyLayout || booleanSaves.isEmpty());
+            boolean currentSaveAbi = voidSaves.isEmpty()
+                    && (!strictLegacyLayout || booleanSaves.equals(Map.of(LADDER_WRITER + ".class", 1)));
+            boolean oldLogAbi = voidLogs.equals(Map.of(PRIORITY_MIXIN + ".class", 1))
+                    && (!strictLegacyLayout || stringLogs.isEmpty());
+            boolean currentLogAbi = voidLogs.isEmpty()
+                    && (!strictLegacyLayout || stringLogs.equals(Map.of(PRIORITY_MIXIN + ".class", 1)));
+            if (!strictLegacyLayout && intReads.isEmpty() && voidSaves.isEmpty() && voidLogs.isEmpty()) {
+                return null;
+            }
+            if ((!originalFields && !patchedFields) || (!oldSaveAbi && !currentSaveAbi)
+                    || (!oldLogAbi && !currentLogAbi)) {
+                throw new IOException("Roxy: unsupported Voxy SeedGen field/method layout");
+            }
+            if (currentSaveAbi && currentLogAbi && patchedFields && cleanupReady[0]) {
+                return null;
+            }
+
+            Path patched = Files.createTempFile("roxy-voxyseedgen-", ".jar");
+            boolean complete = false;
+            try {
+                try (ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(patched))) {
+                    var copyEntries = input.entries();
+                    while (copyEntries.hasMoreElements()) {
+                        ZipEntry entry = copyEntries.nextElement();
+                        ZipEntry copy = new ZipEntry(entry.getName());
+                        if (entry.getTime() >= 0) copy.setTime(entry.getTime());
+                        if (entry.getComment() != null) copy.setComment(entry.getComment());
+                        if (entry.getExtra() != null) copy.setExtra(entry.getExtra());
+                        output.putNextEntry(copy);
+                        if (!entry.isDirectory()) {
+                            byte[] replacement = replacements.get(entry.getName());
+                            if (replacement != null) {
+                                output.write(replacement);
+                            } else {
+                                try (InputStream stream = input.getInputStream(entry)) {
+                                    stream.transferTo(output);
+                                }
+                            }
+                        }
+                        output.closeEntry();
+                    }
+                }
+                complete = true;
+                patched.toFile().deleteOnExit();
+                return patched;
+            } finally {
+                if (!complete) Files.deleteIfExists(patched);
+            }
+        }
+    }
+
     static boolean isTarget(Path path) throws IOException {
         try (ZipFile input = new ZipFile(path.toFile())) {
             ZipEntry metadata = input.getEntry(MODS_TOML);
@@ -69,100 +166,7 @@ final class SeedGenVoxyJarPatch {
     }
 
     static Path patch(Path original) throws IOException {
-        if (!isTarget(original)) return null;
-
-        boolean strictLegacyLayout;
-        try (ZipFile input = new ZipFile(original.toFile())) {
-            ZipEntry metadata = input.getEntry(MODS_TOML);
-            try (InputStream stream = input.getInputStream(metadata)) {
-                Version version = parseVersion(new String(stream.readAllBytes(), StandardCharsets.UTF_8));
-                strictLegacyLayout = version == null || !version.atLeast(0, 3, 2);
-            }
-        }
-
-        Map<String, byte[]> replacements = new HashMap<>();
-        Map<String, Integer> intReads = new HashMap<>();
-        Map<String, Integer> floatReads = new HashMap<>();
-        Map<String, Integer> voidSaves = new HashMap<>();
-        Map<String, Integer> booleanSaves = new HashMap<>();
-        Map<String, Integer> voidLogs = new HashMap<>();
-        Map<String, Integer> stringLogs = new HashMap<>();
-        boolean[] cleanupReady = new boolean[1];
-        try (ZipFile input = new ZipFile(original.toFile())) {
-            var entries = input.entries();
-            while (entries.hasMoreElements()) {
-                ZipEntry entry = entries.nextElement();
-                if (entry.isDirectory() || !entry.getName().endsWith(".class")
-                        || !entry.getName().startsWith("mobius/voxyseedgen/")) continue;
-                try (InputStream stream = input.getInputStream(entry)) {
-                    ReadPatch result = patchBytecode(stream.readAllBytes(), entry.getName(), strictLegacyLayout);
-                    if (result.bytecode != null) replacements.put(entry.getName(), result.bytecode);
-                    if (result.intReads > 0) intReads.put(entry.getName(), result.intReads);
-                    if (result.floatReads > 0) floatReads.put(entry.getName(), result.floatReads);
-                    if (result.voidSaves > 0) voidSaves.put(entry.getName(), result.voidSaves);
-                    if (result.booleanSaves > 0) booleanSaves.put(entry.getName(), result.booleanSaves);
-                    if (result.voidLogs > 0) voidLogs.put(entry.getName(), result.voidLogs);
-                    if (result.stringLogs > 0) stringLogs.put(entry.getName(), result.stringLogs);
-                    if (entry.getName().equals(LADDER_WRITER + ".class")) cleanupReady[0] = result.cleanupReady;
-                }
-            }
-        }
-
-        boolean originalFields = intReads.equals(EXPECTED_READS)
-                && (!strictLegacyLayout || floatReads.isEmpty());
-        boolean patchedFields = intReads.isEmpty()
-                && (!strictLegacyLayout || floatReads.equals(EXPECTED_READS));
-        boolean oldSaveAbi = voidSaves.equals(Map.of(LADDER_WRITER + ".class", 1))
-                && (!strictLegacyLayout || booleanSaves.isEmpty());
-        boolean currentSaveAbi = voidSaves.isEmpty()
-                && (!strictLegacyLayout || booleanSaves.equals(Map.of(LADDER_WRITER + ".class", 1)));
-        boolean oldLogAbi = voidLogs.equals(Map.of(PRIORITY_MIXIN + ".class", 1))
-                && (!strictLegacyLayout || stringLogs.isEmpty());
-        boolean currentLogAbi = voidLogs.isEmpty()
-                && (!strictLegacyLayout || stringLogs.equals(Map.of(PRIORITY_MIXIN + ".class", 1)));
-        if (!strictLegacyLayout && intReads.isEmpty() && voidSaves.isEmpty() && voidLogs.isEmpty()) {
-            return null;
-        }
-        if ((!originalFields && !patchedFields) || (!oldSaveAbi && !currentSaveAbi)
-                || (!oldLogAbi && !currentLogAbi)) {
-            throw new IOException("Roxy: unsupported Voxy SeedGen field/method layout");
-        }
-        if (currentSaveAbi && currentLogAbi && patchedFields && cleanupReady[0]) {
-            return null;
-        }
-
-        Path patched = Files.createTempFile("roxy-voxyseedgen-", ".jar");
-        boolean complete = false;
-        try {
-            try (ZipFile input = new ZipFile(original.toFile());
-                 ZipOutputStream output = new ZipOutputStream(Files.newOutputStream(patched))) {
-                var entries = input.entries();
-                while (entries.hasMoreElements()) {
-                    ZipEntry entry = entries.nextElement();
-                    ZipEntry copy = new ZipEntry(entry.getName());
-                    if (entry.getTime() >= 0) copy.setTime(entry.getTime());
-                    if (entry.getComment() != null) copy.setComment(entry.getComment());
-                    if (entry.getExtra() != null) copy.setExtra(entry.getExtra());
-                    output.putNextEntry(copy);
-                    if (!entry.isDirectory()) {
-                        byte[] replacement = replacements.get(entry.getName());
-                        if (replacement != null) {
-                            output.write(replacement);
-                        } else {
-                            try (InputStream stream = input.getInputStream(entry)) {
-                                stream.transferTo(output);
-                            }
-                        }
-                    }
-                    output.closeEntry();
-                }
-            }
-            complete = true;
-            patched.toFile().deleteOnExit();
-            return patched;
-        } finally {
-            if (!complete) Files.deleteIfExists(patched);
-        }
+        return patchIfTarget(original);
     }
 
     private static ReadPatch patchBytecode(byte[] input, String entryName, boolean patchLegacyCleanup) throws IOException {
@@ -331,7 +335,6 @@ final class SeedGenVoxyJarPatch {
 
                     @Override
                     public void visitLabel(org.objectweb.asm.Label label) {
-                        flushUnexpected();
                         super.visitLabel(label);
                     }
 
@@ -538,7 +541,10 @@ final class SeedGenVoxyJarPatch {
                 }
                 return;
             }
-            if (opcode == Opcodes.ATHROW && awaitingOriginalThrow) {
+            if (awaitingOriginalThrow) {
+                if (opcode != Opcodes.ATHROW) {
+                    throw unsupported(LADDER_WRITER + ".class", "release", "(I)V");
+                }
                 awaitingOriginalThrow = false;
                 super.visitJumpInsn(Opcodes.GOTO, originalThrow);
                 super.visitLabel(releaseHandler);
@@ -573,14 +579,21 @@ final class SeedGenVoxyJarPatch {
                     "heldSections:GETFIELD", 3, "heldLevels:GETFIELD", 2, "heldX:GETFIELD", 2,
                     "heldY:GETFIELD", 2, "heldZ:GETFIELD", 2, "heldFaces:GETFIELD", 2,
                     "heldSolid:GETFIELD", 2);
-            if (sectionReleases != 2 || !cleanupTailReturn || !cleanupTailFields.equals(expectedTail)) {
+            if (awaitingOriginalThrow || sectionReleases != 2 || !cleanupTailReturn || !cleanupTailFields.equals(expectedTail)) {
                 throw unsupported(LADDER_WRITER + ".class", "release", "(I)V");
             }
             super.visitMaxs(maxStack + 2, Math.max(maxLocals, 6));
         }
 
+        private void requireNoPendingOriginalThrow() {
+            if (awaitingOriginalThrow) {
+                throw unsupported(LADDER_WRITER + ".class", "release", "(I)V");
+            }
+        }
+
         @Override
         public void visitFieldInsn(int opcode, String owner, String name, String descriptor) {
+            requireNoPendingOriginalThrow();
             if (cleanupTail) {
                 if (owner.equals(LADDER_WRITER) && (opcode == Opcodes.GETFIELD || opcode == Opcodes.PUTFIELD)) {
                     cleanupTailFields.merge(name + ":" + (opcode == Opcodes.GETFIELD ? "GETFIELD" : "PUTFIELD"),
@@ -593,11 +606,13 @@ final class SeedGenVoxyJarPatch {
 
         @Override
         public void visitIntInsn(int opcode, int operand) {
+            requireNoPendingOriginalThrow();
             if (!cleanupTail) super.visitIntInsn(opcode, operand);
         }
 
         @Override
         public void visitVarInsn(int opcode, int variable) {
+            requireNoPendingOriginalThrow();
             if (cleanupTail) return;
             if (sectionReleases == 2 && opcode == Opcodes.ALOAD && variable == 3) {
                 awaitingOriginalThrow = true;
@@ -608,21 +623,25 @@ final class SeedGenVoxyJarPatch {
 
         @Override
         public void visitTypeInsn(int opcode, String type) {
+            requireNoPendingOriginalThrow();
             if (!cleanupTail) super.visitTypeInsn(opcode, type);
         }
 
         @Override
         public void visitJumpInsn(int opcode, org.objectweb.asm.Label label) {
+            requireNoPendingOriginalThrow();
             if (!cleanupTail) super.visitJumpInsn(opcode, label);
         }
 
         @Override
         public void visitLdcInsn(Object value) {
+            requireNoPendingOriginalThrow();
             if (!cleanupTail) super.visitLdcInsn(value);
         }
 
         @Override
         public void visitIincInsn(int variable, int increment) {
+            requireNoPendingOriginalThrow();
             if (!cleanupTail) super.visitIincInsn(variable, increment);
         }
 

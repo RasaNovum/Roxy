@@ -2,7 +2,6 @@ package net.rasanovum.roxy.loader;
 
 import java.util.Locale;
 
-/** CPU and operating-system filtering for native JAR classifiers. */
 final class RoxyNativePlatform {
     private RoxyNativePlatform() {
     }
@@ -21,7 +20,7 @@ final class RoxyNativePlatform {
         if (os.contains("linux") || os.contains("unix")) {
             return matchesNativePlatform(normalized, "linux", architecture);
         }
-        return true;
+        return false;
     }
 
     private static String normalizeArchitecture(String architecture) {
@@ -49,7 +48,6 @@ final class RoxyNativePlatform {
         } else if (classifier.equals("-x86.jar")) {
             nativeArchitecture = "x86";
         } else if (classifier.equals(".jar")) {
-            // Unqualified legacy classifiers are the platform's x86-64 build.
             nativeArchitecture = "x86_64";
         } else {
             return false;

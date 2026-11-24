@@ -216,19 +216,21 @@ public final class RoxyVoxyFogPatch {
             float start = range.start();
             if (!Float.isFinite(start) || !Float.isFinite(end) || end <= start) return;
             RoxyFogParameters fog = viewportFogParameters(viewport);
-            float[] color = fog == null ? nativeTerrainFogColour
-                    : new float[]{fog.red(), fog.green(), fog.blue(), fog.alpha()};
-            if (!Float.isFinite(color[0]) || !Float.isFinite(color[1])
-                    || !Float.isFinite(color[2]) || !Float.isFinite(color[3])) return;
+            float red = fog == null ? nativeTerrainFogColour[0] : fog.red();
+            float green = fog == null ? nativeTerrainFogColour[1] : fog.green();
+            float blue = fog == null ? nativeTerrainFogColour[2] : fog.blue();
+            float alpha = fog == null ? nativeTerrainFogColour[3] : fog.alpha();
+            if (!Float.isFinite(red) || !Float.isFinite(green)
+                    || !Float.isFinite(blue) || !Float.isFinite(alpha)) return;
             float inverseRange = 1.0F / (end - start);
             terrainFogEnd[0] = inverseRange;
             terrainFogEnd[1] = -start * inverseRange;
             terrainFogEnd[2] = 1.0F;
             terrainFogEnd[3] = nativeTerrainFogShape == 1 ? 2.0F : 1.0F;
-            terrainFogColour[0] = color[0];
-            terrainFogColour[1] = color[1];
-            terrainFogColour[2] = color[2];
-            terrainFogColour[3] = color[3];
+            terrainFogColour[0] = red;
+            terrainFogColour[1] = green;
+            terrainFogColour[2] = blue;
+            terrainFogColour[3] = alpha;
             terrainFogPrepared = true;
         } catch (ReflectiveOperationException | LinkageError | RuntimeException exception) {
             clearTerrainFog();

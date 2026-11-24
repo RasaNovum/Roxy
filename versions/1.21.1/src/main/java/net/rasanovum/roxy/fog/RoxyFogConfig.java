@@ -2,59 +2,101 @@ package net.rasanovum.roxy.fog;
 
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import net.neoforged.fml.loading.FMLPaths;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 
 public final class RoxyFogConfig {
+    private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
     private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
-    private static Settings settings;
+    private static volatile Settings settings;
 
     private RoxyFogConfig() {}
 
-    public static synchronized Settings get() {
-        if (settings == null) settings = read(FMLPaths.CONFIGDIR.get().resolve("roxy-fog.json"));
-        return settings;
+    public static Settings get() {
+        Settings cached = settings;
+        if (cached != null) return cached;
+        synchronized (RoxyFogConfig.class) {
+            cached = settings;
+            if (cached == null) {
+                Path configDir = configDirectory();
+                cached = configDir == null ? new Settings() : read(configDir.resolve("roxy-fog.json"));
+                settings = cached;
+            }
+            return cached;
+        }
     }
 
     public static Settings read(Path path) {
-        if (!Files.isRegularFile(path)) return new Settings();
+        if (path == null || !Files.isRegularFile(path)) return new Settings();
         try (var reader = Files.newBufferedReader(path)) {
             JsonObject input = GSON.fromJson(reader, JsonObject.class);
             if (input == null) return new Settings();
-            Settings result = GSON.fromJson(input, Settings.class);
-            if (!input.has("start") && input.has("terrainStart")) {
-                result.start = input.get("terrainStart").getAsInt();
+            Settings result = new Settings();
+            JsonElement automatic = input.get("automatic");
+            if (automatic != null && automatic.isJsonPrimitive() && automatic.getAsJsonPrimitive().isBoolean()) {
+                result.automatic = automatic.getAsBoolean();
+            }
+            JsonElement terrainEnabled = input.get("terrainEnabled");
+            if (terrainEnabled != null && terrainEnabled.isJsonPrimitive() && terrainEnabled.getAsJsonPrimitive().isBoolean()) {
+                result.terrainEnabled = terrainEnabled.getAsBoolean();
+            }
+            JsonElement start = input.get("start");
+            if (start != null && start.isJsonPrimitive() && start.getAsJsonPrimitive().isNumber()) {
+                result.start = start.getAsInt();
+            } else {
+                JsonElement terrainStart = input.get("terrainStart");
+                if (terrainStart != null && terrainStart.isJsonPrimitive() && terrainStart.getAsJsonPrimitive().isNumber()) {
+                    result.start = terrainStart.getAsInt();
+                }
+            }
+            JsonElement weatherRollIn = input.get("weatherRollIn");
+            if (weatherRollIn != null && weatherRollIn.isJsonPrimitive() && weatherRollIn.getAsJsonPrimitive().isNumber()) {
+                result.weatherRollIn = weatherRollIn.getAsInt();
             }
             result.normalize();
             return result;
         } catch (IOException | RuntimeException exception) {
-            org.slf4j.LoggerFactory.getLogger("Roxy").warn("Unable to read Roxy fog options; using defaults", exception);
+            LOGGER.warn("Unable to read Roxy fog options; using defaults", exception);
             return new Settings();
         }
     }
 
     public static synchronized void save() {
-        write(FMLPaths.CONFIGDIR.get().resolve("roxy-fog.json"), get());
+        Path configDir = configDirectory();
+        if (configDir == null) return;
+        write(configDir.resolve("roxy-fog.json"), get());
     }
 
     public static void write(Path path, Settings value) {
         value.normalize();
         Path temporary = null;
         try {
-            Files.createDirectories(path.toAbsolutePath().getParent());
-            temporary = Files.createTempFile(path.toAbsolutePath().getParent(), "roxy-fog-", ".tmp");
+            Path parent = path.toAbsolutePath().getParent();
+            if (parent != null) Files.createDirectories(parent);
+            temporary = Files.createTempFile(parent, "roxy-fog-", ".tmp");
             Files.writeString(temporary, GSON.toJson(value));
             Files.move(temporary, path, StandardCopyOption.REPLACE_EXISTING);
         } catch (IOException exception) {
-            throw new IllegalStateException("Unable to save Roxy fog options", exception);
+            LOGGER.warn("Unable to save Roxy fog options to {}", path, exception);
         } finally {
             if (temporary != null) {
                 try { Files.deleteIfExists(temporary); } catch (IOException ignored) {}
             }
+        }
+    }
+
+    private static Path configDirectory() {
+        try {
+            return FMLPaths.CONFIGDIR.get();
+        } catch (RuntimeException | LinkageError ignored) {
+            return null;
         }
     }
 
@@ -73,7 +115,7 @@ public final class RoxyFogConfig {
 
         public RoxyFogRange apply(RoxyFogRange range, float voxyDistance) {
             if (range == null || !Float.isFinite(voxyDistance) || voxyDistance <= 0) return range;
-            float fogStart = Math.min(start, voxyDistance - Math.min(16.0F, voxyDistance));
+            float fogStart = Math.max(0.0F, Math.min(start, voxyDistance - Math.min(16.0F, voxyDistance)));
             return new RoxyFogRange(fogStart, voxyDistance);
         }
     }

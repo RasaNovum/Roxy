@@ -1,9 +1,11 @@
 package net.rasanovum.roxy.render;
 
+import java.lang.ref.WeakReference;
+
 public final class RoxyVoxyWorkDrain {
     private static final int MAX_PENDING_SIGNALS = 8;
     private static final int SHADER_TAIL_FRAMES = 4;
-    private static Object activeManager;
+    private static WeakReference<Object> activeManager = new WeakReference<>(null);
     private static boolean bootstrapPending;
     private static int continuationsAvailable;
     private static int pendingSignals;
@@ -15,17 +17,25 @@ public final class RoxyVoxyWorkDrain {
     private RoxyVoxyWorkDrain() {
     }
 
+    private static boolean isActiveManager(Object manager) {
+        return manager != null && manager == activeManager.get();
+    }
+
     public static synchronized void beginRender(Object manager, boolean shaderPackEnabled, boolean shadowActive) {
-        shaderMainActive = manager != null && manager == activeManager && shaderPackEnabled && !shadowActive;
+        if (shadowActive) {
+            tailUsed = false;
+            continuationsAvailable = 0;
+            return;
+        }
+        boolean active = isActiveManager(manager);
+        shaderMainActive = active && shaderPackEnabled;
         tailUsed = false;
-        continuationsAvailable = manager != null && manager == activeManager && !shadowActive
-                ? shaderPackEnabled ? 2 : 1
-                : 0;
+        continuationsAvailable = active ? (shaderPackEnabled ? 2 : 1) : 0;
         if (shaderMainActive && bootstrapPending) shaderTailFrames = SHADER_TAIL_FRAMES;
     }
 
     public static synchronized boolean shouldRun(Object manager, boolean managerHasWork) {
-        if (manager == null || manager != activeManager) return false;
+        if (!isActiveManager(manager)) return false;
         if (continuationsAvailable == 0) return false;
         if (managerHasWork || producing) {
             continuationsAvailable--;
@@ -51,27 +61,27 @@ public final class RoxyVoxyWorkDrain {
     }
 
     public static synchronized void signalRequest(Object manager) {
-        if (manager == activeManager && pendingSignals < MAX_PENDING_SIGNALS) pendingSignals++;
+        if (isActiveManager(manager) && pendingSignals < MAX_PENDING_SIGNALS) pendingSignals++;
     }
 
     public static synchronized void beginProduction(Object manager) {
-        if (manager == activeManager) producing = true;
+        if (isActiveManager(manager)) producing = true;
     }
 
     public static synchronized void endProduction(Object manager) {
-        if (manager == activeManager) producing = false;
+        if (isActiveManager(manager)) producing = false;
     }
 
     public static synchronized void publishResult(Object manager) {
-        if (manager != activeManager) return;
+        if (!isActiveManager(manager)) return;
         producing = false;
         if (pendingSignals < MAX_PENDING_SIGNALS) pendingSignals++;
         if (shaderMainActive) shaderTailFrames = SHADER_TAIL_FRAMES;
     }
 
     public static synchronized void bind(Object manager) {
-        if (manager == null || manager == activeManager) return;
-        activeManager = manager;
+        if (manager == null || manager == activeManager.get()) return;
+        activeManager = new WeakReference<>(manager);
         bootstrapPending = true;
         continuationsAvailable = 0;
         pendingSignals = 0;
@@ -82,7 +92,7 @@ public final class RoxyVoxyWorkDrain {
     }
 
     public static synchronized void reset() {
-        activeManager = null;
+        activeManager = new WeakReference<>(null);
         bootstrapPending = false;
         continuationsAvailable = 0;
         pendingSignals = 0;

@@ -16,15 +16,8 @@ import org.lwjgl.system.MemoryUtil;
 
 import java.util.Locale;
 
-/**
- * Compatibility bridge for Voxy's direct JOML memory access on Apple Silicon macOS.
- * Minecraft mixins alter JOML object layouts, which makes JOML's Unsafe layout
- * checks fail during native reads or writes. These narrowly typed methods use
- * public component accessors and setters instead. Other operating systems
- * preserve the original JOML implementation.
- */
 public final class RoxyJomlMemory {
-    private static final boolean MACOS = isMacOS();
+    private static final boolean FALLBACK = isMacOS() || Boolean.getBoolean("joml.nounsafe");
 
     private RoxyJomlMemory() {
     }
@@ -35,7 +28,7 @@ public final class RoxyJomlMemory {
     }
 
     public static Matrix4fc writeToAddress(Matrix4f value, long address) {
-        if (!MACOS) return value.getToAddress(address);
+        if (!FALLBACK) return value.getToAddress(address);
         requireAddress(address);
         MemoryUtil.memPutFloat(address, value.m00());
         MemoryUtil.memPutFloat(address + 4, value.m01());
@@ -57,7 +50,7 @@ public final class RoxyJomlMemory {
     }
 
     public static Vector4fc writeToAddress(Vector4f value, long address) {
-        if (!MACOS) return value.getToAddress(address);
+        if (!FALLBACK) return value.getToAddress(address);
         requireAddress(address);
         MemoryUtil.memPutFloat(address, value.x());
         MemoryUtil.memPutFloat(address + 4, value.y());
@@ -67,14 +60,14 @@ public final class RoxyJomlMemory {
     }
 
     public static Vector4f readFromAddress(Vector4f value, long address) {
-        if (!MACOS) return value.setFromAddress(address);
+        if (!FALLBACK) return value.setFromAddress(address);
         requireAddress(address);
         return value.set(MemoryUtil.memGetFloat(address), MemoryUtil.memGetFloat(address + 4),
                 MemoryUtil.memGetFloat(address + 8), MemoryUtil.memGetFloat(address + 12));
     }
 
     public static Vector3fc writeToAddress(Vector3f value, long address) {
-        if (!MACOS) return value.getToAddress(address);
+        if (!FALLBACK) return value.getToAddress(address);
         requireAddress(address);
         MemoryUtil.memPutFloat(address, value.x());
         MemoryUtil.memPutFloat(address + 4, value.y());
@@ -83,14 +76,14 @@ public final class RoxyJomlMemory {
     }
 
     public static Vector3f readFromAddress(Vector3f value, long address) {
-        if (!MACOS) return value.setFromAddress(address);
+        if (!FALLBACK) return value.setFromAddress(address);
         requireAddress(address);
         return value.set(MemoryUtil.memGetFloat(address), MemoryUtil.memGetFloat(address + 4),
                 MemoryUtil.memGetFloat(address + 8));
     }
 
     public static Vector3ic writeToAddress(Vector3i value, long address) {
-        if (!MACOS) return value.getToAddress(address);
+        if (!FALLBACK) return value.getToAddress(address);
         requireAddress(address);
         MemoryUtil.memPutInt(address, value.x());
         MemoryUtil.memPutInt(address + 4, value.y());
@@ -99,7 +92,7 @@ public final class RoxyJomlMemory {
     }
 
     public static Vector2fc writeToAddress(Vector2f value, long address) {
-        if (!MACOS) return value.getToAddress(address);
+        if (!FALLBACK) return value.getToAddress(address);
         requireAddress(address);
         MemoryUtil.memPutFloat(address, value.x());
         MemoryUtil.memPutFloat(address + 4, value.y());
@@ -107,7 +100,7 @@ public final class RoxyJomlMemory {
     }
 
     public static Vector2ic writeToAddress(Vector2i value, long address) {
-        if (!MACOS) return value.getToAddress(address);
+        if (!FALLBACK) return value.getToAddress(address);
         requireAddress(address);
         MemoryUtil.memPutInt(address, value.x());
         MemoryUtil.memPutInt(address + 4, value.y());
