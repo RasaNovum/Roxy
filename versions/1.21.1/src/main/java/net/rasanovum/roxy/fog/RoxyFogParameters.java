@@ -1,8 +1,12 @@
 package net.rasanovum.roxy.fog;
 
+import net.rasanovum.roxy.util.RoxyClassLoaders;
+
 import java.lang.reflect.Method;
 
 public final class RoxyFogParameters {
+    private static volatile FogGetters fogGetters;
+
     private final float environmentalStart;
     private final float environmentalEnd;
     private final float red;
@@ -28,17 +32,10 @@ public final class RoxyFogParameters {
 
     public static RoxyFogParameters current() {
         try {
-            Class<?> renderSystem = Class.forName(
-                    "com.mojang.blaze3d.systems.RenderSystem",
-                    false,
-                    findMinecraftLoader()
-            );
-            Method getStart = renderSystem.getMethod("getShaderFogStart");
-            Method getEnd = renderSystem.getMethod("getShaderFogEnd");
-            Method getColor = renderSystem.getMethod("getShaderFogColor");
-            float start = ((Number) getStart.invoke(null)).floatValue();
-            float end = ((Number) getEnd.invoke(null)).floatValue();
-            float[] color = (float[]) getColor.invoke(null);
+            FogGetters getters = getters();
+            float start = ((Number) getters.getStart.invoke(null)).floatValue();
+            float end = ((Number) getters.getEnd.invoke(null)).floatValue();
+            float[] color = (float[]) getters.getColor.invoke(null);
             if (color == null || color.length < 3) {
                 return new RoxyFogParameters(start, end, 0.0F, 0.0F, 0.0F, 1.0F);
             }
@@ -55,21 +52,28 @@ public final class RoxyFogParameters {
         }
     }
 
-    private static ClassLoader findMinecraftLoader() {
-        ClassLoader[] candidates = {
-                Thread.currentThread().getContextClassLoader(),
-                RoxyFogParameters.class.getClassLoader(),
-                ClassLoader.getSystemClassLoader()
-        };
-        for (ClassLoader candidate : candidates) {
-            if (candidate == null) continue;
-            try {
-                Class.forName("net.minecraft.client.Minecraft", false, candidate);
-                return candidate;
-            } catch (ClassNotFoundException ignored) {
-            }
+    private static FogGetters getters() throws ReflectiveOperationException {
+        FogGetters resolved = fogGetters;
+        if (resolved != null) return resolved;
+        synchronized (RoxyFogParameters.class) {
+            resolved = fogGetters;
+            if (resolved != null) return resolved;
+            Class<?> renderSystem = Class.forName(
+                    "com.mojang.blaze3d.systems.RenderSystem",
+                    false,
+                    RoxyClassLoaders.findGameLoader()
+            );
+            resolved = new FogGetters(
+                    renderSystem.getMethod("getShaderFogStart"),
+                    renderSystem.getMethod("getShaderFogEnd"),
+                    renderSystem.getMethod("getShaderFogColor")
+            );
+            fogGetters = resolved;
+            return resolved;
         }
-        throw new IllegalStateException("Unable to locate Minecraft's client class loader");
+    }
+
+    private record FogGetters(Method getStart, Method getEnd, Method getColor) {
     }
 
     public float environmentalStart() {

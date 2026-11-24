@@ -1,5 +1,6 @@
 package net.rasanovum.roxy.bridge;
 
+import net.rasanovum.roxy.util.RoxyClassLoaders;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL12;
 import org.lwjgl.opengl.GL15C;
@@ -15,7 +16,7 @@ public final class RoxyTextureBridge {
 
     public static void setupBlockAtlas(Object rasterizer) {
         try {
-            ClassLoader minecraftLoader = findMinecraftLoader();
+            ClassLoader minecraftLoader = RoxyClassLoaders.findGameLoader();
             Class<?> minecraftClass = Class.forName("net.minecraft.client.Minecraft", false, minecraftLoader);
             Object minecraft = minecraftClass.getMethod("getInstance").invoke(null);
             Object textureManager = minecraftClass.getMethod("getTextureManager").invoke(minecraft);
@@ -80,23 +81,6 @@ public final class RoxyTextureBridge {
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, texture);
             GL15C.glBindBuffer(GL21C.GL_PIXEL_PACK_BUFFER, pixelPackBuffer);
         }
-    }
-
-    private static ClassLoader findMinecraftLoader() {
-        ClassLoader[] candidates = {
-                Thread.currentThread().getContextClassLoader(),
-                RoxyTextureBridge.class.getClassLoader(),
-                ClassLoader.getSystemClassLoader()
-        };
-        for (ClassLoader candidate : candidates) {
-            if (candidate == null) continue;
-            try {
-                Class.forName("net.minecraft.client.Minecraft", false, candidate);
-                return candidate;
-            } catch (ClassNotFoundException ignored) {
-            }
-        }
-        throw new IllegalStateException("Unable to locate Minecraft's client class loader");
     }
 
     private record TextureData(int[] pixels, int width, int height) {

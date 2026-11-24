@@ -18,6 +18,7 @@ import java.util.stream.Stream;
 
 public final class RoxyMappings {
     private static final String MINECRAFT_VERSION = "1.21.11";
+    private static final String RUNTIME_MAP_RESOURCE = "roxy/mappings/runtime-1.21.11.map";
     private static final String INTERMEDIARY_RESOURCE = "roxy/mappings/intermediary-1.21.11.tiny";
     private static final String MOJMAP_RESOURCE = "roxy/mappings/client-1.21.11.txt";
 
@@ -44,28 +45,78 @@ public final class RoxyMappings {
     }
 
     public static RoxyMappings load() throws IOException {
-        Path neoFormMappings = explicitNeoFormMapping();
-        MojmapMappings mojmap = neoFormMappings != null
-                ? MojmapMappings.read(neoFormMappings)
+        Path explicitNeoForm = explicitNeoFormMapping();
+        Path explicitIntermediary = explicitIntermediaryMapping();
+        if (explicitNeoForm == null && explicitIntermediary == null) {
+            InputStream runtimeStream = openResource(RUNTIME_MAP_RESOURCE);
+            if (runtimeStream != null) {
+                try (InputStream stream = runtimeStream) {
+                    return parseRuntimeMap(stream);
+                }
+            }
+        }
+
+        MojmapMappings mojmap = explicitNeoForm != null
+                ? MojmapMappings.read(explicitNeoForm)
                 : readBundledOrCachedMojmap();
-        Path intermediaryPath = findIntermediaryMapping();
+        Path intermediaryPath = explicitIntermediary != null ? explicitIntermediary : findIntermediaryMapping();
         if (intermediaryPath != null) {
             try (InputStream input = Files.newInputStream(intermediaryPath)) {
                 return parseTiny(input, mojmap);
             }
         }
 
-        ClassLoader loader = Thread.currentThread().getContextClassLoader();
-        InputStream resource = loader == null ? null : loader.getResourceAsStream(INTERMEDIARY_RESOURCE);
-        if (resource == null) {
-            resource = RoxyMappings.class.getClassLoader().getResourceAsStream(INTERMEDIARY_RESOURCE);
-        }
+        InputStream resource = openResource(INTERMEDIARY_RESOURCE);
         if (resource == null) {
             throw new IOException("Roxy: missing Fabric intermediary mapping " + INTERMEDIARY_RESOURCE);
         }
         try (InputStream mappingResource = resource) {
             return parseTiny(mappingResource, mojmap);
         }
+    }
+
+    private static InputStream openResource(String resourcePath) {
+        ClassLoader loader = Thread.currentThread().getContextClassLoader();
+        InputStream resource = loader == null ? null : loader.getResourceAsStream(resourcePath);
+        if (resource == null) {
+            resource = RoxyMappings.class.getClassLoader().getResourceAsStream(resourcePath);
+        }
+        return resource;
+    }
+
+    private static RoxyMappings parseRuntimeMap(InputStream input) throws IOException {
+        Map<String, String> classes = new HashMap<>(16384);
+        Map<MemberKey, String> fields = new HashMap<>(65536);
+        Map<MemberKey, String> methods = new HashMap<>(131072);
+        try (BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8))) {
+            String line;
+            while ((line = reader.readLine()) != null) {
+                if (line.isEmpty()) continue;
+                String[] parts = line.split("\t", -1);
+                if (parts[0].equals("C") && parts.length >= 3) {
+                    classes.put(parts[1], parts[2]);
+                } else if (parts[0].equals("F") && parts.length >= 5) {
+                    fields.put(new MemberKey(parts[1], parts[2], parts[3]), parts[4]);
+                } else if (parts[0].equals("M") && parts.length >= 5) {
+                    methods.put(new MemberKey(parts[1], parts[2], parts[3]), parts[4]);
+                }
+            }
+        }
+        RoxyMappings mappings = new RoxyMappings(classes, fields, methods);
+        String component = mappings.mapClass("net/minecraft/class_2561");
+        if (!component.equals("net/minecraft/network/chat/Component")) {
+            throw new IOException("Roxy: invalid 1.21.11 runtime mappings: Component mapped to " + component);
+        }
+        return mappings;
+    }
+
+    private static Path explicitIntermediaryMapping() {
+        String explicit = System.getProperty("roxy.intermediaryMapping");
+        if (explicit != null && !explicit.isBlank()) {
+            Path path = Paths.get(explicit);
+            if (Files.isRegularFile(path)) return path;
+        }
+        return null;
     }
 
     private static MojmapMappings readBundledOrCachedMojmap() throws IOException {

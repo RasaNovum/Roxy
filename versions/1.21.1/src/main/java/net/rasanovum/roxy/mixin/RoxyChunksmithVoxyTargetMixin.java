@@ -12,18 +12,18 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Pseudo
 @Mixin(targets = "com.kishku7.chunksmith.lod.client.render.VoxyTarget", remap = false)
 public abstract class RoxyChunksmithVoxyTargetMixin {
-    @Inject(method = "supported", at = @At("HEAD"), cancellable = true, remap = false)
+    @Inject(method = "supported", at = @At("HEAD"), cancellable = true, remap = false, require = 0)
     private static void roxy$supportVoxy(CallbackInfoReturnable<Boolean> callback) {
         callback.setReturnValue(true);
     }
 
-    @Inject(method = "available", at = @At("HEAD"), cancellable = true, remap = false)
+    @Inject(method = "available", at = @At("HEAD"), cancellable = true, remap = false, require = 0)
     private static void roxy$findVoxy(CallbackInfoReturnable<Boolean> callback) {
         callback.setReturnValue(RoxyChunksmithVoxyTargetMixin.class.getClassLoader() != null
                 && RoxyChunksmithCompat.available(RoxyChunksmithVoxyTargetMixin.class.getClassLoader()));
     }
 
-    @Inject(method = "inject", at = @At("HEAD"), cancellable = true, remap = false)
+    @Inject(method = "inject", at = @At("HEAD"), cancellable = true, remap = false, require = 0)
     private static void roxy$injectVoxy(
             Level level,
             @Coerce Object record,

@@ -11,12 +11,12 @@ import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.logging.Level;
 import net.neoforged.fml.loading.LoadingModList;
-import java.util.logging.Logger;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 public final class RoxyCreateStaticModelCompat {
-    private static final Logger LOGGER = Logger.getLogger("Roxy");
+    private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
     private static final String CREATE = "com.simibubi.create";
     private static final int MAX_MODELS = 512;
     private static final Map<Key, Object> WRAPPERS = new LinkedHashMap<>(32, .75f, true);
@@ -161,7 +161,7 @@ public final class RoxyCreateStaticModelCompat {
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
             if (!integrationFailureLogged) {
                 integrationFailureLogged = true;
-                LOGGER.log(Level.WARNING, "Create static LOD geometry is unavailable; preserving the native Voxy model", failure);
+                LOGGER.warn("Create static LOD geometry is unavailable; preserving the native Voxy model", failure);
             }
             return List.of();
         }

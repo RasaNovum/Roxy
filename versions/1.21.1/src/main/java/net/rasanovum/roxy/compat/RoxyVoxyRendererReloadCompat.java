@@ -233,6 +233,7 @@ public final class RoxyVoxyRendererReloadCompat {
 
             if (!PENDING.compareAndSet(pending, null)) return;
             try {
+                net.rasanovum.roxy.util.RoxyCompatLifecycle.onRendererShutdown();
                 pending.shutdownRenderer.invoke(expectedLevelRenderer);
                 pending.createRenderer.invoke(expectedLevelRenderer);
                 if (quietNanos >= QUIET_INTERVAL_NANOS) {
@@ -383,7 +384,7 @@ public final class RoxyVoxyRendererReloadCompat {
         Accessors current = accessors;
         if (current != null) return current;
         try {
-            ClassLoader loader = findMinecraftLoader();
+            ClassLoader loader = net.rasanovum.roxy.util.RoxyClassLoaders.findGameLoader();
             Class<?> minecraft = Class.forName(MINECRAFT, false, loader);
             current = new Accessors(
                     minecraft.getMethod("getInstance"),
@@ -407,23 +408,6 @@ public final class RoxyVoxyRendererReloadCompat {
             lastFailureAt = now;
             LOGGER.warn(message, exception);
         }
-    }
-
-    private static ClassLoader findMinecraftLoader() {
-        ClassLoader[] candidates = {
-                Thread.currentThread().getContextClassLoader(),
-                RoxyVoxyRendererReloadCompat.class.getClassLoader(),
-                ClassLoader.getSystemClassLoader()
-        };
-        for (ClassLoader candidate : candidates) {
-            if (candidate == null) continue;
-            try {
-                Class.forName(MINECRAFT, false, candidate);
-                return candidate;
-            } catch (ClassNotFoundException ignored) {
-            }
-        }
-        throw new IllegalStateException("Unable to locate Minecraft's client class loader");
     }
 
     private record Accessors(Method minecraftInstance, Field level, Field levelRenderer) {

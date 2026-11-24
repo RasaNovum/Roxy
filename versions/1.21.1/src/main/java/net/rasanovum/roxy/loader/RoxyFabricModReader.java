@@ -37,24 +37,7 @@ public final class RoxyFabricModReader implements IModFileReader {
     private static final String RELOCATED_JARS = "META-INF/roxy-jars/";
     private static final String SUPPLEMENTAL_SHADER_MIXIN = "roxy-voxy-shader.json";
     private static final String SUPPLEMENTAL_WORLDGEN_MIXIN = "roxy-voxy-worldgen.json";
-    private static final Map<String, String> EMBEDDED_HOST_CLASSES = Map.ofEntries(
-            Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcBackfill.class", "roxy/embedded/RoxyTfcBackfill.bin"),
-            Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcTerrainRefresh.class", "roxy/embedded/RoxyTfcTerrainRefresh.bin"),
-            Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcProgress.class", "roxy/embedded/RoxyTfcProgress.bin"),
-            Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcProgress$Visibility.class", "roxy/embedded/RoxyTfcProgress$Visibility.bin"),
-            Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcAdapter.class", "roxy/embedded/RoxyTfcAdapter.bin"),
-            Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcImport.class", "roxy/embedded/RoxyTfcImport.bin"),
-            Map.entry("net/rasanovum/roxyhost/tfc/RoxyTfcImport$ChunkCapture.class", "roxy/embedded/RoxyTfcImport$ChunkCapture.bin"),
-            Map.entry("net/rasanovum/roxyhost/RoxySodiumOptions.class", "roxy/embedded/RoxySodiumOptions.bin"),
-            Map.entry("net/rasanovum/roxyhost/RoxyChunkBoundaryMask.class", "roxy/embedded/RoxyChunkBoundaryMask.bin"),
-            Map.entry("net/rasanovum/roxyhost/RoxyPalettedContainerFactory.class", "roxy/embedded/RoxyPalettedContainerFactory.bin"),
-            Map.entry("net/rasanovum/roxyhost/RoxyTerrainSlabs.class", "roxy/embedded/RoxyTerrainSlabs.bin"),
-            Map.entry("net/rasanovum/roxyhost/RoxyCopycatShapeFallback.class", "roxy/embedded/RoxyCopycatShapeFallback.bin"),
-            Map.entry("net/rasanovum/roxyhost/RoxyVoxyNeoForge.class", "roxy/embedded/RoxyVoxyNeoForge.bin"),
-            Map.entry("net/rasanovum/roxy/client/RoxyClientWarnings.class", "roxy/embedded/RoxyClientWarnings.bin"),
-            Map.entry("net/rasanovum/roxy/client/RoxyClientWarnings$Warning.class", "roxy/embedded/RoxyClientWarnings$Warning.bin"),
-            Map.entry("net/rasanovum/roxy/client/RoxyWarningScreen.class", "roxy/embedded/RoxyWarningScreen.bin")
-    );
+    private static final String EMBEDDED_MANIFEST = "roxy/embedded/manifest.txt";
     private static final Set<String> UNSUPPORTED_1_21_1_CLIENT_MIXINS = Set.of(
             "minecraft.MixinBlockableEventLoop",
             "minecraft.MixinGPUSelect",
@@ -189,7 +172,7 @@ public final class RoxyFabricModReader implements IModFileReader {
                 output.closeEntry();
             }
 
-            for (Map.Entry<String, String> hostClass : EMBEDDED_HOST_CLASSES.entrySet()) {
+            for (Map.Entry<String, String> hostClass : loadEmbeddedHostClasses().entrySet()) {
                 byte[] contents = readResource(hostClass.getValue());
                 if (contents == null) {
                     throw new IOException("Roxy: missing embedded host class " + hostClass.getKey());
@@ -279,6 +262,27 @@ public final class RoxyFabricModReader implements IModFileReader {
         JsonObject config = JsonParser.parseString(new String(source, StandardCharsets.UTF_8)).getAsJsonObject();
         config.getAsJsonArray("client").asList().removeIf(entry -> remove.test(entry.getAsString()));
         return config.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static Map<String, String> loadEmbeddedHostClasses() throws IOException {
+        byte[] manifestBytes = readResource(EMBEDDED_MANIFEST);
+        if (manifestBytes == null) {
+            throw new IOException("Roxy: missing embedded host class manifest " + EMBEDDED_MANIFEST);
+        }
+        Map<String, String> entries = new java.util.LinkedHashMap<>();
+        String content = new String(manifestBytes, StandardCharsets.UTF_8);
+        for (String line : content.split("\\R")) {
+            if (line.isBlank()) continue;
+            int tab = line.indexOf('\t');
+            if (tab <= 0 || tab >= line.length() - 1) {
+                throw new IOException("Roxy: malformed embedded host manifest line: " + line);
+            }
+            entries.put(line.substring(0, tab), line.substring(tab + 1));
+        }
+        if (entries.isEmpty()) {
+            throw new IOException("Roxy: empty embedded host class manifest " + EMBEDDED_MANIFEST);
+        }
+        return entries;
     }
 
     private static byte[] readResource(String name) throws IOException {

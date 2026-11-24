@@ -27,6 +27,9 @@ public final class RoxyWeatherFog {
             lastTick = tick;
             rollIn = 0;
         }
+        if (tick < lastTick - 1.0) {
+            lastTick = tick;
+        }
         double elapsed = Math.max(0, Math.min(100, tick - lastTick));
         lastTick = Math.max(lastTick, tick);
         float amount = unit(percent / 100.0F);
@@ -36,7 +39,8 @@ public final class RoxyWeatherFog {
         float scale = 1 - rollIn;
         float end = Math.max(Math.min(16.0F, baseline.end()), baseline.end() * scale);
         float start = Math.min(baseline.start() * scale, end - Math.min(2.0F, end));
-        if (Float.isFinite(viewDistance) && viewDistance > 0 && rollIn > 0) {
+        if (Float.isFinite(viewDistance) && viewDistance > 0 && rollIn > 0
+                && Float.isFinite(baseline.end()) && baseline.end() > 0.0F) {
             float localEnd = Math.max(16, viewDistance * 0.5F);
             float weatherEnd = 1 / ((1 - rollIn) / baseline.end() + rollIn / localEnd);
             end = Math.min(end, weatherEnd);

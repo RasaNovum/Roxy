@@ -17,10 +17,11 @@ public final class RoxyVoxyWorldgenSectionMixin {
                     remap = false
             ),
             index = 1,
-            remap = false
+            remap = false,
+            require = 0
     )
     private static LevelChunkSection roxy$recountDecodedSection(LevelChunkSection section) {
-        section.recalcBlockCounts();
+        if (section != null) section.recalcBlockCounts();
         return section;
     }
 }

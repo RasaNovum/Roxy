@@ -1,5 +1,9 @@
 package net.rasanovum.roxy.compat;
 
+import net.rasanovum.roxy.util.RoxyClassLoaders;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import java.lang.reflect.Array;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
@@ -13,10 +17,9 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.logging.Logger;
 
 public final class RoxyCopycatsCompat {
-    private static final Logger LOGGER = Logger.getLogger("Roxy");
+    private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
     private static final ConcurrentHashMap<MethodKey, Optional<Method>> METHODS = new ConcurrentHashMap<>();
     private static final ThreadLocal<IngestSnapshot> INGEST_SNAPSHOT = new ThreadLocal<>();
     private static final Map<Object, Set<Long>> PENDING_INGESTS = new IdentityHashMap<>();
@@ -43,7 +46,7 @@ public final class RoxyCopycatsCompat {
                 Class<?> helper = Class.forName("net.rasanovum.roxyhost.RoxyCopycatShapeFallback", false, loader);
                 return Optional.of(helper.getMethod("approximate", stateType, stateType));
             } catch (ReflectiveOperationException | LinkageError failure) {
-                LOGGER.log(java.util.logging.Level.WARNING, "Unable to resolve Copycat LOD shape mapping", failure);
+                LOGGER.warn("Unable to resolve Copycat LOD shape mapping", failure);
                 return Optional.empty();
             }
         }
@@ -77,7 +80,11 @@ public final class RoxyCopycatsCompat {
         Map<Object, Set<Long>> pending = drainPendingIngests();
         if (pending.isEmpty()) return;
         try {
-            ClassLoader loader = findGameLoader(pending);
+            ClassLoader[] hints = pending.keySet().stream()
+                    .filter(level -> level != null)
+                    .map(level -> level.getClass().getClassLoader())
+                    .toArray(ClassLoader[]::new);
+            ClassLoader loader = RoxyClassLoaders.findGameLoader(hints);
             Class<?> minecraftType = Class.forName("net.minecraft.client.Minecraft", false, loader);
             Object minecraft = minecraftType.getMethod("getInstance").invoke(null);
             Object currentLevel = field(minecraft, "level");
@@ -90,27 +97,6 @@ public final class RoxyCopycatsCompat {
             }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
             logIngestFailure(failure);
-        }
-    }
-
-    private static ClassLoader findGameLoader(Map<Object, Set<Long>> pending) {
-        for (Object level : pending.keySet()) {
-            if (level == null) continue;
-            ClassLoader candidate = level.getClass().getClassLoader();
-            if (canLoadMinecraft(candidate)) return candidate;
-        }
-        ClassLoader context = Thread.currentThread().getContextClassLoader();
-        if (canLoadMinecraft(context)) return context;
-        return RoxyCopycatsCompat.class.getClassLoader();
-    }
-
-    private static boolean canLoadMinecraft(ClassLoader loader) {
-        if (loader == null) return false;
-        try {
-            Class.forName("net.minecraft.client.Minecraft", false, loader);
-            return true;
-        } catch (ClassNotFoundException | LinkageError ignored) {
-            return false;
         }
     }
 
@@ -133,7 +119,7 @@ public final class RoxyCopycatsCompat {
             return copy;
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
             logSnapshotFailure(source.getClass(), failure);
-            return null;
+            return copy;
         }
     }
 
@@ -156,6 +142,9 @@ public final class RoxyCopycatsCompat {
             ClassLoader loader = source.getClass().getClassLoader();
             Class<?> minecraftType = Class.forName("net.minecraft.client.Minecraft", false, loader);
             Object minecraft = minecraftType.getMethod("getInstance").invoke(null);
+            if (minecraft == null || !Boolean.TRUE.equals(invoke(minecraft, "isSameThread"))) {
+                return cloneSection(source);
+            }
             Object level = field(minecraft, "level");
             if (level == null) return cloneSection(source);
             Object chunkSource = invoke(level, "getChunkSource");
@@ -171,7 +160,7 @@ public final class RoxyCopycatsCompat {
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
             if (!rawFailureLogged) {
                 rawFailureLogged = true;
-                LOGGER.log(java.util.logging.Level.WARNING, "Unable to resolve a live Voxy section for Copycat LoD input", failure);
+                LOGGER.warn("Unable to resolve a live Voxy section for Copycat LoD input", failure);
             }
             return cloneSection(source);
         }
@@ -255,8 +244,7 @@ public final class RoxyCopycatsCompat {
     private static void logIngestFailure(Throwable failure) {
         if (!ingestFailureLogged) {
             ingestFailureLogged = true;
-            LOGGER.log(java.util.logging.Level.WARNING,
-                    "Unable to refresh Copycat LoD material after a block entity update", failure);
+            LOGGER.warn("Unable to refresh Copycat LoD material after a block entity update", failure);
         }
     }
 
@@ -273,9 +261,8 @@ public final class RoxyCopycatsCompat {
 
     private static void logSnapshotFailure(Class<?> sourceType, Throwable failure) {
         if (SNAPSHOT_FAILURE_LOGGED.compareAndSet(false, true)) {
-            LOGGER.log(java.util.logging.Level.WARNING,
-                    "Unable to snapshot Voxy's input section (" + sourceType.getName() + "); skipping ingestion",
-                    failure);
+            LOGGER.warn("Unable to snapshot Voxy's input section ({}); skipping ingestion",
+                    sourceType.getName(), failure);
         }
     }
 

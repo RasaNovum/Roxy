@@ -10,7 +10,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 @Pseudo
 @Mixin(targets = "com.kishku7.chunksmith.lod.client.render.VoxyRadius", remap = false)
 public abstract class RoxyChunksmithVoxyRadiusMixin {
-    @Inject(method = "blocks", at = @At("HEAD"), cancellable = true, remap = false)
+    @Inject(method = "blocks", at = @At("HEAD"), cancellable = true, remap = false, require = 0)
     private static void roxy$readVoxyRadius(CallbackInfoReturnable<Integer> callback) {
         callback.setReturnValue(RoxyChunksmithCompat.configuredRadiusBlocks());
     }

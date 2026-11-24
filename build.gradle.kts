@@ -1,4 +1,6 @@
 import org.gradle.language.jvm.tasks.ProcessResources
+import org.gradle.api.Project
+import org.gradle.api.artifacts.Configuration
 import org.gradle.api.tasks.Copy
 import org.gradle.api.tasks.JavaExec
 import org.gradle.api.tasks.Sync
@@ -153,6 +155,231 @@ prism {
 
 }
 
+fun Project.registerRuntimeMappingsTask(mcVersion: String, intermediaryConfig: Configuration) =
+    tasks.register("generateRuntimeMappings") {
+        dependsOn(tasks.named("createMinecraftArtifacts"))
+        val outputDir = layout.buildDirectory.dir("roxy-runtime-mappings")
+        val mojmapFile = rootProject.gradle.gradleUserHomeDir
+            .resolve("caches/neoformruntime/artifacts/minecraft_${mcVersion}_client_mappings.txt")
+        inputs.files(intermediaryConfig)
+        inputs.file(mojmapFile)
+        outputs.dir(outputDir)
+
+        doLast {
+            check(mojmapFile.isFile) { "Missing NeoFormRuntime client mappings: ${mojmapFile.absolutePath}" }
+            val intermediaryJar = intermediaryConfig.files.firstOrNull { it.isFile }
+                ?: error("Missing Fabric intermediary jar for $mcVersion")
+
+            val mojToOfficial = HashMap<String, String>(16384)
+            val officialToMojmap = HashMap<String, String>(16384)
+            val mojMembers = HashMap<String, String>(131072)
+
+            fun stripLineRange(raw: String): String {
+                val firstColon = raw.indexOf(':')
+                if (firstColon <= 0) return raw
+                for (i in 0 until firstColon) if (!raw[i].isDigit()) return raw
+                val secondColon = raw.indexOf(':', firstColon + 1)
+                if (secondColon <= firstColon + 1) return raw
+                for (i in (firstColon + 1) until secondColon) if (!raw[i].isDigit()) return raw
+                return raw.substring(secondColon + 1).trim()
+            }
+
+            fun typeDescriptor(raw: String): String {
+                var type = raw.trim().replace("...", "[]")
+                var arrayDepth = 0
+                while (type.endsWith("[]")) {
+                    arrayDepth++
+                    type = type.substring(0, type.length - 2).trim()
+                }
+                val generic = type.indexOf('<')
+                if (generic >= 0) type = type.substring(0, generic).trim()
+                val base = when (type) {
+                    "byte" -> "B"
+                    "char" -> "C"
+                    "double" -> "D"
+                    "float" -> "F"
+                    "int" -> "I"
+                    "long" -> "J"
+                    "short" -> "S"
+                    "boolean" -> "Z"
+                    "void" -> "V"
+                    else -> "L" + (mojToOfficial[type] ?: type).replace('.', '/') + ";"
+                }
+                return "[".repeat(arrayDepth) + base
+            }
+
+            fun splitTypes(input: String): List<String> {
+                if (input.isBlank()) return emptyList()
+                val result = ArrayList<String>()
+                var depth = 0
+                var start = 0
+                for (i in input.indices) {
+                    val c = input[i]
+                    if (c == '<') depth++
+                    else if (c == '>') depth--
+                    else if (c == ',' && depth == 0) {
+                        result.add(input.substring(start, i).trim())
+                        start = i + 1
+                    }
+                }
+                result.add(input.substring(start).trim())
+                return result
+            }
+
+            fun mapDescriptorWith(descriptor: String, classMap: Map<String, String>): String {
+                val sb = StringBuilder(descriptor.length)
+                var i = 0
+                while (i < descriptor.length) {
+                    val c = descriptor[i]
+                    sb.append(c)
+                    if (c == 'L') {
+                        val end = descriptor.indexOf(';', i + 1)
+                        if (end < 0) break
+                        val cls = descriptor.substring(i + 1, end)
+                        sb.append(classMap[cls] ?: cls)
+                        sb.append(';')
+                        i = end
+                    }
+                    i++
+                }
+                return sb.toString()
+            }
+
+            val mojLines = mojmapFile.readLines(Charsets.UTF_8)
+            for (line in mojLines) {
+                if (line.isBlank() || line.startsWith("#") || line.startsWith(" ") || !line.endsWith(":")) continue
+                val arrow = line.indexOf(" -> ")
+                if (arrow <= 0) continue
+                val moj = line.substring(0, arrow).trim()
+                val official = line.substring(arrow + 4, line.length - 1).trim()
+                mojToOfficial[moj] = official
+                officialToMojmap[official] = moj.replace('.', '/')
+            }
+
+            var currentOfficial: String? = null
+            for (line in mojLines) {
+                if (line.isBlank() || line.startsWith("#")) continue
+                if (!line.startsWith(" ") && line.endsWith(":")) {
+                    val arrow = line.indexOf(" -> ")
+                    if (arrow > 0) {
+                        currentOfficial = line.substring(arrow + 4, line.length - 1).trim()
+                        continue
+                    }
+                }
+                val owner = currentOfficial ?: continue
+                if (!line.startsWith(" ")) continue
+                val arrow = line.lastIndexOf(" -> ")
+                if (arrow < 0) continue
+                val source = stripLineRange(line.substring(0, arrow).trim())
+                val officialName = line.substring(arrow + 4).trim()
+                if (officialName.isEmpty()) continue
+                val open = source.indexOf('(')
+                val memberName: String
+                val descriptor: String
+                if (open >= 0) {
+                    val close = source.lastIndexOf(')')
+                    val nameEnd = source.lastIndexOf(' ', open)
+                    if (close < open || nameEnd < 0) continue
+                    val retType = source.substring(0, nameEnd).trim()
+                    memberName = source.substring(nameEnd + 1, open).trim()
+                    val params = splitTypes(source.substring(open + 1, close).trim())
+                    val sb = StringBuilder("(")
+                    for (p in params) sb.append(typeDescriptor(p))
+                    sb.append(')').append(typeDescriptor(retType))
+                    descriptor = sb.toString()
+                } else {
+                    val space = source.lastIndexOf(' ')
+                    if (space < 0) continue
+                    memberName = source.substring(space + 1).trim()
+                    descriptor = typeDescriptor(source.substring(0, space).trim())
+                }
+                mojMembers["$owner\u0000$officialName\u0000$descriptor"] = memberName
+            }
+
+            val classes = LinkedHashMap<String, String>(16384)
+            val officialToIntermediary = HashMap<String, String>(16384)
+            val targetToIntermediary = HashMap<String, String>(16384)
+            data class TinyMember(
+                val field: Boolean,
+                val officialOwner: String,
+                val intermediaryOwner: String,
+                val officialDesc: String,
+                val officialName: String,
+                val intermediaryName: String
+            )
+            val tinyMembers = ArrayList<TinyMember>(131072)
+
+            ZipFile(intermediaryJar).use { zip ->
+                val entry = zip.getEntry("mappings/mappings.tiny")
+                    ?: error("Missing mappings/mappings.tiny in ${intermediaryJar.name}")
+                zip.getInputStream(entry).bufferedReader(Charsets.UTF_8).use { reader ->
+                    var officialOwner: String? = null
+                    var intermediaryOwner: String? = null
+                    reader.forEachLine { line ->
+                        val parts = line.split('\t')
+                        if (parts.isEmpty()) return@forEachLine
+                        if ((parts[0] == "c" || parts[0] == "CLASS") && parts.size >= 3) {
+                            officialOwner = parts[1]
+                            intermediaryOwner = parts[2]
+                            val targetOwner = officialToMojmap[parts[1]] ?: parts[1]
+                            classes[parts[2]] = targetOwner
+                            officialToIntermediary[parts[1]] = parts[2]
+                            targetToIntermediary[targetOwner] = parts[2]
+                        } else if (parts.size >= 5 && parts[0].isEmpty() && (parts[1] == "f" || parts[1] == "m")) {
+                            val oOwner = officialOwner
+                            val iOwner = intermediaryOwner
+                            if (oOwner != null && iOwner != null) {
+                                tinyMembers.add(TinyMember(parts[1] == "f", oOwner, iOwner, parts[2], parts[3], parts[4]))
+                            }
+                        } else if (parts.size >= 5 && (parts[0] == "FIELD" || parts[0] == "METHOD")) {
+                            val owner = parts[1]
+                            var oOwner = owner
+                            var iOwner = officialToIntermediary[owner] ?: targetToIntermediary[owner]
+                            if (iOwner == null) {
+                                oOwner = mojToOfficial[owner.replace('/', '.')] ?: owner
+                                iOwner = officialToIntermediary[oOwner]
+                            }
+                            if (iOwner != null) {
+                                tinyMembers.add(TinyMember(parts[0] == "FIELD", oOwner, iOwner, parts[2], parts[3], parts[4]))
+                            }
+                        }
+                    }
+                }
+            }
+
+            val component = classes["net/minecraft/class_2561"]
+            check(component == "net/minecraft/network/chat/Component") {
+                "Invalid $mcVersion runtime mappings: Component mapped to $component"
+            }
+
+            val outFile = outputDir.get().file("roxy/mappings/runtime-$mcVersion.map").asFile
+            outFile.parentFile.mkdirs()
+            outFile.bufferedWriter(Charsets.UTF_8).use { writer ->
+                for ((intermediary, target) in classes) {
+                    writer.write("C\t")
+                    writer.write(intermediary)
+                    writer.write("\t")
+                    writer.write(target)
+                    writer.newLine()
+                }
+                for (member in tinyMembers) {
+                    val intermediaryDesc = mapDescriptorWith(member.officialDesc, officialToIntermediary)
+                    val targetName = mojMembers["${member.officialOwner}\u0000${member.officialName}\u0000${member.officialDesc}"]
+                        ?: member.officialName
+                    writer.write(if (member.field) "F\t" else "M\t")
+                    writer.write(member.intermediaryOwner)
+                    writer.write("\t")
+                    writer.write(member.intermediaryName)
+                    writer.write("\t")
+                    writer.write(intermediaryDesc)
+                    writer.write("\t")
+                    writer.write(targetName)
+                    writer.newLine()
+                }
+            }
+        }
+    }
+
 project(":1.21.11") {
     repositories {
         maven { url = uri("https://maven.fabricmc.net/") }
@@ -178,15 +405,10 @@ project(":1.21.11") {
             from(compileMacClientProbe.flatMap { it.destinationDirectory })
             from(rootProject.file("scripts/macos/client-probe/resources-1.21.11"))
         }
+        val generateRuntimeMappings = registerRuntimeMappingsTask("1.21.11", roxyIntermediary)
         tasks.named<ProcessResources>("processResources") {
-            from({ roxyIntermediary.files.map { zipTree(it) } }) {
-                include("mappings/mappings.tiny")
-                eachFile { path = "roxy/mappings/intermediary-1.21.11.tiny" }
-            }
-            from(rootProject.gradle.gradleUserHomeDir.resolve("caches/neoformruntime/artifacts/minecraft_1.21.11_client_mappings.txt")) {
-                into("roxy/mappings")
-                rename { "client-1.21.11.txt" }
-            }
+            includeEmptyDirs = false
+            from(generateRuntimeMappings)
         }
         tasks.named<JavaExec>("runClient") {
             if (roxyZink.get()) useRoxyZink() else useRoxyMacNatives()
@@ -240,73 +462,50 @@ project(":1.21.1") {
             compileClasspath += minecraftSources.compileClasspath
             runtimeClasspath += minecraftSources.runtimeClasspath
         }
-        tasks.named<ProcessResources>("processResources") {
-            from({ roxyIntermediary.files.map { zipTree(it) } }) {
-                include("mappings/mappings.tiny")
-                eachFile { path = "roxy/mappings/intermediary-1.21.1.tiny" }
-            }
-            from(rootProject.gradle.gradleUserHomeDir.resolve("caches/neoformruntime/artifacts/minecraft_1.21.1_client_mappings.txt")) {
-                into("roxy/mappings")
-                rename { "client-1.21.1.txt" }
-            }
+        val generateRuntimeMappings = registerRuntimeMappingsTask("1.21.1", roxyIntermediary)
+        val prepareEmbeddedHostClasses = tasks.register("prepareEmbeddedHostClasses") {
             dependsOn(tasks.named("compileJava"))
-            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyVoxyNeoForge.class")) {
-                into("roxy/embedded")
-                rename { "RoxyVoxyNeoForge.bin" }
+            val classesRoot = layout.buildDirectory.dir("classes/java/main")
+            val outputDir = layout.buildDirectory.dir("roxy-embedded")
+            inputs.dir(classesRoot)
+            outputs.dir(outputDir)
+            doLast {
+                val root = classesRoot.get().asFile
+                val out = outputDir.get().asFile
+                out.deleteRecursively()
+                val embeddedDir = out.resolve("roxy/embedded")
+                embeddedDir.mkdirs()
+
+                val selected = fileTree(root) {
+                    include("net/rasanovum/roxyhost/**/*.class")
+                    include("net/rasanovum/roxy/client/RoxyClientWarnings*.class")
+                    include("net/rasanovum/roxy/client/RoxyWarningScreen*.class")
+                }.files.sortedBy { it.relativeTo(root).invariantSeparatorsPath }
+
+                check(selected.isNotEmpty()) { "No embedded host classes found under ${root.absolutePath}" }
+                val usedNames = HashSet<String>()
+                val manifestLines = ArrayList<String>(selected.size)
+                for (file in selected) {
+                    val rel = file.relativeTo(root).invariantSeparatorsPath
+                    val simpleBin = file.name.removeSuffix(".class") + ".bin"
+                    val binName = if (usedNames.add(simpleBin)) {
+                        simpleBin
+                    } else {
+                        rel.removeSuffix(".class").replace('/', '_') + ".bin"
+                    }
+                    file.copyTo(embeddedDir.resolve(binName), overwrite = true)
+                    manifestLines.add("$rel\troxy/embedded/$binName")
+                }
+                embeddedDir.resolve("manifest.txt").writeText(
+                    manifestLines.joinToString("\n") + "\n",
+                    Charsets.UTF_8
+                )
             }
-            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyPalettedContainerFactory.class")) {
-                into("roxy/embedded")
-                rename { "RoxyPalettedContainerFactory.bin" }
-            }
-            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyTerrainSlabs.class")) {
-                into("roxy/embedded")
-                rename { "RoxyTerrainSlabs.bin" }
-            }
-            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyCopycatShapeFallback.class")) {
-                into("roxy/embedded")
-                rename { "RoxyCopycatShapeFallback.bin" }
-            }
-            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxyChunkBoundaryMask.class")) {
-                into("roxy/embedded")
-                rename { "RoxyChunkBoundaryMask.bin" }
-            }
-            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/RoxySodiumOptions.class")) {
-                into("roxy/embedded")
-                rename { "RoxySodiumOptions.bin" }
-            }
-            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/tfc/RoxyTfcAdapter.class")) {
-                into("roxy/embedded")
-                rename { "RoxyTfcAdapter.bin" }
-            }
-            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/tfc/RoxyTfcImport.class")) {
-                into("roxy/embedded")
-                rename { "RoxyTfcImport.bin" }
-            }
-            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/tfc/RoxyTfcProgress.class")) {
-                into("roxy/embedded")
-                rename { "RoxyTfcProgress.bin" }
-            }
-            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/tfc/RoxyTfcProgress\$Visibility.class")) {
-                into("roxy/embedded")
-                rename { "RoxyTfcProgress\$Visibility.bin" }
-            }
-            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/tfc/RoxyTfcBackfill.class")) {
-                into("roxy/embedded")
-                rename { "RoxyTfcBackfill.bin" }
-            }
-            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/tfc/RoxyTfcTerrainRefresh.class")) {
-                into("roxy/embedded")
-                rename { "RoxyTfcTerrainRefresh.bin" }
-            }
-            from(layout.buildDirectory.file("classes/java/main/net/rasanovum/roxyhost/tfc/RoxyTfcImport\$ChunkCapture.class")) {
-                into("roxy/embedded")
-                rename { "RoxyTfcImport\$ChunkCapture.bin" }
-            }
-            from(layout.buildDirectory.dir("classes/java/main/net/rasanovum/roxy/client")) {
-                include("RoxyClientWarnings*.class", "RoxyWarningScreen.class")
-                into("roxy/embedded")
-                rename { it.replace(".class", ".bin") }
-            }
+        }
+        tasks.named<ProcessResources>("processResources") {
+            includeEmptyDirs = false
+            from(generateRuntimeMappings)
+            from(prepareEmbeddedHostClasses)
         }
         dependencies {
             add("compileOnly", files(sodiumApiDirectory.map { it.file("sodium-api.jar") }).builtBy(extractSodiumCompileApi))
@@ -350,7 +549,7 @@ project(":1.21.1") {
             exclude("net/fabricmc/**")
             exclude("net/rasanovum/roxyhost/**")
             exclude("net/rasanovum/roxy/client/RoxyClientWarnings*.class")
-            exclude("net/rasanovum/roxy/client/RoxyWarningScreen.class")
+            exclude("net/rasanovum/roxy/client/RoxyWarningScreen*.class")
             from(fabricStubsJar.map { it.archiveFile }) {
                 into("META-INF/jars")
             }
@@ -365,7 +564,7 @@ project(":1.21.1") {
                 exclude("net/fabricmc/**")
                 exclude("net/rasanovum/roxyhost/**")
                 exclude("net/rasanovum/roxy/client/RoxyClientWarnings*.class")
-                exclude("net/rasanovum/roxy/client/RoxyWarningScreen.class")
+                exclude("net/rasanovum/roxy/client/RoxyWarningScreen*.class")
             }
             into(packagedMainClassesDir)
         }

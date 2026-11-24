@@ -1,5 +1,6 @@
 package net.rasanovum.roxy.compat;
 
+import net.rasanovum.roxy.util.RoxyReflection;
 import org.joml.Matrix4d;
 import org.joml.Matrix4f;
 import org.joml.Matrix4fc;
@@ -7,17 +8,17 @@ import org.lwjgl.opengl.GL11C;
 import org.lwjgl.opengl.GL14C;
 import org.lwjgl.opengl.GL20C;
 import org.lwjgl.opengl.GL30C;
+import org.lwjgl.opengl.GL41C;
 import org.lwjgl.opengl.GL42C;
 import org.lwjgl.opengl.GL43C;
 import org.lwjgl.opengl.GL45C;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import java.lang.reflect.Field;
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Method;
 import java.util.Map;
 import java.util.WeakHashMap;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.IntSupplier;
 
 public final class RoxyLodEntityOcclusion {
@@ -34,37 +35,29 @@ public final class RoxyLodEntityOcclusion {
     private static final Object LOCK = new Object();
     private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
     private static final Map<Object, ProgramBindings> PROGRAMS = new WeakHashMap<>();
-    private static final ClassValue<Map<String, Field>> FIELDS = new ClassValue<>() {
-        @Override protected Map<String, Field> computeValue(Class<?> type) {
-            return new ConcurrentHashMap<>();
-        }
-    };
-    private static final ClassValue<Map<String, Method>> METHODS = new ClassValue<>() {
-        @Override protected Map<String, Method> computeValue(Class<?> type) {
-            return new ConcurrentHashMap<>();
-        }
-    };
+    private static final int[] VIEWPORT_BUF = new int[4];
+    private static final float[] IDENTITY = new Matrix4f().get(new float[16]);
     private record ProgramAccess(Method id) {}
     private static final ClassValue<ProgramAccess> PROGRAM_ACCESS = new ClassValue<>() {
         @Override protected ProgramAccess computeValue(Class<?> type) {
             for (String name : new String[]{"getId", "getProgramId", "handle"}) {
-                try {
-                    Method method = type.getMethod(name);
-                    method.setAccessible(true);
-                    return new ProgramAccess(method);
-                } catch (NoSuchMethodException ignored) {}
+                Method method = RoxyReflection.tryFindMethod(type, name);
+                if (method != null) return new ProgramAccess(method);
             }
             return new ProgramAccess(null);
         }
     };
 
+    private static volatile Method shadowActiveMethod;
+    private static volatile boolean shadowLookupAttempted;
     private static int viewSource;
-    private static Object viewSourceObject;
+    private static WeakReference<Object> viewSourceObject = new WeakReference<>(null);
     private static int stencilView;
     private static Frame frame;
     private static boolean frameOpen;
     private static boolean warned;
-    private static boolean captureLogged, registrationLogged;
+    private static boolean captureLogged;
+    private static boolean registrationLogged;
 
     private RoxyLodEntityOcclusion() {
     }
@@ -88,7 +81,7 @@ public final class RoxyLodEntityOcclusion {
             }
             stencilView = 0;
             viewSource = 0;
-            viewSourceObject = null;
+            viewSourceObject = new WeakReference<>(null);
             warned = false;
         }
     }
@@ -147,7 +140,7 @@ public final class RoxyLodEntityOcclusion {
                     captureLogged = true;
                     LOGGER.info("Create LOD occlusion captured Voxy depth at {}x{}", width, height);
                 }
-            } catch (ReflectiveOperationException | RuntimeException ignored) {
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
                 warnOnce("Voxy LOD depth capture is unavailable", ignored);
             }
         }
@@ -186,7 +179,7 @@ public final class RoxyLodEntityOcclusion {
                     LOGGER.info("Create LOD occlusion registered shader samplers");
                 }
                 return bindings.registered;
-            } catch (ReflectiveOperationException | RuntimeException ignored) {
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
                 PROGRAMS.put(program, new ProgramBindings(false));
                 warnOnce("Roxy could not register LOD entity samplers", ignored);
                 return false;
@@ -208,29 +201,29 @@ public final class RoxyLodEntityOcclusion {
                 return;
             }
             bindings.resolve(glProgram);
+            if (bindings.enabled < 0) {
+                return;
+            }
             Frame current = frame;
-            int[] viewport = new int[4];
-            GL11C.glGetIntegerv(GL11C.GL_VIEWPORT, viewport);
-            boolean available = current != null && viewport[2] > 0 && viewport[3] > 0;
-            GL20C.glUniform1i(bindings.enabled, available ? 1 : 0);
+            GL11C.glGetIntegerv(GL11C.GL_VIEWPORT, VIEWPORT_BUF);
+            boolean available = current != null && VIEWPORT_BUF[2] > 0 && VIEWPORT_BUF[3] > 0;
+            GL41C.glProgramUniform1i(glProgram, bindings.enabled, available ? 1 : 0);
             if (bindings.transform >= 0) {
-                GL20C.glUniformMatrix4fv(bindings.transform, false,
+                GL41C.glProgramUniformMatrix4fv(glProgram, bindings.transform, false,
                         current == null ? IDENTITY : current.transform);
             }
             if (bindings.viewport >= 0) {
-                GL20C.glUniform4f(bindings.viewport, viewport[0], viewport[1],
-                        Math.max(1, viewport[2]), Math.max(1, viewport[3]));
+                GL41C.glProgramUniform4f(glProgram, bindings.viewport, VIEWPORT_BUF[0], VIEWPORT_BUF[1],
+                        Math.max(1, VIEWPORT_BUF[2]), Math.max(1, VIEWPORT_BUF[3]));
             }
             if (bindings.reverseZ >= 0) {
-                GL20C.glUniform1i(bindings.reverseZ, current != null && current.reverseZ ? 1 : 0);
+                GL41C.glProgramUniform1i(glProgram, bindings.reverseZ, current != null && current.reverseZ ? 1 : 0);
             }
             if (bindings.zeroOne >= 0) {
-                GL20C.glUniform1i(bindings.zeroOne, current != null && current.zeroOne ? 1 : 0);
+                GL41C.glProgramUniform1i(glProgram, bindings.zeroOne, current != null && current.zeroOne ? 1 : 0);
             }
         }
     }
-
-    private static final float[] IDENTITY = new Matrix4f().get(new float[16]);
 
     private static int depthTexture() {
         synchronized (LOCK) {
@@ -245,7 +238,7 @@ public final class RoxyLodEntityOcclusion {
     }
 
     private static int ensureStencilView(int depthId, Object depthTexture, int sourceFormat) {
-        if (depthId == viewSource && depthTexture == viewSourceObject && stencilView != 0) {
+        if (depthId == viewSource && depthTexture == viewSourceObject.get() && stencilView != 0) {
             return stencilView;
         }
         if (stencilView != 0) {
@@ -260,33 +253,38 @@ public final class RoxyLodEntityOcclusion {
         GL45C.glTextureParameteri(stencilView, GL11C.GL_TEXTURE_MAG_FILTER, GL11C.GL_NEAREST);
         GL45C.glTextureParameteri(stencilView, GL14C.GL_TEXTURE_COMPARE_MODE, GL11C.GL_NONE);
         viewSource = depthId;
-        viewSourceObject = depthTexture;
+        viewSourceObject = new WeakReference<>(depthTexture);
         return stencilView;
     }
 
     private static boolean declaresSampler(Object holder, String name) {
         try {
-            for (Method method : holder.getClass().getMethods()) {
-                if (method.getParameterCount() == 1
-                        && (method.getName().equals("hasSampler") || method.getName().equals("hasSamplerName"))) {
-                    Object value = method.invoke(holder, name);
-                    if (value instanceof Boolean present) {
-                        return present;
-                    }
-                }
-            }
-        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            Method method = RoxyReflection.tryFindMethod(holder.getClass(), "hasSampler", String.class);
+            if (method == null) method = RoxyReflection.tryFindMethod(holder.getClass(), "hasSamplerName", String.class);
+            if (method == null) return false;
+            Object value = method.invoke(holder, name);
+            return value instanceof Boolean present && present;
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
             return false;
         }
-        return false;
     }
 
     private static boolean shadowPassActive(ClassLoader loader) {
+        Method active = shadowActiveMethod;
+        if (active == null && !shadowLookupAttempted) {
+            shadowLookupAttempted = true;
+            try {
+                Class<?> irisUtil = Class.forName("me.cortex.voxy.client.core.util.IrisUtil", false, loader);
+                active = irisUtil.getMethod("irisShadowActive");
+                shadowActiveMethod = active;
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
+                return false;
+            }
+        }
+        if (active == null) return false;
         try {
-            Class<?> irisUtil = Class.forName("me.cortex.voxy.client.core.util.IrisUtil", false, loader);
-            Method active = irisUtil.getMethod("irisShadowActive");
             return Boolean.TRUE.equals(active.invoke(null));
-        } catch (ReflectiveOperationException | RuntimeException ignored) {
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
             return false;
         }
     }
@@ -299,7 +297,7 @@ public final class RoxyLodEntityOcclusion {
     }
 
     private static Boolean property(Object pipeline, String name) {
-        Object properties = null;
+        Object properties;
         try {
             properties = readField(pipeline, "properties");
         } catch (ReflectiveOperationException ignored) {
@@ -334,35 +332,11 @@ public final class RoxyLodEntityOcclusion {
     }
 
     private static Object readField(Object owner, String name) throws ReflectiveOperationException {
-        Map<String, Field> cached = FIELDS.get(owner.getClass());
-        Field known = cached.get(name);
-        if (known != null) return known.get(owner);
-        Class<?> type = owner.getClass();
-        while (type != null) {
-            try {
-                Field field = type.getDeclaredField(name);
-                field.setAccessible(true);
-                cached.put(name, field);
-                return field.get(owner);
-            } catch (NoSuchFieldException ignored) {
-                type = type.getSuperclass();
-            }
-        }
-        throw new NoSuchFieldException(name);
+        return RoxyReflection.findField(owner.getClass(), name).get(owner);
     }
 
     private static Object invoke(Object owner, String name, Object... args) throws ReflectiveOperationException {
-        Map<String, Method> cached = METHODS.get(owner.getClass());
-        Method known = cached.get(name);
-        if (known != null) return known.invoke(owner, args);
-        for (Method method : owner.getClass().getMethods()) {
-            if (method.getName().equals(name) && method.getParameterCount() == args.length) {
-                method.setAccessible(true);
-                cached.put(name, method);
-                return method.invoke(owner, args);
-            }
-        }
-        throw new NoSuchMethodException(name);
+        return RoxyReflection.findMethodByArity(owner.getClass(), name, args.length).invoke(owner, args);
     }
 
     private record Frame(
@@ -379,8 +353,6 @@ public final class RoxyLodEntityOcclusion {
     private static final class ProgramBindings {
         private final boolean registered;
         private int glProgram = -1;
-        private int depth = -1;
-        private int stencil = -1;
         private int enabled = -1;
         private int transform = -1;
         private int viewport = -1;
@@ -396,8 +368,6 @@ public final class RoxyLodEntityOcclusion {
                 return;
             }
             glProgram = program;
-            depth = GL20C.glGetUniformLocation(program, DEPTH_SAMPLER);
-            stencil = GL20C.glGetUniformLocation(program, STENCIL_SAMPLER);
             enabled = GL20C.glGetUniformLocation(program, ENABLED_UNIFORM);
             transform = GL20C.glGetUniformLocation(program, TRANSFORM_UNIFORM);
             viewport = GL20C.glGetUniformLocation(program, VIEWPORT_UNIFORM);

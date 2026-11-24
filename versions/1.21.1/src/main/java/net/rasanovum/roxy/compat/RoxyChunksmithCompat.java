@@ -1,26 +1,36 @@
 package net.rasanovum.roxy.compat;
 
+import net.rasanovum.roxy.util.RoxyClassLoaders;
+import net.rasanovum.roxy.util.RoxyReflection;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Queue;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 public final class RoxyChunksmithCompat {
     private static final int QUEUE_LIMIT = 512;
-    private static final long RENDERER_READY_TIMEOUT_MILLIS = 60_000L;
+    private static final long RENDERER_READY_TIMEOUT_NANOS = TimeUnit.SECONDS.toNanos(60L);
+    private static final long RENDERER_SETTLE_NANOS = TimeUnit.SECONDS.toNanos(2L);
     private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
     private static final AtomicBoolean AVAILABILITY_FAILURE_LOGGED = new AtomicBoolean();
+    private static final AtomicBoolean CHUNKY_FAILURE_LOGGED = new AtomicBoolean();
     private static final Object RENDERER_READY_LOCK = new Object();
     private static volatile Methods methods;
-    private static volatile Object readyRenderer;
+    private static volatile ChunkyAccess chunkyAccess;
+    private static volatile WeakReference<Object> readyRenderer = new WeakReference<>(null);
 
     private RoxyChunksmithCompat() {
+    }
+
+    public static void resetRendererState() {
+        readyRenderer = new WeakReference<>(null);
     }
 
     public static boolean available(ClassLoader loader) {
@@ -37,10 +47,12 @@ public final class RoxyChunksmithCompat {
 
     public static int configuredRadiusBlocks() {
         try {
+            ClassLoader loader = RoxyClassLoaders.tryFindLoaderFor("me.cortex.voxy.client.config.VoxyConfig");
+            if (loader == null) return 0;
             Class<?> configClass = Class.forName(
                     "me.cortex.voxy.client.config.VoxyConfig",
                     true,
-                    Thread.currentThread().getContextClassLoader()
+                    loader
             );
             Object config = configClass.getField("CONFIG").get(null);
             if (config == null
@@ -49,9 +61,10 @@ public final class RoxyChunksmithCompat {
                 return 0;
             }
             Number sections = (Number) configClass.getField("sectionRenderDistance").get(config);
+            if (sections == null) return 0;
             double blocks = sections.doubleValue() * 512.0;
             return blocks >= Integer.MAX_VALUE ? Integer.MAX_VALUE : (int) Math.round(blocks);
-        } catch (ReflectiveOperationException | LinkageError exception) {
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
             return 0;
         }
     }
@@ -100,40 +113,84 @@ public final class RoxyChunksmithCompat {
             Thread.currentThread().interrupt();
             return 0;
         } catch (ReflectiveOperationException | LinkageError exception) {
-            throw new IllegalStateException("Roxy could not feed Chunksmith LoD data into Voxy", unwrap(exception));
+            throw new IllegalStateException("Roxy could not feed Chunksmith LoD data into Voxy", RoxyReflection.unwrap(exception));
         }
     }
 
     public static void ingestChunkyChunk(Object chunkyWorld, int chunkX, int chunkZ) {
+        if (chunkyWorld == null) return;
         try {
-            Field worldField = chunkyWorld.getClass().getDeclaredField("world");
-            worldField.setAccessible(true);
-            Object level = worldField.get(chunkyWorld);
-            Method getServer = level.getClass().getMethod("getServer");
-            Object server = getServer.invoke(level);
-            Method execute = server.getClass().getMethod("execute", Runnable.class);
-            execute.invoke(server, (Runnable) () -> {
+            ChunkyAccess access = resolveChunkyAccess(chunkyWorld);
+            Object level = access.worldField.get(chunkyWorld);
+            if (level == null) return;
+            Object server = access.getServer.invoke(level);
+            if (server == null) return;
+            access.execute.invoke(server, (Runnable) () -> {
                 try {
-                    Method getChunk = level.getClass().getMethod("getChunk", int.class, int.class);
-                    Object chunk = getChunk.invoke(level, chunkX, chunkZ);
-                    ClassLoader loader = chunkyWorld.getClass().getClassLoader();
-                    Class<?> ingestService = Class.forName(
-                            "me.cortex.voxy.common.world.service.VoxelIngestService",
-                            false,
-                            loader
-                    );
-                    Class<?> levelChunk = Class.forName(
-                            "net.minecraft.world.level.chunk.LevelChunk",
-                            false,
-                            loader
-                    );
-                    ingestService.getMethod("tryAutoIngestChunk", levelChunk).invoke(null, chunk);
-                } catch (ReflectiveOperationException | LinkageError exception) {
-                    throw new IllegalStateException("Roxy could not feed a Chunky chunk into Voxy", unwrap(exception));
+                    Object chunkSource = access.getChunkSource.invoke(level);
+                    Object chunk = chunkSource == null ? null : access.getChunkNow.invoke(chunkSource, chunkX, chunkZ);
+                    if (chunk == null) return;
+                    access.tryAutoIngestChunk.invoke(null, chunk);
+                } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+                    if (CHUNKY_FAILURE_LOGGED.compareAndSet(false, true)) {
+                        LOGGER.warn("Roxy could not feed a Chunky chunk into Voxy", RoxyReflection.unwrap(exception));
+                    }
                 }
             });
-        } catch (ReflectiveOperationException | LinkageError exception) {
-            throw new IllegalStateException("Roxy could not access Chunky's NeoForge world", unwrap(exception));
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError exception) {
+            if (CHUNKY_FAILURE_LOGGED.compareAndSet(false, true)) {
+                LOGGER.warn("Roxy could not access Chunky's NeoForge world", RoxyReflection.unwrap(exception));
+            }
+        }
+    }
+
+    private static ChunkyAccess resolveChunkyAccess(Object chunkyWorld) throws ReflectiveOperationException {
+        ChunkyAccess current = chunkyAccess;
+        if (current != null && current.worldClass == chunkyWorld.getClass()) return current;
+        synchronized (RoxyChunksmithCompat.class) {
+            current = chunkyAccess;
+            if (current != null && current.worldClass == chunkyWorld.getClass()) return current;
+            Field worldField = RoxyReflection.findField(chunkyWorld.getClass(), "world");
+            Object level = worldField.get(chunkyWorld);
+            if (level == null) {
+                throw new IllegalStateException("Chunky world has no active level");
+            }
+            Method getServer = level.getClass().getMethod("getServer");
+            Object server = getServer.invoke(level);
+            if (server == null) {
+                throw new IllegalStateException("Chunky level has no active server");
+            }
+            Method execute = server.getClass().getMethod("execute", Runnable.class);
+            Method getChunkSource = level.getClass().getMethod("getChunkSource");
+            Object chunkSource = getChunkSource.invoke(level);
+            Method getChunkNow = chunkSource.getClass().getMethod("getChunkNow", int.class, int.class);
+            ClassLoader loader = RoxyClassLoaders.findLoaderFor(
+                    "me.cortex.voxy.common.world.service.VoxelIngestService",
+                    chunkyWorld.getClass().getClassLoader(),
+                    level.getClass().getClassLoader()
+            );
+            Class<?> ingestService = Class.forName(
+                    "me.cortex.voxy.common.world.service.VoxelIngestService",
+                    false,
+                    loader
+            );
+            Class<?> levelChunk = Class.forName(
+                    "net.minecraft.world.level.chunk.LevelChunk",
+                    false,
+                    loader
+            );
+            Method tryAutoIngestChunk = ingestService.getMethod("tryAutoIngestChunk", levelChunk);
+            current = new ChunkyAccess(
+                    chunkyWorld.getClass(),
+                    worldField,
+                    getServer,
+                    execute,
+                    getChunkSource,
+                    getChunkNow,
+                    tryAutoIngestChunk
+            );
+            chunkyAccess = current;
+            return current;
         }
     }
 
@@ -148,6 +205,10 @@ public final class RoxyChunksmithCompat {
 
     private static void awaitCapacity(Methods resolved) throws ReflectiveOperationException, InterruptedException {
         while (true) {
+            Object minecraft = resolved.minecraftInstance.invoke(null);
+            if (minecraft == null || resolved.level.get(minecraft) == null) {
+                return;
+            }
             Object instance = resolved.voxyInstance.invoke(null);
             if (instance == null) {
                 return;
@@ -164,26 +225,36 @@ public final class RoxyChunksmithCompat {
 
     private static void awaitRendererReady(Methods resolved) throws ReflectiveOperationException, InterruptedException {
         Object minecraft = resolved.minecraftInstance.invoke(null);
+        if (minecraft == null || resolved.level.get(minecraft) == null) {
+            return;
+        }
         Object levelRenderer = resolved.levelRenderer.get(minecraft);
+        if (levelRenderer == null) {
+            return;
+        }
         Object renderer = resolved.getRenderSystem.invoke(levelRenderer);
-        if (renderer == null || renderer == readyRenderer) {
+        if (renderer == null || renderer == readyRenderer.get()) {
             return;
         }
 
         synchronized (RENDERER_READY_LOCK) {
-            if (renderer == readyRenderer) {
+            if (renderer == readyRenderer.get()) {
                 return;
             }
 
-            long deadline = System.currentTimeMillis() + RENDERER_READY_TIMEOUT_MILLIS;
-            long earliestReady = System.currentTimeMillis() + 2_000L;
+            long now = System.nanoTime();
+            long deadline = now + RENDERER_READY_TIMEOUT_NANOS;
+            long earliestReady = now + RENDERER_SETTLE_NANOS;
             int idlePolls = 0;
-            while (System.currentTimeMillis() < deadline) {
+            while (System.nanoTime() - deadline < 0L) {
+                if (resolved.level.get(minecraft) == null) {
+                    return;
+                }
                 Object current = resolved.getRenderSystem.invoke(levelRenderer);
                 if (current != renderer) {
                     renderer = current;
                     idlePolls = 0;
-                    earliestReady = System.currentTimeMillis() + 2_000L;
+                    earliestReady = System.nanoTime() + RENDERER_SETTLE_NANOS;
                 }
                 if (renderer == null) {
                     Thread.sleep(100L);
@@ -199,9 +270,9 @@ public final class RoxyChunksmithCompat {
                         || (boolean) resolved.nodeManagerHasWork.invoke(nodeManager)
                         || (int) resolved.renderTaskCount.invoke(renderGeneration) != 0
                         || !(boolean) resolved.modelQueuesEmpty.invoke(modelService);
-                if (!busy && System.currentTimeMillis() >= earliestReady) {
+                if (!busy && System.nanoTime() - earliestReady >= 0L) {
                     if (++idlePolls >= 10) {
-                        readyRenderer = renderer;
+                        readyRenderer = new WeakReference<>(renderer);
                         return;
                     }
                 } else {
@@ -211,7 +282,7 @@ public final class RoxyChunksmithCompat {
             }
 
             LOGGER.warn("Roxy timed out waiting for Voxy's initial renderer work before Chunksmith injection");
-            readyRenderer = renderer;
+            readyRenderer = new WeakReference<>(renderer);
         }
     }
 
@@ -228,11 +299,15 @@ public final class RoxyChunksmithCompat {
         }
     }
 
-    private static Throwable unwrap(Throwable exception) {
-        if (exception instanceof InvocationTargetException invocation && invocation.getCause() != null) {
-            return invocation.getCause();
-        }
-        return exception;
+    private record ChunkyAccess(
+            Class<?> worldClass,
+            Field worldField,
+            Method getServer,
+            Method execute,
+            Method getChunkSource,
+            Method getChunkNow,
+            Method tryAutoIngestChunk
+    ) {
     }
 
     private record Methods(
@@ -241,6 +316,7 @@ public final class RoxyChunksmithCompat {
             Method taskCount,
             Field ingestQueue,
             Method minecraftInstance,
+            Field level,
             Field levelRenderer,
             Method getRenderSystem,
             Field renderNodeManager,
@@ -284,7 +360,6 @@ public final class RoxyChunksmithCompat {
             );
             Class<?> dataLayer = Class.forName("net.minecraft.world.level.chunk.DataLayer", false, loader);
             Class<?> minecraft = Class.forName("net.minecraft.client.Minecraft", false, loader);
-            Class<?> levelRendererClass = Class.forName("net.minecraft.client.renderer.LevelRenderer", false, loader);
             Class<?> renderSystemBridge = Class.forName(
                     "me.cortex.voxy.client.core.IGetVoxyRenderSystem",
                     false,
@@ -306,14 +381,10 @@ public final class RoxyChunksmithCompat {
                     false,
                     loader
             );
-            Field ingestQueue = ingestService.getDeclaredField("ingestQueue");
-            ingestQueue.setAccessible(true);
-            Field renderNodeManager = renderSystem.getDeclaredField("nodeManager");
-            Field renderGenerationField = renderSystem.getDeclaredField("renderGen");
-            Field modelServiceField = renderSystem.getDeclaredField("modelService");
-            renderNodeManager.setAccessible(true);
-            renderGenerationField.setAccessible(true);
-            modelServiceField.setAccessible(true);
+            Field ingestQueue = RoxyReflection.findField(ingestService, "ingestQueue");
+            Field renderNodeManager = RoxyReflection.findField(renderSystem, "nodeManager");
+            Field renderGenerationField = RoxyReflection.findField(renderSystem, "renderGen");
+            Field modelServiceField = RoxyReflection.findField(renderSystem, "modelService");
 
             return new Methods(
                     voxyCommon.getMethod("getInstance"),
@@ -321,6 +392,7 @@ public final class RoxyChunksmithCompat {
                     ingestService.getMethod("getTaskCount"),
                     ingestQueue,
                     minecraft.getMethod("getInstance"),
+                    minecraft.getField("level"),
                     minecraft.getField("levelRenderer"),
                     renderSystemBridge.getMethod("voxy$getRenderSystem"),
                     renderNodeManager,

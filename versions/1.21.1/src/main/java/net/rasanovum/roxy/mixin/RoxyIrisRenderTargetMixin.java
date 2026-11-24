@@ -13,7 +13,9 @@ import org.spongepowered.asm.mixin.injection.ModifyConstant;
 public abstract class RoxyIrisRenderTargetMixin {
     @ModifyConstant(
             method = "<clinit>",
-            constant = @Constant(intValue = 16)
+            constant = @Constant(intValue = 16),
+            require = 0,
+            allow = 1
     )
     private static int roxy$includeVoxyAndColorwheelTargets(int value) {
         return 20;

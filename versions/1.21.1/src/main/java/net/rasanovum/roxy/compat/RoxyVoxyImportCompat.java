@@ -1,11 +1,12 @@
 package net.rasanovum.roxy.compat;
 
+import net.rasanovum.roxy.util.RoxyClassLoaders;
+
 import java.lang.reflect.InvocationHandler;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 
 public final class RoxyVoxyImportCompat {
-    private static final String MINECRAFT = "net.minecraft.client.Minecraft";
     private static final String PALETTED_CONTAINER_PROVIDER =
             "net.minecraft.world.level.chunk.PalettedContainerRO";
 
@@ -14,7 +15,8 @@ public final class RoxyVoxyImportCompat {
 
     public static Object createDefaultBiomeProvider(Object defaultBiome) {
         try {
-            ClassLoader loader = findMinecraftLoader();
+            ClassLoader hint = defaultBiome == null ? null : defaultBiome.getClass().getClassLoader();
+            ClassLoader loader = RoxyClassLoaders.findLoaderFor(PALETTED_CONTAINER_PROVIDER, hint);
             Class<?> provider = Class.forName(PALETTED_CONTAINER_PROVIDER, false, loader);
             InvocationHandler handler = (proxy, method, arguments) -> invoke(
                     method,
@@ -52,22 +54,5 @@ public final class RoxyVoxyImportCompat {
         if (type == double.class) return 0.0D;
         if (type == char.class) return '\0';
         return null;
-    }
-
-    private static ClassLoader findMinecraftLoader() {
-        ClassLoader[] candidates = {
-                Thread.currentThread().getContextClassLoader(),
-                RoxyVoxyImportCompat.class.getClassLoader(),
-                ClassLoader.getSystemClassLoader()
-        };
-        for (ClassLoader candidate : candidates) {
-            if (candidate == null) continue;
-            try {
-                Class.forName(MINECRAFT, false, candidate);
-                return candidate;
-            } catch (ClassNotFoundException ignored) {
-            }
-        }
-        throw new IllegalStateException("Unable to locate Minecraft's client class loader");
     }
 }

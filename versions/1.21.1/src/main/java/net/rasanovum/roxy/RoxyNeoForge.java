@@ -1,19 +1,22 @@
 package net.rasanovum.roxy;
 
-import net.rasanovum.roxy.loader.RoxyFabricRuntime;
-import net.rasanovum.roxy.loader.RoxyCrashReportHeader;
-import net.rasanovum.roxy.client.RoxyClientWarnings;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import net.neoforged.api.distmarker.Dist;
 import net.neoforged.bus.api.IEventBus;
 import net.neoforged.fml.common.Mod;
 import net.neoforged.fml.event.lifecycle.FMLClientSetupEvent;
 import net.neoforged.neoforge.client.event.RegisterClientCommandsEvent;
 import net.neoforged.neoforge.common.NeoForge;
-
-import com.mojang.brigadier.builder.LiteralArgumentBuilder;
+import net.rasanovum.roxy.client.RoxyClientWarnings;
+import net.rasanovum.roxy.loader.RoxyCrashReportHeader;
+import net.rasanovum.roxy.loader.RoxyFabricRuntime;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @Mod(value = "roxy", dist = Dist.CLIENT)
 public final class RoxyNeoForge {
+    private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
+
     public RoxyNeoForge(IEventBus modBus) {
         RoxyCrashReportHeader.register();
         modBus.addListener(this::onClientSetup);
@@ -32,7 +35,7 @@ public final class RoxyNeoForge {
             Object command = commands.getMethod("register").invoke(null);
             event.getDispatcher().register((LiteralArgumentBuilder) command);
         } catch (ReflectiveOperationException | LinkageError exception) {
-            System.err.println("Roxy: unable to register the Voxy client command: " + exception);
+            LOGGER.warn("Unable to register the Voxy client command", exception);
         }
     }
 }

@@ -1,27 +1,28 @@
 package net.rasanovum.roxy.mixin;
 
+import com.llamalad7.mixinextras.injector.wrapoperation.Operation;
+import com.llamalad7.mixinextras.injector.wrapoperation.WrapOperation;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
+import net.neoforged.fml.loading.LoadingModList;
 import net.rasanovum.roxy.compat.RoxyCompatConfig;
 import net.rasanovum.roxy.shader.RoxyAmdHiZShader;
-import net.rasanovum.roxy.shader.RoxyVoxyRequestShader;
 import net.rasanovum.roxy.shader.RoxyFogShader;
-import net.rasanovum.roxy.shader.RoxyTerrainFogShader;
 import net.rasanovum.roxy.shader.RoxyIceFaceCullingShader;
 import net.rasanovum.roxy.shader.RoxyModelTintShader;
+import net.rasanovum.roxy.shader.RoxyTerrainFogShader;
+import net.rasanovum.roxy.shader.RoxyVoxyRequestShader;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
-import org.spongepowered.asm.mixin.injection.Redirect;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
-
 @Mixin(targets = "me.cortex.voxy.client.core.gl.shader.ShaderLoader$ShaderLoadingParser", remap = false)
 public final class RoxyShaderResourceMixin {
-    @Redirect(
+    @WrapOperation(
             method = "loadShaderAsset",
             at = @At(
                     value = "INVOKE",
@@ -29,8 +30,8 @@ public final class RoxyShaderResourceMixin {
             ),
             remap = false
     )
-    private static InputStream roxy$resolveShaderResource(Class<?> owner, String path) {
-        InputStream input = owner.getResourceAsStream(path);
+    private static InputStream roxy$resolveShaderResource(Class<?> owner, String path, Operation<InputStream> original) {
+        InputStream input = original.call(owner, path);
         if (input != null) return roxy$patchShaderResource(path, input);
 
         input = roxy$openFromResourceManager(path);
@@ -58,10 +59,10 @@ public final class RoxyShaderResourceMixin {
     }
 
     private static InputStream roxy$patchShaderResource(String path, InputStream input) {
-        if (input == null) return input;
+        if (input == null) return null;
 
-        try {
-            String source = new String(input.readAllBytes(), StandardCharsets.UTF_8);
+        try (InputStream stream = input) {
+            String source = new String(stream.readAllBytes(), StandardCharsets.UTF_8);
             source = RoxyAmdHiZShader.patch(path, source);
             source = RoxyVoxyRequestShader.patch(path, source);
             source = RoxyFogShader.patch(path, source);
@@ -75,7 +76,7 @@ public final class RoxyShaderResourceMixin {
                         "quad.basePoint = (quadStart*lodScale)+vec3(baseSection<<5)-vec3(0.0, lodScale-1.0, 0.0);"
                 );
             }
-            if (quadUtil && RoxyCompatConfig.terrainSlabsEnabled()) {
+            if (quadUtil && RoxyCompatConfig.terrainSlabsEnabled() && roxy$isModLoaded("terrain_slabs")) {
                 String quadStart = "vec3 quadStart = extractPos(rawQuad);";
                 if (!source.contains(quadStart)) {
                     throw new IllegalStateException("Unsupported Voxy terrain snow quad shader layout");
@@ -98,7 +99,16 @@ public final class RoxyShaderResourceMixin {
             }
             return new ByteArrayInputStream(source.getBytes(StandardCharsets.UTF_8));
         } catch (IOException ignored) {
-            return input;
+            return null;
+        }
+    }
+
+    private static boolean roxy$isModLoaded(String modId) {
+        try {
+            LoadingModList mods = LoadingModList.get();
+            return mods != null && mods.getModFileById(modId) != null;
+        } catch (RuntimeException | LinkageError ignored) {
+            return false;
         }
     }
 

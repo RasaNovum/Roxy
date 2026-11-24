@@ -1,11 +1,13 @@
 package net.rasanovum.roxy.bridge;
 
+import net.rasanovum.roxy.util.RoxyClassLoaders;
+
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.Map;
-import java.util.WeakHashMap;
 
 public final class RoxyColorBridge {
     private static final ClassValue<Field> BACKING_FIELDS = new ClassValue<>() {
@@ -14,7 +16,13 @@ public final class RoxyColorBridge {
             return findBackingField(type);
         }
     };
-    private static final Map<ClassLoader, RegistryAccessors> REGISTRY_ACCESSORS = new WeakHashMap<>();
+    private static final ClassValue<RegistryAccessors> REGISTRY_ACCESSORS = new ClassValue<>() {
+        @Override
+        protected RegistryAccessors computeValue(Class<?> colorsClass) {
+            return resolveRegistryAccessors(colorsClass);
+        }
+    };
+    private static volatile CachedMapper cachedMapper;
 
     private RoxyColorBridge() {
     }
@@ -33,7 +41,7 @@ public final class RoxyColorBridge {
                 return map.get(block);
             }
             if (backing.getClass().getName().equals("net.minecraft.core.IdMapper")) {
-                RegistryAccessors accessors = registryAccessors(colors);
+                RegistryAccessors accessors = REGISTRY_ACCESSORS.get(colors.getClass());
                 int id = ((Number) accessors.getId.invoke(accessors.blockRegistry, block)).intValue();
                 return id >= 0 ? accessors.byId.invoke(backing, id) : null;
             }
@@ -62,7 +70,13 @@ public final class RoxyColorBridge {
                         + backing.getClass().getName());
             }
 
-            RegistryAccessors accessors = registryAccessors(colors);
+            int size = map.size();
+            CachedMapper existing = cachedMapper;
+            if (existing != null && existing.colors.get() == colors && existing.size == size) {
+                return existing.mapper;
+            }
+
+            RegistryAccessors accessors = REGISTRY_ACCESSORS.get(colors.getClass());
             Object result = accessors.idMapperConstructor.newInstance();
             for (Map.Entry<?, ?> entry : map.entrySet()) {
                 int id = ((Number) accessors.getId.invoke(accessors.blockRegistry, entry.getKey())).intValue();
@@ -70,6 +84,7 @@ public final class RoxyColorBridge {
                     accessors.addMapping.invoke(result, entry.getValue(), id);
                 }
             }
+            cachedMapper = new CachedMapper(new WeakReference<>(colors), size, result);
             return result;
         } catch (ReflectiveOperationException exception) {
             throw new IllegalStateException("Unable to adapt BlockColors backing store", exception);
@@ -94,23 +109,25 @@ public final class RoxyColorBridge {
 
     private static Field findBackingField(Class<?> owner) {
         Field fallback = null;
-        for (Field field : owner.getDeclaredFields()) {
-            if (Modifier.isStatic(field.getModifiers())) {
-                continue;
-            }
-            Class<?> type = field.getType();
-            if (!Map.class.isAssignableFrom(type)
-                    && !type.getName().equals("net.minecraft.core.IdMapper")) {
-                continue;
-            }
-            if (field.getName().equals("blockColors")) {
-                if (!field.trySetAccessible()) {
-                    throw new IllegalStateException("Unable to access BlockColors field " + field.getName());
+        for (Class<?> current = owner; current != null; current = current.getSuperclass()) {
+            for (Field field : current.getDeclaredFields()) {
+                if (Modifier.isStatic(field.getModifiers())) {
+                    continue;
                 }
-                return field;
-            }
-            if (fallback == null) {
-                fallback = field;
+                Class<?> type = field.getType();
+                if (!Map.class.isAssignableFrom(type)
+                        && !type.getName().equals("net.minecraft.core.IdMapper")) {
+                    continue;
+                }
+                if (field.getName().equals("blockColors")) {
+                    if (!field.trySetAccessible()) {
+                        throw new IllegalStateException("Unable to access BlockColors field " + field.getName());
+                    }
+                    return field;
+                }
+                if (fallback == null && !field.getName().equals("coloringStates")) {
+                    fallback = field;
+                }
             }
         }
         if (fallback != null) {
@@ -122,13 +139,9 @@ public final class RoxyColorBridge {
         throw new IllegalStateException("Unable to locate BlockColors backing store");
     }
 
-    private static RegistryAccessors registryAccessors(Object colors) throws ReflectiveOperationException {
-        ClassLoader minecraftLoader = findMinecraftLoader(colors);
-        synchronized (REGISTRY_ACCESSORS) {
-            RegistryAccessors cached = REGISTRY_ACCESSORS.get(minecraftLoader);
-            if (cached != null) {
-                return cached;
-            }
+    private static RegistryAccessors resolveRegistryAccessors(Class<?> colorsClass) {
+        try {
+            ClassLoader minecraftLoader = RoxyClassLoaders.findGameLoader(colorsClass.getClassLoader());
             Class<?> idMapperClass = Class.forName("net.minecraft.core.IdMapper", false, minecraftLoader);
             Constructor<?> idMapperConstructor = idMapperClass.getConstructor();
             Method addMapping = idMapperClass.getMethod("addMapping", Object.class, int.class);
@@ -140,15 +153,15 @@ public final class RoxyColorBridge {
             );
             Object blockRegistry = registries.getField("BLOCK").get(null);
             Method getId = findGetId(blockRegistry.getClass());
-            RegistryAccessors resolved = new RegistryAccessors(
+            return new RegistryAccessors(
                     idMapperConstructor,
                     addMapping,
                     byId,
                     blockRegistry,
                     getId
             );
-            REGISTRY_ACCESSORS.put(minecraftLoader, resolved);
-            return resolved;
+        } catch (ReflectiveOperationException exception) {
+            throw new IllegalStateException("Unable to resolve Minecraft block registry accessors", exception);
         }
     }
 
@@ -157,28 +170,14 @@ public final class RoxyColorBridge {
             if (method.getName().equals("getId")
                     && method.getParameterCount() == 1
                     && method.getReturnType() == int.class) {
+                method.trySetAccessible();
                 return method;
             }
         }
         throw new IllegalStateException("Unable to locate registry getId method");
     }
 
-    private static ClassLoader findMinecraftLoader(Object colors) {
-        ClassLoader[] candidates = {
-                Thread.currentThread().getContextClassLoader(),
-                colors.getClass().getClassLoader(),
-                RoxyColorBridge.class.getClassLoader(),
-                ClassLoader.getSystemClassLoader()
-        };
-        for (ClassLoader candidate : candidates) {
-            if (candidate == null) continue;
-            try {
-                Class.forName("net.minecraft.client.Minecraft", false, candidate);
-                return candidate;
-            } catch (ClassNotFoundException ignored) {
-            }
-        }
-        throw new IllegalStateException("Unable to locate Minecraft's client class loader");
+    private record CachedMapper(WeakReference<Object> colors, int size, Object mapper) {
     }
 
     private record RegistryAccessors(

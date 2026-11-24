@@ -6,12 +6,16 @@ import net.minecraft.core.IdMapper;
 import net.minecraft.core.registries.BuiltInRegistries;
 import net.minecraft.world.level.block.Block;
 
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.ParameterizedType;
+import java.lang.reflect.Type;
 import java.util.Map;
 
 public final class RoxyColorBridge {
     private static final Field BACKING_FIELD = findBackingField();
+    private static volatile CachedMapper cachedMapper;
 
     private RoxyColorBridge() {
     }
@@ -59,6 +63,12 @@ public final class RoxyColorBridge {
                     + backing.getClass().getName());
         }
 
+        int size = map.size();
+        CachedMapper existing = cachedMapper;
+        if (existing != null && existing.colors.get() == colors && existing.size == size) {
+            return existing.mapper;
+        }
+
         IdMapper<BlockColor> result = new IdMapper<>();
         for (Map.Entry<?, ?> entry : map.entrySet()) {
             if (!(entry.getKey() instanceof Block block)
@@ -70,6 +80,7 @@ public final class RoxyColorBridge {
                 result.addMapping(color, id);
             }
         }
+        cachedMapper = new CachedMapper(new WeakReference<>(colors), size, result);
         return result;
     }
 
@@ -83,22 +94,24 @@ public final class RoxyColorBridge {
 
     private static Field findBackingField() {
         Field fallback = null;
-        for (Field field : BlockColors.class.getDeclaredFields()) {
-            if (Modifier.isStatic(field.getModifiers())) {
-                continue;
-            }
-            Class<?> type = field.getType();
-            if (!IdMapper.class.isAssignableFrom(type) && !Map.class.isAssignableFrom(type)) {
-                continue;
-            }
-            if (field.getName().equals("blockColors")) {
-                if (!field.trySetAccessible()) {
-                    throw new IllegalStateException("Unable to access BlockColors field " + field.getName());
+        for (Class<?> current = BlockColors.class; current != null; current = current.getSuperclass()) {
+            for (Field field : current.getDeclaredFields()) {
+                if (Modifier.isStatic(field.getModifiers())) {
+                    continue;
                 }
-                return field;
-            }
-            if (fallback == null) {
-                fallback = field;
+                Class<?> type = field.getType();
+                if (!IdMapper.class.isAssignableFrom(type) && !Map.class.isAssignableFrom(type)) {
+                    continue;
+                }
+                if (field.getName().equals("blockColors")) {
+                    if (!field.trySetAccessible()) {
+                        throw new IllegalStateException("Unable to access BlockColors field " + field.getName());
+                    }
+                    return field;
+                }
+                if (fallback == null && !field.getName().equals("coloringStates") && matchesBlockColorMap(field)) {
+                    fallback = field;
+                }
             }
         }
         if (fallback != null) {
@@ -108,5 +121,19 @@ public final class RoxyColorBridge {
             return fallback;
         }
         throw new IllegalStateException("Unable to locate BlockColors backing store");
+    }
+
+    private static boolean matchesBlockColorMap(Field field) {
+        if (IdMapper.class.isAssignableFrom(field.getType())) return true;
+        Type generic = field.getGenericType();
+        if (generic instanceof ParameterizedType parameterized) {
+            Type[] args = parameterized.getActualTypeArguments();
+            if (args.length == 2 && args[1] == BlockColor.class) return true;
+            return false;
+        }
+        return true;
+    }
+
+    private record CachedMapper(WeakReference<BlockColors> colors, int size, IdMapper<BlockColor> mapper) {
     }
 }

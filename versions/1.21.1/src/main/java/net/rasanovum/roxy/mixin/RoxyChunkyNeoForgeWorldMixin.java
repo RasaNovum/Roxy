@@ -12,13 +12,15 @@ import java.util.concurrent.CompletableFuture;
 @Pseudo
 @Mixin(targets = "org.popcraft.chunky.platform.NeoForgeWorld", remap = false)
 public abstract class RoxyChunkyNeoForgeWorldMixin {
-    @Inject(method = "getChunkAtAsync", at = @At("RETURN"), remap = false)
+    @Inject(method = "getChunkAtAsync", at = @At("RETURN"), remap = false, require = 0)
     private void roxy$ingestGeneratedChunk(
             int chunkX,
             int chunkZ,
             CallbackInfoReturnable<CompletableFuture<Void>> callback
     ) {
+        CompletableFuture<Void> future = callback.getReturnValue();
+        if (future == null) return;
         Object world = this;
-        callback.getReturnValue().thenRun(() -> RoxyChunksmithCompat.ingestChunkyChunk(world, chunkX, chunkZ));
+        future.thenRun(() -> RoxyChunksmithCompat.ingestChunkyChunk(world, chunkX, chunkZ));
     }
 }

@@ -1,5 +1,7 @@
 package net.rasanovum.roxy.bridge;
 
+import net.rasanovum.roxy.util.RoxyClassLoaders;
+
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
@@ -27,7 +29,7 @@ public final class RoxyLightMapBridge {
         if (resolved != null) return resolved;
         synchronized (RoxyLightMapBridge.class) {
             if (accessors != null) return accessors;
-            ClassLoader loader = findMinecraftLoader();
+            ClassLoader loader = RoxyClassLoaders.findGameLoader();
             Class<?> minecraft = Class.forName("net.minecraft.client.Minecraft", false, loader);
             Field gameRenderer = findField(minecraft, "net.minecraft.client.renderer.GameRenderer");
             Field lightTexture = findField(gameRenderer.getType(), "net.minecraft.client.renderer.LightTexture");
@@ -57,23 +59,6 @@ public final class RoxyLightMapBridge {
             current = current.getSuperclass();
         }
         throw new NoSuchFieldException("Unable to find field of type " + typeName);
-    }
-
-    private static ClassLoader findMinecraftLoader() {
-        ClassLoader[] candidates = {
-                Thread.currentThread().getContextClassLoader(),
-                RoxyLightMapBridge.class.getClassLoader(),
-                ClassLoader.getSystemClassLoader()
-        };
-        for (ClassLoader candidate : candidates) {
-            if (candidate == null) continue;
-            try {
-                Class.forName("net.minecraft.client.Minecraft", false, candidate);
-                return candidate;
-            } catch (ClassNotFoundException ignored) {
-            }
-        }
-        throw new IllegalStateException("Unable to locate Minecraft's client class loader");
     }
 
     private record Accessors(

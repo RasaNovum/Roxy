@@ -322,6 +322,7 @@ public final class RoxyVoxyFogPatch {
     private static boolean normalPipelineActive() {
         try {
             Accessors current = getAccessors();
+            if (current == null) return false;
             Object renderer = current.getNullable.invoke(null);
             Object pipeline = renderer == null ? null : current.pipeline.get(renderer);
             return pipeline != null && pipeline.getClass().getName().equals("me.cortex.voxy.client.core.NormalRenderPipeline");
@@ -356,7 +357,7 @@ public final class RoxyVoxyFogPatch {
                 Class<?> renderSystem = Class.forName(
                         MINECRAFT_RENDER_SYSTEM,
                         false,
-                        findMinecraftLoader()
+                        net.rasanovum.roxy.util.RoxyClassLoaders.findGameLoader()
                 );
                 current = new FogSetter(
                         renderSystem.getMethod("setShaderFogStart", float.class),
@@ -377,10 +378,9 @@ public final class RoxyVoxyFogPatch {
         synchronized (RoxyVoxyFogPatch.class) {
             current = accessors;
             if (current != null || lookupAttempted) return current;
-            lookupAttempted = true;
+            ClassLoader loader = net.rasanovum.roxy.util.RoxyClassLoaders.tryFindLoaderFor(VOXY_RENDER_BRIDGE);
+            if (loader == null) return null;
             try {
-                ClassLoader loader = Thread.currentThread().getContextClassLoader();
-                if (loader == null) loader = RoxyVoxyFogPatch.class.getClassLoader();
                 Class<?> bridge = Class.forName(VOXY_RENDER_BRIDGE, false, loader);
                 Class<?> configClass = Class.forName(VOXY_CONFIG, false, loader);
                 Field pipeline = Class.forName("me.cortex.voxy.client.core.VoxyRenderSystem", false, loader).getDeclaredField("pipeline");
@@ -395,8 +395,13 @@ public final class RoxyVoxyFogPatch {
                                 .getMethod("irisShaderPackEnabled")
                 );
                 accessors = current;
+                lookupAttempted = true;
                 return current;
-            } catch (ReflectiveOperationException | LinkageError | RuntimeException ignored) {
+            } catch (NoSuchFieldException | NoSuchMethodException | LinkageError ignored) {
+                lookupAttempted = true;
+                LOGGER.debug("Roxy terrain fog accessor lookup failed", ignored);
+                return null;
+            } catch (ReflectiveOperationException | RuntimeException ignored) {
                 LOGGER.debug("Roxy terrain fog accessor lookup failed", ignored);
                 return null;
             }
@@ -405,23 +410,6 @@ public final class RoxyVoxyFogPatch {
 
     private record Accessors(Method getNullable, Field config, Method renderingEnabled, Field environmentalFog,
                              Field renderDistance, Field pipeline, Method shaderPackEnabled) {
-    }
-
-    private static ClassLoader findMinecraftLoader() {
-        ClassLoader[] candidates = {
-                Thread.currentThread().getContextClassLoader(),
-                RoxyVoxyFogPatch.class.getClassLoader(),
-                ClassLoader.getSystemClassLoader()
-        };
-        for (ClassLoader candidate : candidates) {
-            if (candidate == null) continue;
-            try {
-                Class.forName("net.minecraft.client.Minecraft", false, candidate);
-                return candidate;
-            } catch (ClassNotFoundException ignored) {
-            }
-        }
-        throw new IllegalStateException("Unable to locate Minecraft's client class loader");
     }
 
     private record FogSetter(Method start, Method end) {

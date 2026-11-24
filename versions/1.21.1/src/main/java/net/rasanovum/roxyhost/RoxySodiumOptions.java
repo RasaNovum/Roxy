@@ -8,13 +8,14 @@ import net.caffeinemc.mods.sodium.api.config.structure.ConfigBuilder;
 import net.caffeinemc.mods.sodium.api.config.structure.OptionPageBuilder;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
-import net.rasanovum.roxy.fog.RoxyFogConfig;
-import net.rasanovum.roxy.compat.RoxyFogModCompat;
 import net.rasanovum.roxy.compat.RoxyBetterFogCompat;
 import net.rasanovum.roxy.compat.RoxyCompatConfig;
-import net.rasanovum.roxy.tfc.TfcCompatConfig;
+import net.rasanovum.roxy.compat.RoxyFogModCompat;
+import net.rasanovum.roxy.fog.RoxyFogConfig;
 import net.rasanovum.roxy.fog.RoxyVoxyFogPatch;
+import net.rasanovum.roxy.tfc.TfcCompatConfig;
 
+import java.lang.reflect.Method;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
 
@@ -25,6 +26,9 @@ public final class RoxySodiumOptions {
             ResourceLocation.fromNamespaceAndPath("voxy", "eviromental_fog");
     private static final ResourceLocation TFC_DAY_CYCLE =
             ResourceLocation.fromNamespaceAndPath("roxy", "tfc_day_cycle_lod_updates");
+    private static volatile IrisAccess irisAccess;
+    private static volatile boolean irisChecked;
+    private static volatile boolean irisPresent;
 
     private RoxySodiumOptions() {}
 
@@ -32,7 +36,7 @@ public final class RoxySodiumOptions {
         ConfigBuilder builder = (ConfigBuilder) value;
         var modOptions = builder.registerModOptions("roxy")
                 .setNonTintedIcon(ResourceLocation.fromNamespaceAndPath("roxy", "icon.png"));
-        if (!shadersActive()) modOptions.addPage(createFogPage(builder));
+        modOptions.addPage(createFogPage(builder));
         modOptions.addPage(createCompatibilityPage(builder));
         modOptions.addPage(createLodUpdatesPage(builder));
     }
@@ -74,7 +78,11 @@ public final class RoxySodiumOptions {
                 .setTooltip(startTooltip())
                 .setDefaultValue(RoxyFogConfig.Settings.DEFAULT_START_CHUNKS).setRange(0, maxChunks - 1, 1)
                 .setValueFormatter(v -> Component.translatable("roxy.fog.chunks", v))
-                .setStorageHandler(storage).setBinding(v -> settings.start = v * 16, () -> settings.start / 16)
+                .setStorageHandler(storage)
+                .setBinding(
+                        v -> settings.start = v * 16,
+                        () -> Math.max(0, Math.min(maxChunks - 1, settings.start / 16))
+                )
                 .setControlHiddenWhenDisabled(false)
                 .setEnabledProvider(state -> enabled(state, voxyOptionsAvailable)
                         || (terrainFogEnabled(state, voxyOptionsAvailable)
@@ -209,13 +217,40 @@ public final class RoxySodiumOptions {
     }
 
     private static boolean shadersActive() {
+        IrisAccess access = resolveIrisAccess();
+        if (!irisPresent) return false;
+        if (access == null) return true;
         try {
-            Class<?> api = Class.forName("net.irisshaders.iris.api.v0.IrisApi");
-            return Boolean.TRUE.equals(api.getMethod("isShaderPackInUse").invoke(api.getMethod("getInstance").invoke(null)));
-        } catch (ClassNotFoundException exception) {
-            return false;
-        } catch (ReflectiveOperationException | LinkageError exception) {
+            Object instance = access.getInstance.invoke(null);
+            return instance != null && Boolean.TRUE.equals(access.isShaderPackInUse.invoke(instance));
+        } catch (ReflectiveOperationException | LinkageError | RuntimeException ignored) {
             return true;
         }
+    }
+
+    private static IrisAccess resolveIrisAccess() {
+        IrisAccess current = irisAccess;
+        if (current != null || irisChecked) return current;
+        synchronized (RoxySodiumOptions.class) {
+            current = irisAccess;
+            if (current != null || irisChecked) return current;
+            irisChecked = true;
+            try {
+                Class<?> api = Class.forName("net.irisshaders.iris.api.v0.IrisApi");
+                irisPresent = true;
+                current = new IrisAccess(api.getMethod("getInstance"), api.getMethod("isShaderPackInUse"));
+                irisAccess = current;
+                return current;
+            } catch (ClassNotFoundException ignored) {
+                irisPresent = false;
+                return null;
+            } catch (ReflectiveOperationException | LinkageError | RuntimeException ignored) {
+                irisPresent = true;
+                return null;
+            }
+        }
+    }
+
+    private record IrisAccess(Method getInstance, Method isShaderPackInUse) {
     }
 }
