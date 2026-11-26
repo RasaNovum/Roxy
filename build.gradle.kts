@@ -18,7 +18,7 @@ plugins {
 }
 
 group = "net.rasanovum"
-version = "0.5.0-d-3"
+version = "0.5.0-d-4"
 
 val roxyZink = providers.gradleProperty("roxyZink").map(String::toBoolean).orElse(false)
 val macRuntime = providers.gradleProperty("roxyMacOSRuntime")

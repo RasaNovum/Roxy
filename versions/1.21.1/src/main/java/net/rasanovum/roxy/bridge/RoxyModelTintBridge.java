@@ -17,6 +17,8 @@ import java.util.concurrent.ConcurrentHashMap;
 public final class RoxyModelTintBridge {
     private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
     private static final Map<Object, TintPlan> PLANS = new ConcurrentHashMap<>();
+    private static volatile boolean tintFailureLogged;
+    private static volatile boolean providerFailureLogged;
     private static final ClassValue<Method> TINT_INDEX = new ClassValue<>() {
         @Override
         protected Method computeValue(Class<?> type) {
@@ -117,14 +119,24 @@ public final class RoxyModelTintBridge {
             );
             Class<?> type = Class.forName("net.minecraft.client.color.block.BlockColor", false, loader);
             return Proxy.newProxyInstance(loader, new Class<?>[]{type}, (proxy, method, args) -> {
-                if (method.getName().equals("getColor") && args != null && args.length == 4 && args[0] != null) {
+                boolean isGetColor = method.getName().equals("getColor") && args != null && args.length == 4;
+                if (isGetColor && args[0] != null) {
                     TintPlan plan = PLANS.get(args[0]);
                     if (plan != null && plan.biomeIndex >= 0) args[3] = plan.biomeIndex;
                 }
                 try {
                     return method.invoke(provider, args);
                 } catch (InvocationTargetException exception) {
-                    throw exception.getTargetException();
+                    Throwable target = exception.getTargetException();
+                    if (isGetColor && target instanceof RuntimeException && isVoxySyntheticGetter(args[1])) {
+                        if (!providerFailureLogged) {
+                            providerFailureLogged = true;
+                            LOGGER.warn("Unable to evaluate block color provider {} for {} on Voxy's synthetic level; falling back to untinted",
+                                    provider.getClass().getName(), args[0], target);
+                        }
+                        return -1;
+                    }
+                    throw target;
                 }
             });
         } catch (ReflectiveOperationException exception) {
@@ -151,8 +163,28 @@ public final class RoxyModelTintBridge {
                 new Class<?>[]{access.levelType},
                 (proxy, method, args) -> handleProbeCall(method, proxy, args, state, dependent, access)
         );
-        int colour = (int) access.getColor.invoke(colours, state, probe, access.blockPosZero, index);
-        return new Tint(colour, dependent[0]);
+        try {
+            int colour = (int) access.getColor.invoke(colours, state, probe, access.blockPosZero, index);
+            return new Tint(colour, dependent[0]);
+        } catch (InvocationTargetException exception) {
+            Throwable cause = exception.getTargetException();
+            if (cause instanceof Error error) throw error;
+            if (!tintFailureLogged) {
+                tintFailureLogged = true;
+                LOGGER.warn("Unable to inspect tint color for {} (index {}); falling back to untinted", state, index, cause);
+            }
+            return new Tint(-1, dependent[0]);
+        } catch (RuntimeException exception) {
+            if (!tintFailureLogged) {
+                tintFailureLogged = true;
+                LOGGER.warn("Unable to inspect tint color for {} (index {}); falling back to untinted", state, index, exception);
+            }
+            return new Tint(-1, dependent[0]);
+        }
+    }
+
+    private static boolean isVoxySyntheticGetter(Object getter) {
+        return getter != null && getter.getClass().getName().startsWith("me.cortex.voxy.");
     }
 
     private static Object handleProbeCall(

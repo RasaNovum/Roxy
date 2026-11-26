@@ -313,6 +313,7 @@ public final class RoxyBytecodeRemapper {
         registerPatch(map, VOXY_MODEL_FACTORY, RoxyBytecodeRemapper::patchVoxyModelTinting);
         registerPatch(map, "me/cortex/voxy/client/core/model/bakery/SoftwareRasterizer", RoxyBytecodeRemapper::patchVoxyModelTinting);
         registerPatch(map, VOXY_MODEL_FACTORY, RoxyBytecodeRemapper::patchVoxyModelFactory);
+        registerPatch(map, VOXY_MODEL_FACTORY + "$2", RoxyBytecodeRemapper::patchVoxyModelColorGetter);
         registerPatch(map, VOXY_MODEL_FACTORY, RoxyBytecodeRemapper::patchVoxyIceModelFlags);
         registerPatch(map, VOXY_RENDER_DATA_FACTORY, bytes -> RoxyCompatConfig.terrainSlabsEnabled() ? patchVoxyTerrainSlabSnow(bytes) : bytes);
         UnaryOperator<byte[]> tfcPatch = bytes -> RoxyCompatConfig.tfcEnabled() ? RoxyTfcBytecodePatch.patch(bytes) : bytes;
@@ -2086,6 +2087,46 @@ public final class RoxyBytecodeRemapper {
             }
         }, 0);
         if (hooks[0] != 1) throw new IllegalStateException("Unsupported Voxy model tinting: " + reader.getClassName());
+        return writer.toByteArray();
+    }
+
+    private static byte[] patchVoxyModelColorGetter(byte[] input) {
+        ClassReader reader = new ClassReader(input);
+        String owner = VOXY_MODEL_FACTORY + "$2";
+        if (!reader.getClassName().equals(owner)) return input;
+
+        String getBlockTintDesc = "(Lnet/minecraft/core/BlockPos;Lnet/minecraft/world/level/ColorResolver;)I";
+        int[] hooks = {0};
+        ClassWriter writer = new ClassWriter(reader, ClassWriter.COMPUTE_MAXS);
+        reader.accept(new ClassVisitor(Opcodes.ASM9, writer) {
+            @Override
+            public MethodVisitor visitMethod(int access, String name, String descriptor, String signature, String[] exceptions) {
+                MethodVisitor delegate = super.visitMethod(access, name, descriptor, signature, exceptions);
+                if (!name.equals("getBlockTint") || !descriptor.equals(getBlockTintDesc)) return delegate;
+                hooks[0]++;
+                return new MethodVisitor(Opcodes.ASM9, delegate) {
+                    @Override
+                    public void visitCode() {
+                        super.visitCode();
+                        Label hasBiome = new Label();
+                        super.visitVarInsn(Opcodes.ALOAD, 0);
+                        super.visitFieldInsn(Opcodes.GETFIELD, owner, "val$biome", "Lnet/minecraft/world/level/biome/Biome;");
+                        super.visitJumpInsn(Opcodes.IFNONNULL, hasBiome);
+                        super.visitLdcInsn(0xFFFFFF);
+                        super.visitInsn(Opcodes.IRETURN);
+                        super.visitLabel(hasBiome);
+                        super.visitFrame(
+                                Opcodes.F_NEW,
+                                3,
+                                new Object[]{owner, "net/minecraft/core/BlockPos", "net/minecraft/world/level/ColorResolver"},
+                                0,
+                                null
+                        );
+                    }
+                };
+            }
+        }, ClassReader.EXPAND_FRAMES);
+        if (hooks[0] != 1) throw new IllegalStateException("Unsupported Voxy model color getter: " + owner);
         return writer.toByteArray();
     }
 
