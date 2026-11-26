@@ -18,7 +18,7 @@ plugins {
 }
 
 group = "net.rasanovum"
-version = "0.5.0-d-2"
+version = "0.5.0-d-3"
 
 val roxyZink = providers.gradleProperty("roxyZink").map(String::toBoolean).orElse(false)
 val macRuntime = providers.gradleProperty("roxyMacOSRuntime")
@@ -379,17 +379,28 @@ fun Project.registerRuntimeMappingsTask(mcVersion: String, intermediaryConfig: C
     }
 
 project(":1.21.11") {
+    evaluationDependsOn(":core")
+    plugins.apply("java")
     repositories {
         maven { url = uri("https://maven.fabricmc.net/") }
     }
 
     val roxyIntermediary by configurations.creating
     dependencies {
+        add("implementation", project(":core"))
         add(roxyIntermediary.name, "net.fabricmc:intermediary:1.21.11")
     }
 
     afterEvaluate {
+        val coreProject = rootProject.project(":core")
+        val coreMainOutput = coreProject.extensions.getByType<SourceSetContainer>().getByName("main").output
         val mainSourceSet = extensions.getByType<SourceSetContainer>().getByName("main")
+        tasks.named<Jar>("jar") {
+            dependsOn(coreProject.tasks.named("classes"))
+            from(coreMainOutput) {
+                include("net/rasanovum/roxy/loader/RoxyJomlMemory*.class")
+            }
+        }
         val compileMacClientProbe = tasks.register<JavaCompile>("compileMacClientProbe") {
             source(rootProject.fileTree("scripts/macos/client-probe/src") { include("**/*.java") })
             classpath = mainSourceSet.compileClasspath
@@ -425,9 +436,11 @@ project(":1.21.11") {
 }
 
 project(":1.21.1") {
+    evaluationDependsOn(":core")
     plugins.apply("java")
     val sodiumCompileApi by configurations.creating
     dependencies {
+        add("implementation", project(":core"))
         add(sodiumCompileApi.name, "maven.modrinth:sodium:mc1.21.1-0.8.12-neoforge")
         add("testImplementation", "org.junit.jupiter:junit-jupiter:5.11.4")
         add("testRuntimeOnly", "org.junit.platform:junit-platform-launcher:1.11.4")
@@ -542,8 +555,11 @@ project(":1.21.1") {
                 attributes["FMLModType"] = "LIBRARY"
             }
         }
+        val coreProject = rootProject.project(":core")
+        val coreMainOutput = coreProject.extensions.getByType<SourceSetContainer>().getByName("main").output
         tasks.named<Jar>("jar") {
-            dependsOn(fabricStubsJar)
+            dependsOn(coreProject.tasks.named("classes"), fabricStubsJar)
+            from(coreMainOutput)
             exclude("net/fabricmc/**")
             exclude("net/rasanovum/roxyhost/**")
             exclude("net/rasanovum/roxy/client/RoxyClientWarnings*.class")
@@ -557,7 +573,8 @@ project(":1.21.1") {
         val packagedLegacyClasspath = layout.buildDirectory.file("moddev/clientLegacyClasspath-packaged.txt")
         val packagedMainClassesDir = layout.buildDirectory.dir("moddev/packaged-roxy-classes")
         val packagedMainClasses = tasks.register<Sync>("copyPackagedRoxyClasses") {
-            dependsOn(tasks.named("classes"))
+            dependsOn(coreProject.tasks.named("classes"), tasks.named("classes"))
+            from(coreMainOutput)
             from(mainOutput) {
                 exclude("net/fabricmc/**")
                 exclude("net/rasanovum/roxyhost/**")
@@ -678,4 +695,16 @@ project(":1.21.1") {
             }
         }
     }
+}
+
+tasks.named("assemble") {
+    dependsOn(":core:jar", ":1.21.1:jar", ":1.21.11:jar")
+}
+
+tasks.named("check") {
+    dependsOn(":core:check", ":1.21.1:check", ":1.21.11:check")
+}
+
+tasks.named("build") {
+    dependsOn(":core:build", ":1.21.1:build", ":1.21.11:build")
 }

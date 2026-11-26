@@ -25,9 +25,12 @@ public final class RoxyFogRendererMixin {
         original.call(fogMode, type, camera, tickDelta, viewDistance, start, end, shape);
         boolean statusFog = camera.getEntity() instanceof LivingEntity entity
                 && (entity.hasEffect(MobEffects.BLINDNESS) || entity.hasEffect(MobEffects.DARKNESS));
-        var level = net.minecraft.client.Minecraft.getInstance().level;
-        RoxyVoxyFogPatch.apply(fogMode, camera.getFluidInCamera() == FogType.NONE && !thickFog && !statusFog,
-                viewDistance, start, end, shape.ordinal(), RenderSystem.getShaderFogStart(),
+        var minecraft = net.minecraft.client.Minecraft.getInstance();
+        var level = minecraft.level;
+        boolean bossFog = minecraft.gui != null && minecraft.gui.getBossOverlay().shouldCreateWorldFog();
+        boolean thickDimensionFog = thickFog && !bossFog;
+        RoxyVoxyFogPatch.apply(fogMode, camera.getFluidInCamera() == FogType.NONE && !bossFog && !statusFog,
+                thickDimensionFog, viewDistance, start, end, shape.ordinal(), RenderSystem.getShaderFogStart(),
                 RenderSystem.getShaderFogEnd(), RenderSystem.getShaderFogShape().ordinal(), level,
                 level == null ? 0 : level.getGameTime() + (double) tickDelta,
                 level == null ? 0 : level.getRainLevel(tickDelta),

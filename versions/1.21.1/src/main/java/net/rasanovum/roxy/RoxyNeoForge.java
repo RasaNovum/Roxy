@@ -18,6 +18,7 @@ public final class RoxyNeoForge {
     private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
 
     public RoxyNeoForge(IEventBus modBus) {
+        RoxyNeoForgePlatform.ensureConfigured();
         RoxyCrashReportHeader.register();
         modBus.addListener(this::onClientSetup);
         NeoForge.EVENT_BUS.addListener(this::onRegisterClientCommands);

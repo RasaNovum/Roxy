@@ -33,6 +33,7 @@ public final class RoxySodiumOptions {
     private RoxySodiumOptions() {}
 
     public static void register(Object value) {
+        net.rasanovum.roxy.RoxyNeoForgePlatform.ensureConfigured();
         ConfigBuilder builder = (ConfigBuilder) value;
         var modOptions = builder.registerModOptions("roxy")
                 .setNonTintedIcon(ResourceLocation.fromNamespaceAndPath("roxy", "icon.png"));

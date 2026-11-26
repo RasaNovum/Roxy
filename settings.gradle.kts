@@ -16,6 +16,8 @@ plugins {
 
 rootProject.name = "Roxy"
 
+include(":core")
+
 prism {
     version("1.21.11") {
         neoforge()

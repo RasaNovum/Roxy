@@ -10,6 +10,7 @@ import net.neoforged.neoforge.client.event.RenderLevelStageEvent;
 import net.neoforged.neoforge.client.event.ClientTickEvent;
 import net.neoforged.neoforge.common.NeoForge;
 import net.neoforged.neoforge.event.entity.EntityLeaveLevelEvent;
+import net.rasanovum.roxy.RoxyNeoForgePlatform;
 import net.rasanovum.roxy.compat.RoxyCompatConfig;
 import net.rasanovum.roxy.compat.RoxyPowerGridCompat;
 import net.rasanovum.roxy.patch.RoxyVoxyLifecycle;
@@ -25,6 +26,8 @@ public final class RoxyVoxyNeoForge {
     private static final Logger LOGGER = LoggerFactory.getLogger("Roxy");
 
     public RoxyVoxyNeoForge(IEventBus modBus) {
+        RoxyNeoForgePlatform.ensureConfigured();
+        RoxyCopycatsHost.register();
         RoxyCrashReportHeader.register();
         modBus.addListener(this::onClientSetup);
         NeoForge.EVENT_BUS.addListener(this::onRegisterClientCommands);
